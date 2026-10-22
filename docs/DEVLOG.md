@@ -40,3 +40,12 @@ e aceitação de instalação/atualização/remoção. Nenhum marco foi promovid
 
 Consulte [VALIDATION.md](VALIDATION.md), [FEATURES.md](FEATURES.md) e
 [RELEASING.md](RELEASING.md) para reproduzir e interpretar os resultados.
+
+## 2026-10-22 — Compatibilidade das fixtures na CI Ubuntu
+
+A primeira tentativa do workflow de release encontrou ferramentas PipeWire sem `--raw`
+e `--sample-count`. A publicação foi bloqueada. As fixtures passaram a consultar as flags
+disponíveis, encaminhar PCM por stdin/stdout e controlar a duração da captura no processo pai,
+preservando os sinais e critérios. A regressão privada também passou a ser gate de pull requests.
+Quatro testes Python cobrem a seleção de argumentos por capacidade, sem daemon ou hardware.
+O código de processamento e os 12 presets originais não foram alterados por esse ajuste.
