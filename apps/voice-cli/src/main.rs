@@ -104,6 +104,10 @@ enum Action {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Remove a soundboard entry and stop that sound; keep all audio files.
+    RemoveClip {
+        id: String,
+    },
     Play {
         id: String,
         #[arg(long)]
@@ -414,6 +418,7 @@ fn run(cli: Cli) -> Result<()> {
             overlap,
             gain,
         },
+        Action::RemoveClip { id } => Command::RemoveClip { id },
         Action::StopSounds => Command::StopSounds,
         Action::Record { path, source } => Command::StartRecording {
             path: absolute(path)?,
