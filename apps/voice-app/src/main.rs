@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use anyhow::{Context, Result, ensure};
 use eframe::egui::{self, Color32, RichText, Vec2};
 use serde_json::Value;
@@ -439,6 +441,11 @@ impl App {
             .unwrap_or(self.running())
             || self.audio_start_pending.is_some()
     }
+    fn virtual_microphone(&self) -> bool {
+        self.status["capabilities"]["virtual_microphone"]
+            .as_bool()
+            .unwrap_or(voice_engine::VIRTUAL_MICROPHONE)
+    }
     fn connection_label(&self) -> &'static str {
         if self.status.is_null() {
             "Carregando áudio…"
@@ -484,7 +491,9 @@ impl App {
                         .fixed_decimals(0)
                         .suffix("%"),
                 )
-                .on_hover_text("Volume de Ouvir-me nos fones. Não altera o microfone virtual.")
+                .on_hover_text(
+                    "Volume de Ouvir-me nos fones. Não altera a gravação da voz processada.",
+                )
             })
             .inner;
         self.monitor_gain_dragging |= response.dragged();
@@ -1075,11 +1084,22 @@ impl App {
                 }
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.label(
-                        RichText::new("Entrada do aplicativo de chamada:")
-                            .size(10.)
-                            .color(MUTED),
+                        RichText::new(if self.virtual_microphone() {
+                            "Entrada do aplicativo de chamada:"
+                        } else {
+                            "Saída desta versão:"
+                        })
+                        .size(10.)
+                        .color(MUTED),
                     );
-                    ui.label(RichText::new("Voice App Virtual Microphone").size(11.));
+                    ui.label(
+                        RichText::new(if self.virtual_microphone() {
+                            "Voice App Virtual Microphone"
+                        } else {
+                            "Monitoração e gravação locais"
+                        })
+                        .size(11.),
+                    );
                 });
             });
     }
@@ -1168,20 +1188,20 @@ impl App {
         }
     }
     fn toggle_favorite(&mut self, id: &str) {
-        if !self.favorites.remove(id) {
-            self.favorites.insert(id.into());
+        let mut candidate = self.favorites.clone();
+        if !candidate.remove(id) {
+            candidate.insert(id.into());
         }
-        let result = serde_json::to_vec(&self.favorites)
+        let result = serde_json::to_vec(&candidate)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| {
                 let path = self.paths.data.join("ui-favorites.json");
-                let temp = self.paths.data.join("ui-favorites.tmp");
-                std::fs::write(&temp, bytes)?;
-                std::fs::rename(temp, path)?;
-                Ok(())
+                voice_engine::persist_private_file(&path, &bytes)
             });
         if let Err(e) = result {
             self.notice = Some((format!("Não foi possível salvar favoritos: {e}"), true));
+        } else {
+            self.favorites = candidate;
         }
     }
     fn voices(&mut self, ui: &mut egui::Ui) {
@@ -2076,20 +2096,36 @@ impl App {
         });
         ui.add_space(18.);
         ui.label(RichText::new("Microfone virtual").size(16.).strong());
-        ui.label(
-            RichText::new("Voice App Virtual Microphone")
-                .color(ACCENT)
-                .size(13.),
-        );
-        ui.label(
-            RichText::new("Selecione esta entrada no Discord, OBS ou jogo.")
+        if self.virtual_microphone() {
+            ui.label(
+                RichText::new("Voice App Virtual Microphone")
+                    .color(ACCENT)
+                    .size(13.),
+            );
+            ui.label(
+                RichText::new("Selecione esta entrada no Discord, OBS ou jogo.")
+                    .size(12.)
+                    .color(MUTED),
+            );
+        } else {
+            ui.label(RichText::new("Ainda não disponível no Windows").size(13.));
+            ui.label(
+                RichText::new(
+                    "Use esta versão para testar efeitos, Ouvir-me e gravação. O envio da voz para chamadas depende do driver virtual.",
+                )
                 .size(12.)
                 .color(MUTED),
-        );
+            );
+        }
         ui.add_space(22.);
         ui.collapsing("Diagnóstico", |ui| {
             ui.label(format!("Biblioteca: {}", self.paths.data.display()));
-            ui.label("PipeWire · voz mono · fones estéreo · 48 kHz");
+            ui.label(format!(
+                "{} · voz mono · fones estéreo · 48 kHz",
+                self.status["backend"]
+                    .as_str()
+                    .unwrap_or(voice_engine::BACKEND_NAME)
+            ));
             if let Some(error) = self.status["last_audio_error"].as_str() {
                 ui.colored_label(Color32::LIGHT_RED, error);
             }
@@ -2755,6 +2791,12 @@ fn run() -> Result<()> {
 fn main() {
     if let Err(e) = run() {
         eprintln!("voice-app: {e:#}");
+        #[cfg(windows)]
+        rfd::MessageDialog::new()
+            .set_title("Voice App")
+            .set_description(format!("Não foi possível abrir o aplicativo: {e:#}"))
+            .set_level(rfd::MessageLevel::Error)
+            .show();
         std::process::exit(1);
     }
 }
