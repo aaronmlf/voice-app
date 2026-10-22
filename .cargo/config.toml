@@ -1,0 +1,7 @@
+[alias]
+xtask = "run --package xtask --"
+
+# This development machine has 16 GiB RAM and no swap. Avoid concurrent rustc jobs.
+[build]
+jobs = 1
+
