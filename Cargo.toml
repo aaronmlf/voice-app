@@ -13,6 +13,7 @@ repository = "https://github.com/aaronmlf/voice-app"
 voice-core = { version = "0.1.0", path = "crates/voice-core" }
 voice-dsp = { version = "0.1.0", path = "crates/voice-dsp" }
 voice-pipewire = { version = "0.1.0", path = "crates/voice-pipewire" }
+voice-wasapi = { version = "0.1.0", path = "crates/voice-wasapi" }
 voice-library = { version = "0.1.0", path = "crates/voice-library" }
 voice-engine = { version = "0.1.0", path = "crates/voice-engine" }
 anyhow = "1"
