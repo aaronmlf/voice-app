@@ -9,6 +9,8 @@ recordings, comparison audio, models and personal library/data
 stay local. Publish source through an explicit allowlist, never a recursive workspace upload.
 Local DEVLOG history contains private preset work; use a reviewed public summary for GitHub.
 Release binaries must come from the reviewed public source, with no personal assets or presets.
+Before publishing commits, verify that their author identity uses GitHub noreply or an
+explicitly public address. Do not expose private contact data through Git metadata.
 
 ## Boundaries
 - voice-core: serializable contracts, real-time atomics/queues; no OS, GUI or database dependencies.
