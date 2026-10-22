@@ -1,7 +1,9 @@
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
@@ -43,7 +45,12 @@ impl Fixture {
                 .unwrap(),
         );
         for _ in 0..250 {
-            if self.root.join("runtime/control.sock").exists() {
+            if voice_engine::client::send(
+                &self.root.join("runtime/control.sock"),
+                voice_engine::protocol::Command::Status,
+            )
+            .is_ok()
+            {
                 return;
             }
             if let Some(status) = self.server.as_mut().unwrap().try_wait().unwrap() {
@@ -76,6 +83,7 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn desktop_commands_forward_explicit_targets_sources_and_absolute_paths() {
     let fixture = Fixture::new();
