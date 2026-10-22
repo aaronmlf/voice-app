@@ -46,25 +46,26 @@ fn execute() -> Result<()> {
         "check" => {
             dependency_boundaries(&metadata(true)?)?;
             run("cargo", &["fmt", "--all", "--", "--check"])?;
+            let mut clippy = vec!["clippy", "--locked", "--workspace", "--all-targets"];
+            let mut tests = vec!["test", "--locked", "--workspace", "--all-targets"];
+            // PipeWire and its graph examples are Linux-only. Keep engine/IPC
+            // and the Windows adapter in the native Windows checks.
+            if cfg!(windows) {
+                clippy.extend(["--exclude", "voice-pipewire"]);
+                tests.extend(["--exclude", "voice-pipewire"]);
+            }
+            clippy.extend(["--", "-D", "warnings"]);
+            run("cargo", &clippy)?;
+            run("cargo", &tests)?;
+            let mut python_tests = vec!["-m", "unittest", "discover", "-s", "scripts/tests"];
+            if cfg!(windows) {
+                // Other Python modules depend on Linux cgroups, fcntl and /proc.
+                python_tests.extend(["-p", "test_pipewire_cli.py"]);
+            }
+            python_tests.push("-v");
             run(
-                "cargo",
-                &[
-                    "clippy",
-                    "--locked",
-                    "--workspace",
-                    "--all-targets",
-                    "--",
-                    "-D",
-                    "warnings",
-                ],
-            )?;
-            run(
-                "cargo",
-                &["test", "--locked", "--workspace", "--all-targets"],
-            )?;
-            run(
-                "python3",
-                &["-m", "unittest", "discover", "-s", "scripts/tests", "-v"],
+                if cfg!(windows) { "python" } else { "python3" },
+                &python_tests,
             )?;
             println!("Workspace formatting, Clippy, tests and dependency boundaries passed.");
         }
@@ -82,6 +83,10 @@ fn execute() -> Result<()> {
             ],
         )?,
         "audio-check" => {
+            ensure!(
+                cfg!(target_os = "linux"),
+                "audio-check requires Linux and an isolated PipeWire daemon; Windows offline validation is scripts/test-windows-offline.ps1"
+            );
             ensure!(
                 Command::new("bash")
                     .arg("scripts/test-pipewire.sh")
@@ -118,7 +123,7 @@ fn execute() -> Result<()> {
         }
         "package" => package(root)?,
         "help" | "--help" | "-h" => println!(
-            "cargo xtask <command>\n  check          fmt, Clippy, Rust/Python tests and dependency boundaries\n  boundaries     check architectural dependency allowlist\n  bench          release CPU-only DSP benchmark (not end-to-end latency)\n  audio-check    isolated PipeWire and engine integration (no hardware)\n  corpus         synthetic codec and malformed-input regressions\n  license-check  offline declared-SPDX allowlist report (not an audit)\n  package        release Linux tar.gz + validation tools + notices + SHA256SUMS in dist/\n\nRun `cargo fetch --locked` first when using license-check offline.\nOptional fuller dependency checks: cargo deny check licenses bans sources advisories."
+            "cargo xtask <command>\n  check          fmt, Clippy, Rust/Python tests and dependency boundaries\n  boundaries     check architectural dependency allowlist\n  bench          release CPU-only DSP benchmark (not end-to-end latency)\n  audio-check    isolated PipeWire and engine integration (no hardware)\n  corpus         synthetic codec and malformed-input regressions\n  license-check  offline declared-SPDX allowlist report (not an audit)\n  package        native Linux tar.gz or Windows MSVC zip + notices + SHA256SUMS in dist/\n\nRun `cargo fetch --locked` first when using license-check offline.\nOptional fuller dependency checks: cargo deny check licenses bans sources advisories."
         ),
         _ => bail!("unknown command {command:?}; run cargo xtask help"),
     }
@@ -202,15 +207,21 @@ fn boundary_policy() -> BTreeMap<&'static str, &'static [&'static str]> {
             ][..],
         ),
         (
+            "voice-wasapi",
+            &["voice-core", "voice-dsp", "anyhow", "cpal"][..],
+        ),
+        (
             "voice-engine",
             &[
                 "voice-core",
                 "voice-dsp",
                 "voice-library",
                 "voice-pipewire",
+                "voice-wasapi",
                 "anyhow",
                 "hound",
                 "libc",
+                "windows-sys",
                 "serde",
                 "serde_json",
             ][..],
@@ -478,7 +489,14 @@ fn license_report(meta: &Value, notices: Option<&Path>) -> Result<PathBuf> {
     Ok(path)
 }
 fn sha256_file(path: &Path) -> Result<String> {
-    let result = Command::new("sha256sum").arg(path).output()?;
+    let result = if cfg!(windows) {
+        Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "(Get-FileHash -LiteralPath $env:VOICE_APP_HASH_PATH -Algorithm SHA256).Hash.ToLowerInvariant()"])
+            .env("VOICE_APP_HASH_PATH", path)
+            .output()?
+    } else {
+        Command::new("sha256sum").arg(path).output()?
+    };
     ensure!(
         result.status.success(),
         "cannot hash {}: {}",
@@ -486,10 +504,7 @@ fn sha256_file(path: &Path) -> Result<String> {
         String::from_utf8_lossy(&result.stderr)
     );
     let output = String::from_utf8(result.stdout)?;
-    let hash = output
-        .split_whitespace()
-        .next()
-        .context("sha256sum output")?;
+    let hash = output.split_whitespace().next().context("SHA-256 output")?;
     ensure!(
         hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
         "invalid SHA-256 output"
@@ -583,12 +598,17 @@ fn is_notice_name(name: &str) -> bool {
 
 fn package(root: &Path) -> Result<()> {
     ensure!(
-        std::env::consts::OS == "linux",
-        "initial package task targets Linux only"
+        cfg!(target_os = "linux") || cfg!(windows),
+        "package currently supports native Linux and Windows MSVC builds"
     );
     ensure!(
         std::env::var_os("CARGO_BUILD_TARGET").is_none(),
-        "package requires a native Linux build; unset CARGO_BUILD_TARGET"
+        "package requires a native build; unset CARGO_BUILD_TARGET"
+    );
+    let host = host_triple()?;
+    ensure!(
+        !cfg!(windows) || host == "x86_64-pc-windows-msvc",
+        "Windows packaging requires the native x86_64-pc-windows-msvc toolchain"
     );
     run(
         "cargo",
@@ -615,67 +635,119 @@ fn package(root: &Path) -> Result<()> {
         .find(|p| p["name"] == "voice-app")
         .and_then(|p| p["version"].as_str())
         .context("app version")?;
-    let stem = format!("voice-app-{version}-{}", host_triple()?);
+    let stem = format!("voice-app-{version}-{host}");
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let staging_parent = target.join("xtask-package").join(stamp.to_string());
     let staging = staging_parent.join(&stem);
     fs::create_dir_all(&staging)?;
     for executable in ["voice-app", "voice-cli"] {
+        let executable = format!("{executable}{}", std::env::consts::EXE_SUFFIX);
         fs::copy(
-            target.join("release").join(executable),
-            staging.join(executable),
+            target.join("release").join(&executable),
+            staging.join(&executable),
         )?;
     }
     for name in ["README.md", "LICENSE-MIT", "LICENSE-APACHE"] {
         fs::copy(root.join(name), staging.join(name))
             .with_context(|| format!("package requires {name}"))?;
     }
-    copy_directory(&root.join("docs"), &staging.join("docs"))?;
-    let validation = staging.join("scripts");
-    fs::create_dir_all(validation.join("fixtures"))?;
-    for script in [
-        "validation_common.py",
-        "test-engine.py",
-        "validate-latency.py",
-        "validate-stability.py",
-        "validate-workflow.py",
-        "validate-obs.py",
-        "run-soak-batch.py",
-    ] {
-        fs::copy(root.join("scripts").join(script), validation.join(script))?;
+    if cfg!(windows) {
+        // Explicit package allowlist: the complete local DEVLOG can contain
+        // private presets. Windows releases include no local history or assets.
+        let documents = staging.join("docs");
+        fs::create_dir_all(documents.join("images"))?;
+        for name in [
+            "ARCHITECTURE.md",
+            "CONTROL.md",
+            "FEATURES.md",
+            "RELEASE-NOTES.md",
+            "RELEASING.md",
+            "ROADMAP.md",
+            "VALIDATION.md",
+            "VOICE-LAB.md",
+            "WINDOWS.md",
+            "images/desktop-capture.png",
+            "images/lab.png",
+            "images/voices.png",
+        ] {
+            fs::copy(root.join("docs").join(name), documents.join(name))?;
+        }
+        fs::copy(
+            root.join("packaging/windows/README.md"),
+            staging.join("RUNNING.txt"),
+        )?;
+        fs::create_dir_all(staging.join("scripts"))?;
+        fs::copy(
+            root.join("scripts/test-windows-offline.ps1"),
+            staging.join("scripts/test-windows-offline.ps1"),
+        )?;
+    } else {
+        copy_directory(&root.join("docs"), &staging.join("docs"))?;
+        let validation = staging.join("scripts");
+        fs::create_dir_all(validation.join("fixtures"))?;
+        for script in [
+            "validation_common.py",
+            "test-engine.py",
+            "validate-latency.py",
+            "validate-stability.py",
+            "validate-workflow.py",
+            "validate-obs.py",
+            "run-soak-batch.py",
+        ] {
+            fs::copy(root.join("scripts").join(script), validation.join(script))?;
+        }
+        fs::copy(
+            root.join("scripts/fixtures/pipewire-validation.conf"),
+            validation.join("fixtures/pipewire-validation.conf"),
+        )?;
     }
-    fs::copy(
-        root.join("scripts/fixtures/pipewire-validation.conf"),
-        validation.join("fixtures/pipewire-validation.conf"),
-    )?;
     let report = license_report(&meta, Some(&staging.join("THIRD_PARTY_LICENSES")))?;
     fs::copy(report, staging.join("THIRD_PARTY_LICENSES.json"))?;
     fs::write(
         staging.join("SOURCE-NOTICE.txt"),
         "This package includes unmodified Symphonia decoder source under MPL-2.0 in THIRD_PARTY_SOURCES/. Those source files remain under their original licenses and notices, included in each source directory and THIRD_PARTY_LICENSES/. The project's MIT OR Apache-2.0 grant applies to our original code; it does not replace third-party code or font licenses. Fonts include OFL-1.1 and Ubuntu-font-1.0 notices. Declared package licenses are listed in THIRD_PARTY_LICENSES.json.\n",
     )?;
-    fs::write(
-        staging.join("RUNNING.txt"),
-        "Linux native binaries. This archive is not a self-contained AppImage. Install PipeWire, libpipewire-0.3 and the display/windowing runtime required by your distribution. Run ./voice-app or ./voice-cli --help. Verify the outer archive with sha256sum -c SHA256SUMS.txt. No drivers, services, default microphone changes, or system installs are performed by unpacking this archive.\n",
-    )?;
+    if !cfg!(windows) {
+        fs::write(
+            staging.join("RUNNING.txt"),
+            "Linux native binaries. This archive is not a self-contained AppImage. Install PipeWire, libpipewire-0.3 and the display/windowing runtime required by your distribution. Run ./voice-app or ./voice-cli --help. Verify the outer archive with sha256sum -c SHA256SUMS.txt. No drivers, services, default microphone changes, or system installs are performed by unpacking this archive.\n",
+        )?;
+    }
     let output_directory = root.join("dist");
     fs::create_dir_all(&output_directory)?;
-    let archive = output_directory.join(format!("{stem}.tar.gz"));
-    let status = Command::new("tar")
-        .arg("-czf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(&staging_parent)
-        .arg(&stem)
-        .status()?;
-    ensure!(status.success(), "tar packaging failed");
-    let file_name = archive.file_name().context("archive file name")?;
-    let sums = Command::new("sha256sum")
-        .arg(file_name)
-        .current_dir(&output_directory)
-        .output()?;
-    ensure!(sums.status.success(), "sha256sum failed");
-    fs::write(output_directory.join("SHA256SUMS.txt"), &sums.stdout)?;
+    let archive = output_directory.join(format!(
+        "{stem}.{}",
+        if cfg!(windows) { "zip" } else { "tar.gz" }
+    ));
+    let status = if cfg!(windows) {
+        ensure!(
+            !archive.exists(),
+            "refusing to overwrite {}",
+            archive.display()
+        );
+        Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory($env:VOICE_APP_ZIP_SOURCE, $env:VOICE_APP_ZIP_TARGET, [System.IO.Compression.CompressionLevel]::Optimal, $true)"])
+            .env("VOICE_APP_ZIP_SOURCE", &staging)
+            .env("VOICE_APP_ZIP_TARGET", &archive)
+            .status()?
+    } else {
+        Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&staging_parent)
+            .arg(&stem)
+            .status()?
+    };
+    ensure!(status.success(), "archive packaging failed");
+    let file_name = archive
+        .file_name()
+        .context("archive file name")?
+        .to_string_lossy();
+    fs::write(
+        output_directory.join("SHA256SUMS.txt"),
+        format!("{}  {file_name}\n", sha256_file(&archive)?),
+    )?;
     println!(
         "Package: {}\nChecksum: {}",
         archive.display(),
