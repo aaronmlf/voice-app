@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Voice App</title>
+  <rect x="3" y="3" width="122" height="122" rx="28" fill="#15191a" stroke="#2c3335" stroke-width="3"/>
+  <g stroke="#00dee7" stroke-width="7" stroke-linecap="round">
+    <path d="M28 57v14M40 45v38M52 33v62M64 23v82M76 37v54M88 47v34M100 57v14"/>
+  </g>
+</svg>

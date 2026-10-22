@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# MIT OR Apache-2.0. Launch the prepared binary without compiling it.
+set -euo pipefail
+project_root=@PROJECT_SHELL@
+voice_binary=@BINARY_SHELL@
+
+fail() {
+    printf '%s\n' "$1" >&2
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send --app-name='Voice App' --icon=voice-app 'Voice App' "$1" || true
+    fi
+    exit 1
+}
+
+[[ -x "$voice_binary" ]] || fail 'O binário do Voice App não está disponível. Confira a pasta do projeto.'
+command -v systemd-run >/dev/null 2>&1 || fail 'systemd-run é necessário para iniciar o aplicativo com limite de memória.'
+command -v systemctl >/dev/null 2>&1 || fail 'systemctl é necessário para localizar a sessão do aplicativo.'
+
+# Fixed service names prevent a second managed GUI. The preview service is the
+# same application launched during development; never stop or replace its audio.
+for voice_unit in voice-app.service voice-app-preview.service; do
+    if systemctl --user is-active --quiet "$voice_unit"; then
+        exit 0
+    fi
+done
+
+voice_env=()
+for voice_var in XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XAUTHORITY XDG_ACTIVATION_TOKEN DESKTOP_STARTUP_ID; do
+    if [[ -v "$voice_var" ]]; then
+        voice_env+=(--setenv="$voice_var=${!voice_var}")
+    fi
+done
+
+# A failed memory limit must not fall back to an unrestricted process.
+if systemd-run --user --unit=voice-app --description='Voice App' --collect --quiet \
+    -p Type=exec -p MemoryHigh=2500M -p MemoryMax=3G -p MemorySwapMax=0 \
+    --working-directory="$project_root" "${voice_env[@]}" "$voice_binary" "$@"; then
+    exit 0
+else
+    voice_result=$?
+    # Two simultaneous clicks may race. Keep the already-created instance.
+    if systemctl --user is-active --quiet voice-app.service; then
+        exit 0
+    fi
+    printf 'Não foi possível iniciar o Voice App com limite de memória (código %s).\n' "$voice_result" >&2
+    exit "$voice_result"
+fi

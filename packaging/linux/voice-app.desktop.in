@@ -1,0 +1,18 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Voice App
+GenericName=Voice changer and soundboard
+GenericName[pt_BR]=Modificador de voz e soundboard
+Comment=Voice effects, soundboard and local recording
+Comment[pt_BR]=Efeitos de voz, soundboard e gravação local
+Exec="@LAUNCHER_DESKTOP@"
+TryExec=@BINARY_DESKTOP@
+Path=@PROJECT_DESKTOP@
+Icon=voice-app
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=voice;microphone;soundboard;recording;
+Keywords[pt_BR]=voz;microfone;soundboard;gravação;
+StartupNotify=false
+StartupWMClass=voice-app
