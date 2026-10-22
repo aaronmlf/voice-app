@@ -86,3 +86,9 @@ rede e display isolados, sinais sintéticos e os executáveis extraídos. As exe
 estão pendentes nesta revisão; testes físicos Windows 10/11, WASAPI, latência, sessões longas
 e driver virtual assinado não estão qualificados. Nenhuma tarefa pesada local foi iniciada
 enquanto o lote Linux prolongado continua ativo. Consulte WINDOWS.md.
+
+## Soundboard removal and manual Linux integration checks
+
+A shared remove_clip command removes a soundboard entry persistently and stops only that clip in the playback/preview worker. The GUI adds a visible item menu and confirmation; source and normalized audio files are retained. Retained media still occupies disk space; cleanup is outside this change. Synthetic regression tests were prepared for persistence, invalid IDs, other playing clips and unchanged audio files; validation of this addition is pending.
+
+A user reported voice effects and soundboard working in the Linux Discord desktop client. This is a manual report on one machine, without agent observation, a repeatable received recording or physical latency measurement. Audacity/Tenacity recording is explicitly part of acceptance and remains pending. The Windows virtual driver remains unimplemented. The independent Linux four-hour soak is still running and is not approved early.

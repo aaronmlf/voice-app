@@ -122,10 +122,21 @@ PipeWire antigas. Os sinais, volumes e critérios de aprovação continuam os me
 pull requests executa também a regressão no daemon privado; isso não certifica hardware ou
 a sessão gráfica da distribuição. Nenhuma dessas operações ocorre em callback do aplicativo.
 
-## Etapa física adiada
+## Verificações manuais e etapa física
 
-Por solicitação do usuário, ficam para outra sessão: entrada no Discord, fluxo gráfico completo
-na OBS, microfone/headset reais, perda e retorno físicos de dispositivos e medição acústica
-de latência ponta a ponta. A execução atual não abre o microfone pessoal nem toca áudio nos fones.
+Em 22/10/2026 o usuário relatou que a voz com efeito e o soundboard funcionaram no Discord desktop
+nesta máquina Linux. Evidência local: `target/validation/2026-10-22/discord-manual.json`.
+É um relato manual, sem observação direta do agente ou medição de latência. A modalidade de teste
+(retorno local ou recepção em chamada) não foi verificada pelo agente. Recepção/gravação reproduzível,
+fluxo gráfico completo na OBS, perda e retorno físicos de
+dispositivos e medição acústica de latência ponta a ponta continuam pendentes. O lote automatizado
+usa um grafo privado separado e não abre o microfone pessoal nem toca áudio nos fones.
 Hardware e sessão gráfica Ubuntu LTS, Wayland/atalhos, instalação/atualização/remoção e sessões
 longas da GUI seguem pendentes. A regressão automatizada em runner Ubuntu usa somente grafo privado.
+
+Audacity/Tenacity também fazem parte da aceitação: selecionar `Voice App Virtual Microphone`
+como entrada, gravar uma frase com efeito e um clipe curto do soundboard, salvar/reproduzir o WAV
+e verificar cortes e canais. Se o gravador oferecer apenas `pulse`/PulseAudio, selecionar a fonte
+na rota de captura desse aplicativo, preservando o microfone padrão do sistema. Essa verificação
+ainda não foi realizada. No Windows, a entrada nesses programas depende do futuro driver virtual;
+WASAPI e gravação interna do Voice App não substituem esse dispositivo.

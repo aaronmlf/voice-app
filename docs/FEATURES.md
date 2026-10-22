@@ -7,7 +7,7 @@ Nenhum marco inteiro foi promovido a estável.
 |---|---|---|
 | Contratos, atômicos e filas limitadas | Verificada em testes | Ordem, concorrência, saturação, wrap de contador e validação |
 | DSP tradicional | Verificada offline; ao vivo experimental | Sinais sintéticos, extremos, preservação entre blocos e ausência de alocação Rust |
-| Fonte virtual + captura | Experimental | Cliente externo e módulo real `pulse_input_capture` da libobs 32.2.2 receberam sinal no grafo privado; Discord, GUI OBS e hardware adiados |
+| Fonte virtual + captura | Experimental | Cliente externo e módulo real `pulse_input_capture` da libobs 32.2.2 receberam sinal no grafo privado. Usuário relatou voz com efeito e soundboard funcionando no Discord desktop Linux em 22/10; gravação Audacity/Tenacity, GUI OBS e medições físicas pendentes |
 | Monitoração e pré-escuta separadas | Experimental | Ganho, sinal idêntico em L/R e isolamento medidos em sink estéreo no daemon privado |
 | Detecção e reconexão automática | Experimental | Metadata de padrões, troca durante a sessão, retorno do daemon, retomada entre processos e cancelamento por Stop testados em fixture privada |
 | Volume de Ouvir-me | Experimental | Controle de 0–200% independente; valor e persistência verificados por CLI/motor |
@@ -17,6 +17,7 @@ Nenhum marco inteiro foi promovido a estável.
 | SQLite e presets JSON | Verificada em testes | Persistência, versão, limites e dados inválidos |
 | WAV/MP3/Ogg Vorbis/FLAC | Verificada offline | Fixtures próprias; mono48k, resampling, limites e corte |
 | Painéis, loop e sobreposição | Experimental | Mixer e comandos testados; uso prolongado real pendente |
+| Remover som do soundboard | Implementada; validação pendente | Menu ⋮ e botão direito, confirmação e comando único GUI/CLI/MCP. Para apenas as instâncias desse som e remove seu cadastro persistente; arquivos originais e cópias normalizadas são mantidos em disco. Testes preparados, ainda não executados |
 | Gravação processada e replay30s | Experimental | Worker/PCM, finalização e preservação; criar voz A/B→gravar→cortar→soundboard→reiniciar→reutilizar sem WAV externo aprovado por comandos no grafo privado |
 | CLI e MCP | Verificada em testes locais | Mesmo registro; sessão parada, biblioteca e mensagens JSON-RPC |
 | Pacote Linux `.tar.gz` | Experimental | Checksum validado; binários extraídos executados, GUI em Xvfb e CLI integrado ao PipeWire privado |

@@ -17,7 +17,8 @@ necessário retornam diagnóstico; não há uma promessa de suporte a todas as t
 As configurações padrão de áudio do Windows não são modificadas.
 
 **Microfone virtual próprio ainda não implementado.** Capturar/reproduzir com WASAPI
-não cria um dispositivo de entrada para Discord, OBS ou jogos. A interface e o
+não cria um dispositivo de entrada para Discord, OBS, jogos ou gravadores como
+Audacity/Tenacity. A interface e o
 comando Status informam essa limitação. A versão permite preparar efeitos e testar
 monitoração/gravação; não representa a conclusão do marco de paridade Windows.
 Drivers de terceiros não são incluídos no pacote.
