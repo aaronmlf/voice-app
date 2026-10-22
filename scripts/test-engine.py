@@ -25,6 +25,14 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def raw_stdio_command(program, env):
+    """Older pw-cat uses '-' for raw PCM; newer releases also require --raw."""
+    result = subprocess.run([program, "--help"], env=env, capture_output=True,
+                            text=True, timeout=2)
+    require(result.returncode == 0, f"Cannot query {program} PCM capabilities")
+    return [program] + (["--raw"] if "--raw" in result.stdout + result.stderr else [])
+
+
 def private_fixture():
     require(os.environ.get("VOICE_APP_ISOLATED_TEST") == "1", "Use the isolated PipeWire test wrapper")
     require(os.environ.get("PIPEWIRE_REMOTE") == "voice-app-test", "Unexpected PipeWire remote")
@@ -50,9 +58,15 @@ class Harness:
         self.env = dict(os.environ, XDG_RUNTIME_DIR=str(work / "xdg-runtime"), XDG_DATA_HOME=str(work / "xdg-data"))
         Path(self.env["XDG_RUNTIME_DIR"]).mkdir(mode=0o700)
         self.children = []
+        self.raw_commands = {}
         self.server = None
         self.log_path = work / "service.log"
         self.log = self.log_path.open("ab")
+
+    def raw_stdio_command(self, program):
+        if program not in self.raw_commands:
+            self.raw_commands[program] = raw_stdio_command(program, self.env)
+        return list(self.raw_commands[program])
 
     def command(self, *arguments, ok=True):
         result = subprocess.run(self.cli + list(arguments), env=self.env, capture_output=True, text=True, timeout=8)
@@ -175,11 +189,14 @@ class Harness:
         return daemon
 
     def consumer(self, path):
-        process = subprocess.Popen([
-            "pw-record", "--raw", "--format", "s16", "--channels", "1", "--rate", "48000",
-            "--target", "0", "--latency", "256", "--properties",
-            "node.name=voice-test.engine-consumer adapter.auto-port-config={mode=dsp position=preserve}", str(path),
-        ], env=self.env, stdout=self.log, stderr=self.log)
+        # Redirect raw stdout ourselves; old pw-cat otherwise guesses a WAV header
+        # even when the destination file is named .raw.
+        with path.open("wb") as pcm:
+            process = subprocess.Popen(self.raw_stdio_command("pw-record") + [
+                "--format", "s16", "--channels", "1", "--rate", "48000",
+                "--target", "0", "--latency", "256", "--properties",
+                "node.name=voice-test.engine-consumer adapter.auto-port-config={mode=dsp position=preserve}", "-",
+            ], env=self.env, stdout=pcm, stderr=self.log)
         self.children.append(process)
         self.link(self.port("-o", "voice-app.virtual-microphone:"), self.port("-i", "voice-test.engine-consumer:"))
         return process

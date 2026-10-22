@@ -186,8 +186,8 @@ class ValidationSession:
         if not 0 < len(pcm_s16le) <= 2 * 1024**2 or len(pcm_s16le) % 2:
             raise ValueError('source requires 1..2 MiB of aligned s16le mono PCM')
         self.sources.add(name)
-        process = subprocess.Popen([
-            'pw-play', '--raw', '--format', 's16', '--channels', '1', '--rate', str(RATE),
+        process = subprocess.Popen(self.harness.raw_stdio_command('pw-play') + [
+            '--format', 's16', '--channels', '1', '--rate', str(RATE),
             '--target', '0', '--latency', '256', '--properties',
             f'node.name={name} adapter.auto-port-config={{mode=dsp position=preserve}}', '-'],
             env=self.env, stdin=subprocess.PIPE, stdout=self.harness.log, stderr=self.harness.log,
