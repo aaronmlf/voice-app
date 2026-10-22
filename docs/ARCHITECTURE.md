@@ -8,6 +8,12 @@
 `voice-engine` integra sessão, comandos, workers e socket. GUI, CLI e MCP usam esse registro único.
 `cargo xtask boundaries` verifica a direção das dependências.
 
+O engine escolhe o adaptador em compilação: `voice-pipewire` no Linux e `voice-wasapi`
+no Windows. Os contratos de PCM, efeitos, biblioteca e comandos permanecem compartilhados.
+O adaptador WASAPI prepara captura física, reprodução local e loopback explícito; não cria
+um microfone virtual. Status expõe backend e capacidades, e a GUI só orienta selecionar
+o dispositivo virtual quando ele existe. Consulte `WINDOWS.md` para os limites dessa etapa.
+
 ## Percurso
 
 ```mermaid
@@ -72,6 +78,14 @@ finaliza a sessão atual preservando a preferência de conexão. A interface cri
 adicionais conectam-se à existente. Um lock impede que dois motores disputem o mesmo socket.
 Permissões do diretório/socket são 0700/0600. Frames JSON são limitados a 1 MiB e têm timeout.
 O controle não abre portas de rede. Ativação de captura, monitoração e gravação é explícita.
+
+No Windows, os diretórios privados usam ACL do usuário e o controle usa named pipe local
+exclusivo. O servidor rejeita clientes remotos; o cliente confere a identidade do servidor.
+Os timeouts de I/O têm cancelamento com preservação dos buffers até a conclusão. O caminho
+de `--socket` identifica uma sessão local e é traduzido para um nome de pipe do usuário.
+O diretório de dados padrão é `%LOCALAPPDATA%\\voice-app`; caminhos personalizados não devem
+ficar sob diretórios compartilhados graváveis por outras contas. Essas rotas são distintas
+dos callbacks de áudio. Testes de ACL/IPC em CI não substituem validação entre contas reais.
 
 Na perda de servidor/dispositivo, a fonte para de transmitir e a gravação é finalizada. A recuperação
 usa tentativas com intervalo progressivo de dois até cinco segundos. Uma rota fixa aguarda o mesmo

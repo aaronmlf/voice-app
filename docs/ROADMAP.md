@@ -19,6 +19,9 @@ Há uma implementação Linux experimental cobrindo a infraestrutura M0 e partes
 M1/M2. A matriz FEATURES.md é a fonte de verdade. Não considerar M0/M1/M2 aprovados apenas por
 compilarem: os critérios de aplicativos reais, hardware, duração e distribuição continuam abertos.
 
+A frente Windows prepara backend WASAPI, controle local privado e pacote nativo.
+Compilação em CI e Wine não concluem M4: driver virtual e testes em Windows real permanecem pendentes.
+
 ## Próximas prioridades
 
 1. Completar a validação M0 com Discord/OBS, microfone/headset físico e medição ponta a ponta.

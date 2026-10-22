@@ -67,3 +67,22 @@ corpus, benchmark DSP, política de dependências e licenças, regressão PipeWi
 daemon privado e pacote Linux. Isso não certifica sessão gráfica, hardware ou instalação
 no Ubuntu. As exceções de manutenção do zbus estão documentadas em SECURITY.md, com
 revisão obrigatória em 22/11/2026. A release permanece experimental.
+
+## 2026-10-22 — Preparação Windows e Wine
+
+Backend WASAPI separado do PipeWire, contratos de áudio/DSP compartilhados e captura
+explícita do desktop. Monitoração estéreo, gravação e pré-escuta são locais; esta etapa
+não cria um microfone virtual Windows. A GUI informa a capacidade efetiva. O formato
+inicial exige mix nativo float32/48 kHz. Erros fatais silenciam a saída; descontinuidades
+recuperáveis incrementam contadores sem encerrar a gravação.
+
+Controle Windows por named pipe local restrito ao usuário, arquivos privados e persistência
+por substituição. O Linux preserva seu adaptador e socket. Empacotamento Windows usa ZIP,
+notices/fontes exigidas e allowlist documental, sem histórico privado ou presets pessoais.
+As únicas vozes distribuídas são os 12 presets originais.
+
+Preparados gates nativos em Windows Server 2022 e smoke separado pelo Wine com prefixo,
+rede e display isolados, sinais sintéticos e os executáveis extraídos. As execuções ainda
+estão pendentes nesta revisão; testes físicos Windows 10/11, WASAPI, latência, sessões longas
+e driver virtual assinado não estão qualificados. Nenhuma tarefa pesada local foi iniciada
+enquanto o lote Linux prolongado continua ativo. Consulte WINDOWS.md.

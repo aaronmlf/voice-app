@@ -20,6 +20,7 @@ Nenhum marco inteiro foi promovido a estável.
 | Gravação processada e replay30s | Experimental | Worker/PCM, finalização e preservação; criar voz A/B→gravar→cortar→soundboard→reiniciar→reutilizar sem WAV externo aprovado por comandos no grafo privado |
 | CLI e MCP | Verificada em testes locais | Mesmo registro; sessão parada, biblioteca e mensagens JSON-RPC |
 | Pacote Linux `.tar.gz` | Experimental | Checksum validado; binários extraídos executados, GUI em Xvfb e CLI integrado ao PipeWire privado |
+| Código público e releases GitHub | Experimental | `v0.1.0-alpha.1`, commit `046ae02`, publicada pelo Actions após 90 testes Rust, 40 Python, integração privada, corpus, benchmark e política de dependências. Dois assets reais com SHA-256 conferido e 23 arquivos documentais/scripts iguais ao snapshot público; binários desta release inspecionados por ELF, sem execução local durante o soak. Somente os 12 presets originais |
 | Pitch/formante, chorus, denoise | Verificada offline; ao vivo experimental | Backend real, testes espectrais/ruído/zero alloc Rust; pitch88ms, denoise20ms, ambos108ms de buffering algorítmico |
 | Reordenação de efeitos | Experimental | 11 blocos no Laboratório; validação de permutação, atualização atômica, diferença no áudio offline/PipeWire, persistência e importação de presets antigos testadas |
 | Mistura de duas vozes | Experimental | Ramos alinhados, transições e persistência; áudio externo por 30 s sem novos erros; atraso de onset p95 101 ms no grafo privado, 24 eventos, perfil sem denoise; latência física e sessão longa pendentes |
@@ -29,7 +30,8 @@ Nenhum marco inteiro foi promovido a estável.
 | Validação reprodutível de áudio | Verificada em grafo privado | Ferramentas de fluxo, latência, libobs e estabilidade; básico de 60 min aprovado com 3.600,018 s ativos e nenhum novo contador após aquecimento. Mistura de quatro horas ainda em andamento. PCM é descartado e o replay é limitado. Ver `VALIDATION.md` |
 | Atalhos globais / bandeja | Planejada | Portal Wayland e fallback CLI |
 | IA de conversão de voz | Planejada | Worker, modelos/licenças/hashes e hardware medido |
-| Windows/macOS | Planejada | Drivers/plugins, assinatura e hardware próprios |
+| Windows nativo | Em preparação | Backend WASAPI, IPC local privado, CI MSVC e ZIP; validação remota e Wine pendentes. Sem driver/microfone virtual nem evidência de hardware Windows |
+| macOS | Planejada | Plugin virtual, assinatura e hardware próprios |
 | Comunidade/mobile | Planejada | Serviços e pareamento ainda não implementados |
 | AppImage/Flatpak | Planejada | Distribuição inicial em tar.gz |
 
