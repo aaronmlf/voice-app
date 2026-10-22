@@ -102,6 +102,19 @@ de portas Pulse sem session manager e comparação JSON de representações equi
 A sessão de 60 minutos e a de quatro horas têm relatórios próprios no lote prolongado.
 Consulte seu status e duração real antes de citá-las como aprovadas.
 
+## Compatibilidade das ferramentas PipeWire
+
+As fixtures PCM usam stdin/stdout (`-`) com descritores de arquivo explícitos. Os validadores
+consultam `pw-play`/`pw-record --help` e acrescentam `--raw` somente quando anunciado: versões
+antigas selecionam PCM puro pelo `-`, enquanto versões novas exigem a flag. A captura nos
+exemplos termina no processo pai após atingir a quantidade exigida de bytes, com prazo de
+quatro segundos e validação de frames; não depende de `--sample-count`.
+
+Essa adaptação corrige a incompatibilidade encontrada no gate Ubuntu 24.04 com as ferramentas
+PipeWire antigas. Os sinais, volumes e critérios de aprovação continuam os mesmos. A CI de
+pull requests executa também a regressão no daemon privado; isso não certifica hardware ou
+a sessão gráfica da distribuição. Nenhuma dessas operações ocorre em callback do aplicativo.
+
 ## Etapa física adiada
 
 Por solicitação do usuário, ficam para outra sessão: entrada no Discord, fluxo gráfico completo

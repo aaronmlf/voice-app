@@ -92,7 +92,7 @@ jobs:
         run: cargo deny check licenses bans sources advisories
 
   pipewire-smoke:
-    if: inputs.pipewire_smoke == true
+    if: inputs.pipewire_smoke == true || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
