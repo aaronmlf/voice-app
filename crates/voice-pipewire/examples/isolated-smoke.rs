@@ -1,6 +1,9 @@
 //! Hardware-free signal-path tests. Run only via scripts/test-pipewire.sh.
+mod support;
+
 use anyhow::{Context, Result, ensure};
 use std::{
+    fs::File,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, atomic::Ordering},
@@ -455,9 +458,8 @@ fn play(fixture: &Path, name: &str, samples: &[f32], sink: &str) -> Result<Optio
         "node.name=voice-test.{name} adapter.auto-port-config={{mode=dsp position=preserve}}"
     );
     let child = ChildGuard(
-        Command::new("pw-play")
+        support::raw_stdio_command("pw-play")?
             .args([
-                "--raw",
                 "--format",
                 "f32",
                 "--channels",
@@ -471,7 +473,8 @@ fn play(fixture: &Path, name: &str, samples: &[f32], sink: &str) -> Result<Optio
                 "--properties",
                 &properties,
             ])
-            .arg(&path)
+            .arg("-")
+            .stdin(File::open(&path)?)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?,
@@ -492,9 +495,8 @@ impl Recorder {
             "node.name=voice-test.{name} adapter.auto-port-config={{mode=dsp position=preserve}}"
         );
         let child = ChildGuard(
-            Command::new("pw-record")
+            support::raw_stdio_command("pw-record")?
                 .args([
-                    "--raw",
                     "--format",
                     "f32",
                     "--channels",
@@ -503,15 +505,13 @@ impl Recorder {
                     "48000",
                     "--target",
                     "0",
-                    "--sample-count",
-                    &frames.to_string(),
                     "--latency",
                     "256",
                     "--properties",
                     &properties,
                 ])
-                .arg(&path)
-                .stdout(Stdio::null())
+                .arg("-")
+                .stdout(File::create(&path)?)
                 .stderr(Stdio::inherit())
                 .spawn()?,
         );
@@ -523,28 +523,36 @@ impl Recorder {
         })
     }
     fn finish(&mut self) -> Result<Vec<f32>> {
+        let required_samples = self.frames as usize * self.channels as usize;
+        let required_bytes = required_samples * 4;
         let deadline = Instant::now() + Duration::from_secs(4);
-        while self.child.0.try_wait()?.is_none() && Instant::now() < deadline {
+        while self.child.0.try_wait()?.is_none()
+            && std::fs::metadata(&self.path)?.len() < required_bytes as u64
+            && Instant::now() < deadline
+        {
             std::thread::sleep(Duration::from_millis(10));
         }
-        let status = self.child.0.try_wait()?;
+        if self.child.0.try_wait()?.is_none() {
+            self.child.0.kill()?;
+        }
+        let status = self.child.0.wait()?;
         let bytes = std::fs::read(&self.path)?;
-        // pw-record's sample-count completion may return 1; validate completed PCM below.
         ensure!(
-            status.is_some(),
-            "isolated recorder did not finish: {status:?}, {} bytes",
-            bytes.len()
-        );
-        ensure!(
-            bytes.len() >= self.frames as usize * self.channels as usize * 4,
+            bytes.len() >= required_bytes,
             "short isolated recording: {} bytes, status {:?}",
             bytes.len(),
             status
+        );
+        ensure!(
+            bytes.len() % (self.channels as usize * 4) == 0,
+            "partial PCM frame in isolated recording: {} bytes",
+            bytes.len()
         );
         Ok(bytes
             .as_chunks::<4>()
             .0
             .iter()
+            .take(required_samples)
             .map(|b| f32::from_le_bytes(*b))
             .collect())
     }

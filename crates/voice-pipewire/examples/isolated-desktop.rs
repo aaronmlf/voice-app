@@ -1,6 +1,9 @@
 //! Hardware-free desktop capture tests. Run only inside scripts/test-pipewire.sh.
+mod support;
+
 use anyhow::{Context, Result, ensure};
 use std::{
+    fs::File,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Arc, atomic::Ordering},
@@ -65,11 +68,28 @@ fn main() -> Result<()> {
         .flat_map(f32::to_le_bytes)
         .collect();
     std::fs::write(&path, raw)?;
-    let _player = ChildGuard(Command::new("pw-play")
-        .args(["--raw", "--format", "f32", "--channels", "2", "--rate", "48000", "--target", "0",
-            "--latency", "256", "--properties",
-            "node.name=voice-test.desktop-player adapter.auto-port-config={mode=dsp position=preserve}"])
-        .arg(path).stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?);
+    let _player = ChildGuard(
+        support::raw_stdio_command("pw-play")?
+            .args([
+                "--format",
+                "f32",
+                "--channels",
+                "2",
+                "--rate",
+                "48000",
+                "--target",
+                "0",
+                "--latency",
+                "256",
+                "--properties",
+                "node.name=voice-test.desktop-player adapter.auto-port-config={mode=dsp position=preserve}",
+            ])
+            .arg("-")
+            .stdin(File::open(path)?)
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()?,
+    );
     for channel in ["FL", "FR"] {
         link(
             &port(
