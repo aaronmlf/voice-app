@@ -491,7 +491,7 @@ fn license_report(meta: &Value, notices: Option<&Path>) -> Result<PathBuf> {
 fn sha256_file(path: &Path) -> Result<String> {
     let result = if cfg!(windows) {
         Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "(Get-FileHash -LiteralPath $env:VOICE_APP_HASH_PATH -Algorithm SHA256).Hash.ToLowerInvariant()"])
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; $stream = [System.IO.File]::OpenRead($env:VOICE_APP_HASH_PATH); try { $algorithm = [System.Security.Cryptography.SHA256]::Create(); try { [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() } finally { $algorithm.Dispose() } } finally { $stream.Dispose() }"])
             .env("VOICE_APP_HASH_PATH", path)
             .output()?
     } else {
@@ -504,7 +504,11 @@ fn sha256_file(path: &Path) -> Result<String> {
         String::from_utf8_lossy(&result.stderr)
     );
     let output = String::from_utf8(result.stdout)?;
-    let hash = output.split_whitespace().next().context("SHA-256 output")?;
+    let hash = if cfg!(windows) {
+        output.trim()
+    } else {
+        output.split_whitespace().next().context("SHA-256 output")?
+    };
     ensure!(
         hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
         "invalid SHA-256 output"
