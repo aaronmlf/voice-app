@@ -1,0 +1,34 @@
+name: Sugerir funcionalidade
+description: Descreva uma necessidade e o resultado que ajudaria no seu fluxo.
+title: "[Ideia] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Consulte docs/ROADMAP.md, docs/FEATURES.md e as issues existentes antes de sugerir.
+        O foco atual é validar o aplicativo Linux experimental. Uma sugestão não define prazo de entrega.
+        Use exemplos fictícios e não publique áudios pessoais, dados sensíveis ou mídia sem licença.
+  - type: textarea
+    id: need
+    attributes:
+      label: Que necessidade você quer resolver?
+      description: Descreva o que está tentando fazer e onde o fluxo atual atrapalha.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Como você gostaria que funcionasse?
+      description: Dê um exemplo concreto do início ao resultado desejado. Não é necessário propor a implementação.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas ou soluções atuais (opcional)
+      description: Informe o que já tentou e as limitações. Se houver referência externa, descreva a capacidade desejada e forneça o link.
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto e critério de conclusão (opcional)
+      description: Plataforma, dispositivos ou aplicativos relevantes e um exemplo de como verificar que a mudança resolveu a necessidade. Informe restrições de uso offline ou desempenho, se houver.
