@@ -89,7 +89,16 @@ def read_wav(path):
         if kind == b"fmt ":
             require(size >= 16, "Invalid WAV format chunk")
             fmt, channels, rate, _, _, bits = struct.unpack_from("<HHIIHH", data, position)
-            require((fmt, channels, rate, bits) == (3, 1, 48000, 32), "Expected mono 48 kHz float32 WAV")
+            require((channels, rate, bits) == (1, 48000, 32), "Expected mono 48 kHz float32 WAV")
+            if fmt == 0xfffe:
+                require(size >= 40, "Truncated extensible WAV format")
+                extension_size, valid_bits = struct.unpack_from("<HH", data, position + 16)
+                require(22 <= extension_size <= size - 18 and valid_bits == 32,
+                        "Invalid extensible float32 WAV parameters")
+                require(data[position + 24:position + 40] == bytes.fromhex("0300000000001000800000aa00389b71"),
+                        "Extensible WAV subtype must be IEEE float")
+            else:
+                require(fmt == 3, "Expected IEEE float or extensible IEEE float WAV")
             valid_format = True
         elif kind == b"data":
             require(size == 12000 * 4, "DSP changed synthetic frame count")

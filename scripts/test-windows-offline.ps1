@@ -123,7 +123,18 @@ function Read-TestWav([string]$Path) {
                 [void]$reader.ReadUInt32()
                 [void]$reader.ReadUInt16()
                 $bits = $reader.ReadUInt16()
-                Require ($format -eq 3 -and $channels -eq 1 -and $rate -eq 48000 -and $bits -eq 32) 'Expected mono 48 kHz float32 WAV.'
+                Require ($channels -eq 1 -and $rate -eq 48000 -and $bits -eq 32) 'Expected mono 48 kHz float32 WAV.'
+                if ($format -eq 0xfffe) {
+                    Require ($size -ge 40) 'Truncated extensible WAV format.'
+                    $extensionSize = $reader.ReadUInt16()
+                    $validBits = $reader.ReadUInt16()
+                    [void]$reader.ReadUInt32() # channel mask; the stream is mono
+                    $subformat = [System.BitConverter]::ToString($reader.ReadBytes(16))
+                    Require ($extensionSize -ge 22 -and $extensionSize -le ($size - 18) -and $validBits -eq 32) 'Invalid extensible float32 WAV parameters.'
+                    Require ($subformat -ceq '03-00-00-00-00-00-10-00-80-00-00-AA-00-38-9B-71') 'Extensible WAV subtype must be IEEE float.'
+                } else {
+                    Require ($format -eq 3) 'Expected IEEE float or extensible IEEE float WAV.'
+                }
                 $formatOk = $true
             } elseif ($chunk -eq 'data') {
                 Require ($size -eq 12000 * 4) 'Synthetic DSP output changed frame count.'
