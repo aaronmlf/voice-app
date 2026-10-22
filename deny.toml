@@ -29,3 +29,11 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 
 [advisories]
 version = 2
+# Informational maintenance notices: these crates moved into zbus 6.
+# Transitive GUI/portal dependencies still use zbus 5. No vulnerability waiver.
+# Review by 2026-11-22; the CI deadline gate rejects these exceptions afterward.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant maintenance migration; transitive via GUI/portal zbus 5, awaiting compatible upstream migration to zbus 6. Review by 2026-11-22; see SECURITY.md." },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names maintenance migration; transitive via GUI/portal zbus 5, awaiting compatible upstream migration to zbus 6. Review by 2026-11-22; see SECURITY.md." },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive maintenance migration; transitive via GUI/portal zbus 5, awaiting compatible upstream migration to zbus 6. Review by 2026-11-22; see SECURITY.md." },
+]

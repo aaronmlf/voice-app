@@ -42,3 +42,19 @@ e na documentação de validação.
 
 Bugs de som, compatibilidade e interface sem impacto de segurança podem ser relatados pelo
 formulário público de bug, com uma reprodução sem informações sensíveis.
+
+## Pendência de manutenção das dependências
+
+Em 22/10/2026, a interface e os portais trazem `zbus` 5 e os crates separados `zvariant`,
+`zbus_names` e `zvariant_derive`. Os avisos informativos
+[RUSTSEC-2026-0370](https://rustsec.org/advisories/RUSTSEC-2026-0370.html),
+[0371](https://rustsec.org/advisories/RUSTSEC-2026-0371.html) e
+[0372](https://rustsec.org/advisories/RUSTSEC-2026-0372.html) registram a incorporação desses
+crates ao `zbus` 6 e a falta de manutenção dos pacotes separados. Esses três registros
+não descrevem uma vulnerabilidade corrigida por uma atualização compatível.
+
+`deny.toml` contém exceções individuais apenas para esses avisos de manutenção. A CI
+continua verificando todos os demais avisos e bloqueia essas exceções a partir de
+**22/11/2026**. Antes dessa data, revisar as versões de eframe/accesskit/rfd e migrar as
+dependências indiretas para `zbus` 6, com testes de acessibilidade e seleção de arquivos.
+Isso não constitui uma auditoria ou uma promessa de ausência de vulnerabilidades.
