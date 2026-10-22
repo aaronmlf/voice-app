@@ -32,6 +32,8 @@ e de janela do sistema; consulte `RUNNING.txt`.
 
 ## Limitações conhecidas
 
+- Três avisos de manutenção de crates incorporados ao `zbus` 6 têm exceções individuais
+  até 22/11/2026, quando a CI exige revisão. Consulte `SECURITY.md` no repositório.
 - Áudio validado em PipeWire privado com sinais sintéticos e fonte real PulseAudio da libobs.
   Hardware, Discord, fluxo gráfico OBS, Wayland e sessões de 60 minutos/quatro horas ainda
   precisam de evidências específicas. O teste libobs não inclui cenas, encoder ou gravação OBS.
