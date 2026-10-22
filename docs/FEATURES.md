@@ -12,7 +12,7 @@ Nenhum marco inteiro foi promovido a estável.
 | Detecção e reconexão automática | Experimental | Metadata de padrões, troca durante a sessão, retorno do daemon, retomada entre processos e cancelamento por Stop testados em fixture privada |
 | Volume de Ouvir-me | Experimental | Controle de 0–200% independente; valor e persistência verificados por CLI/motor |
 | Interface nativa | Experimental | Compilação e captura gráfica; fluxo real completo ainda precisa de validação |
-| Filtro de vozes originais | Verificada em GUI isolada | Clique na biblioteca mostrou somente os 12 presets builtin; Minhas vozes mostrou os 9 importados, sem trocar a voz selecionada |
+| Filtro de vozes originais | Verificada em GUI isolada | Clique na biblioteca mostrou somente os 12 presets builtin; Minhas vozes mostrou apenas vozes de usuário, sem trocar a voz selecionada. Presets pessoais ficam fora da distribuição pública |
 | Imagens de presets próprios | Experimental | PNG/JPEG/WebP, recorte, limites, falhas e persistência verificados; imagem gerenciada após remover fonte e reiniciar, renderização circular e comandos CLI/MCP testados |
 | SQLite e presets JSON | Verificada em testes | Persistência, versão, limites e dados inválidos |
 | WAV/MP3/Ogg Vorbis/FLAC | Verificada offline | Fixtures próprias; mono48k, resampling, limites e corte |
@@ -26,7 +26,7 @@ Nenhum marco inteiro foi promovido a estável.
 | Intensidade por efeito | Experimental | 11 intensidades em A e B; bypass, wet e interpolação, alinhamento dry/wet de pitch, presets antigos e ausência de alloc/free Rust em processamento verificados |
 | Atalho no menu Linux/KDE | Verificado nesta sessão | Entrada desktop e ícone instalados; abertura do binário pronto por gio, identidade voice-app, limite de 3 GiB e segundo clique sem duplicação verificados; pinagem manual pelo menu do KDE |
 | Captura do desktop | Experimental | Sink explícito, estéreo L/R, WAV/replay independentes, isolamento do virtual, finalização na perda do daemon e captura desligada após reiniciar verificados em PipeWire privado; hardware e sessões longas pendentes |
-| Validação reprodutível de áudio | Verificada em grafo privado | Ferramentas de fluxo, latência, libobs e estabilidade, relatórios com hash/limites e PCM descartado durante soak; sessões de 60 min/4 h só aprovam após duração real. Ver `VALIDATION.md` |
+| Validação reprodutível de áudio | Verificada em grafo privado | Ferramentas de fluxo, latência, libobs e estabilidade; básico de 60 min aprovado com 3.600,018 s ativos e nenhum novo contador após aquecimento. Mistura de quatro horas ainda em andamento. PCM é descartado e o replay é limitado. Ver `VALIDATION.md` |
 | Atalhos globais / bandeja | Planejada | Portal Wayland e fallback CLI |
 | IA de conversão de voz | Planejada | Worker, modelos/licenças/hashes e hardware medido |
 | Windows/macOS | Planejada | Drivers/plugins, assinatura e hardware próprios |

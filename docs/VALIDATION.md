@@ -99,8 +99,15 @@ Tentativas anteriores continuam preservadas: caminho de socket longo, falta de c
 de portas Pulse sem session manager e comparação JSON de representações equivalentes de
 `f32` foram corrigidos nos validadores. Esses erros não foram promovidos a defeitos do produto.
 
-A sessão de 60 minutos e a de quatro horas têm relatórios próprios no lote prolongado.
-Consulte seu status e duração real antes de citá-las como aprovadas.
+A fase básica de 60 minutos terminou aprovada em 22/10/2026 às 19:15:03 UTC: 3.600,018 s
+ativos e 716 janelas saudáveis, sem incremento nos cinco contadores após aquecimento. O baseline
+preserva um underrun de entrada inicial. RSS máximo: motor 22,78 MiB, PipeWire 11,59 MiB;
+CPU média ponderada por intervalo: motor 2,75% de um núcleo, PipeWire 0,89%. O maior trecho
+quase silencioso foi um frame (0,0208 ms) em 172.800.000 frames observados. Replay limitado a 30 s.
+Esses resultados são da cadeia básica em grafo privado, sem GUI, desktop ou denoise.
+
+A fase de quatro horas com mistura continua em andamento, sem aprovação antecipada.
+Cada fase tem relatório próprio; o lote agregado só aprova após ambas terminarem saudáveis.
 
 ## Compatibilidade das ferramentas PipeWire
 
@@ -120,4 +127,5 @@ a sessão gráfica da distribuição. Nenhuma dessas operações ocorre em callb
 Por solicitação do usuário, ficam para outra sessão: entrada no Discord, fluxo gráfico completo
 na OBS, microfone/headset reais, perda e retorno físicos de dispositivos e medição acústica
 de latência ponta a ponta. A execução atual não abre o microfone pessoal nem toca áudio nos fones.
-Ubuntu LTS, Wayland/atalhos, instalação/atualização/remoção e sessões longas da GUI seguem pendentes.
+Hardware e sessão gráfica Ubuntu LTS, Wayland/atalhos, instalação/atualização/remoção e sessões
+longas da GUI seguem pendentes. A regressão automatizada em runner Ubuntu usa somente grafo privado.

@@ -35,8 +35,10 @@ e de janela do sistema; consulte `RUNNING.txt`.
 - Três avisos de manutenção de crates incorporados ao `zbus` 6 têm exceções individuais
   até 22/11/2026, quando a CI exige revisão. Consulte `SECURITY.md` no repositório.
 - Áudio validado em PipeWire privado com sinais sintéticos e fonte real PulseAudio da libobs.
-  Hardware, Discord, fluxo gráfico OBS, Wayland e sessões de 60 minutos/quatro horas ainda
-  precisam de evidências específicas. O teste libobs não inclui cenas, encoder ou gravação OBS.
+  Cadeia básica passou por 60 minutos reais em grafo privado: 3.600,018 s ativos, sem novos
+  contadores após aquecimento e RSS máximo do motor de 22,78 MiB. A fase de quatro horas com
+  mistura continua pendente. Hardware, Discord, fluxo gráfico OBS e Wayland ainda precisam de
+  evidências específicas. O teste libobs não inclui cenas, encoder ou gravação OBS.
 - Pitch/formante adicionam 88 ms de buffering algorítmico; redução de ruído, 20 ms.
   Combinados são 108 ms, antes dos buffers do sistema. A meta de 80 ms com pitch está aberta.
   Em 24 eventos por perfil no grafo privado, p95 de onset: básico 10 ms, pitch 99 ms e mistura

@@ -26,9 +26,9 @@ Validação no host de desenvolvimento, sem alterar o áudio pessoal:
 - Binários/scripts extraídos do pacote passaram pelos testes de fluxo e libobs,
   inclusive com caminhos longos e aliases privados removidos ao encerrar.
 
-As sessões reais de 60 minutos e quatro horas estavam em andamento ao preparar a
-publicação; nenhum desses resultados foi antecipado. O lote descarta PCM e grava
-apenas métricas, limitado a 3 GiB sem swap. Interrupção, cortes e falhas reprovam.
+O lote prolongado descarta PCM e grava apenas métricas, limitado a 3 GiB sem swap.
+A fase básica de 60 minutos foi aprovada; os valores estão na evidência intermediária
+abaixo. A mistura de quatro horas segue pendente. Interrupção, cortes e falhas reprovam.
 
 Os binários públicos são recompilados nos runners Ubuntu 24.04 do GitHub. O pacote
 local exige glibc mais nova e não é usado como asset da release. O workflow publica
@@ -49,3 +49,21 @@ disponíveis, encaminhar PCM por stdin/stdout e controlar a duração da captura
 preservando os sinais e critérios. A regressão privada também passou a ser gate de pull requests.
 Quatro testes Python cobrem a seleção de argumentos por capacidade, sem daemon ou hardware.
 O código de processamento e os 12 presets originais não foram alterados por esse ajuste.
+
+## 2026-10-22 — Evidência intermediária do lote prolongado
+
+A fase básica de 60 min terminou aprovada às 19:15:03 UTC: 3.600,018 s ativos, 716 janelas
+saudáveis e nenhum novo contador após aquecimento. O baseline mantém um underrun inicial.
+RSS máximo motor 22,78 MiB/PipeWire 11,59 MiB; CPU média ponderada motor 2,75% de um núcleo
+e PipeWire 0,89%. Maior quase silêncio: um frame em 172.800.000 frames observados. Replay
+limitado a 30 s. O perfil não liga GUI, captura do desktop ou denoise. A mistura de quatro
+horas segue em andamento, sem aprovação antecipada. Não é medição de latência física.
+
+## 2026-10-22 — Gates públicos no Ubuntu 24.04
+
+[CI da correção das fixtures](https://github.com/aaronmlf/voice-app/actions/runs/39845413093)
+aprovada: formatação, Clippy, 90 testes Rust, 40 testes Python, limites entre componentes,
+corpus, benchmark DSP, política de dependências e licenças, regressão PipeWire/motor em
+daemon privado e pacote Linux. Isso não certifica sessão gráfica, hardware ou instalação
+no Ubuntu. As exceções de manutenção do zbus estão documentadas em SECURITY.md, com
+revisão obrigatória em 22/11/2026. A release permanece experimental.
