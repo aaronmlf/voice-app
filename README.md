@@ -11,7 +11,7 @@ captura pelo módulo de áudio da libobs também foi verificada. Discord, fluxo 
 hardware real, sessões longas e outras distribuições ainda exigem evidências específicas.
 Este é um projeto independente, sem vínculo com o Voicemod.
 
-## Executar
+## Executar no Linux
 
 Baixe o `.tar.gz` e `SHA256SUMS.txt` na página de
 [releases](https://github.com/aaronmlf/voice-app/releases), confira `sha256sum -c SHA256SUMS.txt`,
@@ -41,6 +41,18 @@ O volume é salvo e não altera o microfone virtual nem o soundboard. Selecione 
 Microphone** como entrada no Discord, OBS ou jogo. O microfone padrão do sistema não é alterado.
 Fechar a interface encerra o motor quando ela o iniciou; uma sessão `voice-cli serve` externa
 continua até `shutdown` ou Ctrl+C.
+
+## Windows experimental
+
+A portabilidade nativa usa WASAPI para preparar captura, efeitos, Ouvir-me estéreo,
+pré-escuta e gravação, com o mesmo motor/biblioteca. A CI compila com MSVC em Windows
+Server 2022; uma verificação adicional pelo Wine usa um prefixo isolado e áudio sintético.
+Os resultados desses gates são registrados separadamente de testes em Windows 10/11 real.
+
+**O microfone virtual Windows ainda depende de um driver próprio.** Esta versão inicial
+permite preparar efeitos e testar monitoração/gravação; não cria uma entrada para chamadas.
+O pacote será um ZIP experimental com checksum, em uma release `windows-v…` separada do Linux.
+Veja o [escopo e as verificações pendentes](docs/WINDOWS.md).
 
 ## Capturar áudio do desktop
 
