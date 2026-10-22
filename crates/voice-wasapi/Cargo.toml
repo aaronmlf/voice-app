@@ -1,0 +1,15 @@
+[package]
+name = "voice-wasapi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+voice-core.workspace = true
+voice-dsp.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+anyhow.workspace = true
+cpal = { version = "=0.18.2", default-features = false }
