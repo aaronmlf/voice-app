@@ -1,0 +1,22 @@
+[package]
+name = "voice-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "voice-cli"
+path = "src/main.rs"
+
+[dependencies]
+voice-core.workspace = true
+voice-dsp.workspace = true
+voice-engine.workspace = true
+voice-library.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+hound.workspace = true
+ctrlc = "3.4"
+
