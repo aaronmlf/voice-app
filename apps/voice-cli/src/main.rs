@@ -49,7 +49,7 @@ enum Action {
     Doctor,
     Status,
     Devices,
-    /// Start the virtual microphone; device node names come from devices.
+    /// Start voice processing streams; device identifiers come from devices.
     Start {
         #[arg(long)]
         input: Option<String>,
