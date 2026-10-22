@@ -75,6 +75,19 @@ jobs:
           rustup default 1.98.1
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Check temporary maintenance exception deadline
+        run: |
+          python3 - <<'PY'
+          from datetime import date
+          import tomllib
+          from pathlib import Path
+          policy = tomllib.loads(Path('deny.toml').read_text())
+          ignored = {item if isinstance(item, str) else item['id']
+                     for item in policy['advisories'].get('ignore', [])}
+          temporary = {'RUSTSEC-2026-0370', 'RUSTSEC-2026-0371', 'RUSTSEC-2026-0372'}
+          if ignored & temporary and date.today() >= date(2026, 11, 22):
+              raise SystemExit('Maintenance exceptions expired; review the zbus 6 migration before release')
+          PY
       - name: Check declared licenses, sources, bans and known advisories
         run: cargo deny check licenses bans sources advisories
 
