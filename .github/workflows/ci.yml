@@ -1,0 +1,110 @@
+name: Linux checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      pipewire_smoke:
+        description: Run isolated PipeWire and CLI/engine integration
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      pipewire_smoke:
+        type: boolean
+        default: true
+      source_ref:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '1'
+  RUST_TEST_THREADS: '1'
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.98.1
+      - run: cargo fetch --locked
+      - run: cargo xtask check
+      - run: cargo xtask corpus
+      - run: cargo xtask bench
+      - run: cargo xtask license-check
+      - run: cargo xtask package
+      - name: Upload candidate archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-app-linux-candidate
+          path: |
+            dist/voice-app-*-x86_64-unknown-linux-gnu.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  dependency-policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+      - name: Install pinned cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Check temporary maintenance exception deadline
+        run: |
+          python3 - <<'PY'
+          from datetime import date
+          import tomllib
+          from pathlib import Path
+          policy = tomllib.loads(Path('deny.toml').read_text())
+          ignored = {item if isinstance(item, str) else item['id']
+                     for item in policy['advisories'].get('ignore', [])}
+          temporary = {'RUSTSEC-2026-0370', 'RUSTSEC-2026-0371', 'RUSTSEC-2026-0372'}
+          if ignored & temporary and date.today() >= date(2026, 11, 22):
+              raise SystemExit('Maintenance exceptions expired; review the zbus 6 migration before release')
+          PY
+      - name: Check declared licenses, sources, bans and known advisories
+        run: cargo deny check licenses bans sources advisories
+
+  pipewire-smoke:
+    if: inputs.pipewire_smoke == true
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+      - name: Install isolated audio test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 pipewire pipewire-bin libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+      - run: VOICE_APP_ENGINE_TEST=1 bash scripts/test-pipewire.sh

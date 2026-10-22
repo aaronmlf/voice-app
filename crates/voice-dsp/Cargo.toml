@@ -1,0 +1,14 @@
+[package]
+name = "voice-dsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+voice-core.workspace = true
+signalsmith-stretch = "=0.1.3"
+# 0.5.2 uses per-thread FFT caches that allocate on the first callback thread call.
+# 0.5.1 keeps FFT plans/scratch in the prepared state and can move safely to that thread.
+nnnoiseless = { version = "=0.5.1", default-features = false }

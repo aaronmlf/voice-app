@@ -1,0 +1,17 @@
+[package]
+name = "voice-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+voice-core.workspace = true
+voice-engine.workspace = true
+voice-library.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "accesskit"] }
+rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png"] }
+

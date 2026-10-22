@@ -1,0 +1,108 @@
+name: Linux experimental release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'New version tag (for example v0.1.0-alpha.1)'
+        required: true
+        default: v0.1.0-alpha.1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: version
+        name: Validate tag and source version
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, tomllib
+          from pathlib import Path
+          tag = os.environ['REQUESTED_TAG']
+          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?', tag):
+              raise SystemExit('Use a version tag such as v0.1.0-alpha.1')
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          if tag[1:].split('-')[0] != version.split('-')[0]:
+              raise SystemExit('Tag and Cargo workspace version disagree')
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          remote = subprocess.check_output(
+              ['git', 'ls-remote', '--tags', 'origin', f'refs/tags/{tag}', f'refs/tags/{tag}^{{}}'],
+              text=True)
+          refs = dict(line.split()[::-1] for line in remote.splitlines())
+          existing = refs.get(f'refs/tags/{tag}^{{}}', refs.get(f'refs/tags/{tag}'))
+          if existing and existing != sha:
+              raise SystemExit('Existing tag points to a different source commit')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as stream:
+              stream.write(f'tag={tag}\nsha={sha}\n')
+          PY
+
+  checks:
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.sha }}
+      pipewire_smoke: true
+
+  publish:
+    needs: [prepare, checks]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: voice-app-linux-candidate
+          path: dist
+      - name: Verify release files
+        id: files
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          name = f'voice-app-{version}-x86_64-unknown-linux-gnu.tar.gz'
+          if {p.name for p in Path('dist').iterdir()} != {name, 'SHA256SUMS.txt'}:
+              raise SystemExit('Unexpected release assets')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as stream:
+              stream.write(f'archive=dist/{name}\n')
+          PY
+          cd dist
+          sha256sum --check SHA256SUMS.txt
+      - name: Create draft, attach verified assets and publish pre-release
+        env:
+          ARCHIVE: ${{ steps.files.outputs.archive }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" --draft --prerelease \
+            --title "Voice App $TAG — Linux experimental" \
+            --notes-file docs/RELEASE-NOTES.md
+          gh release upload "$TAG" "$ARCHIVE" dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --draft=false --prerelease --latest=false \
+            --repo "$GITHUB_REPOSITORY"

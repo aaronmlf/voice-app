@@ -1,0 +1,73 @@
+name: Relatar bug
+description: Um problema reproduzível no voice-app experimental.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar a testar o voice-app. Confira as issues existentes e a matriz em docs/FEATURES.md.
+        Não publique áudios pessoais, conversas, tokens ou sua biblioteca. Revise caminhos e nomes nos logs.
+        Para suspeitas de vulnerabilidade, siga SECURITY.md; não envie detalhes de exploração neste formulário.
+  - type: input
+    id: version
+    attributes:
+      label: Versão ou commit
+      description: Informe a tag da release ou o commit utilizado; evite responder apenas "última versão".
+      placeholder: Tag ou hash do commit
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Como você executa o programa?
+      options:
+        - Pacote Linux tar.gz da release
+        - Compilado a partir do código
+        - Outro método (descreva no ambiente)
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ambiente
+      description: Distribuição e versão, PipeWire/WirePlumber, desktop e Wayland/X11. Em bugs de áudio, informe modelos de microfone/fone, conexão e taxa se conhecidos. Não inclua números de série.
+      placeholder: Linux, distribuição/versão, desktop, servidor de áudio e dispositivos relevantes.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para reproduzir
+      description: Use uma biblioteca de teste e áudio sintético quando possível. Informe voz/efeitos, origem da captura e aplicativo consumidor se forem relevantes.
+      placeholder: |
+        1. Abrir o programa...
+        2. Selecionar...
+        3. Observar...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Resultado esperado
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Resultado observado
+      description: Informe a frequência, se acontece após reconectar/reiniciar e qualquer mensagem exibida. Diferencie silêncio, distorção, atraso e encerramento inesperado.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnóstico mínimo (opcional)
+      description: Cole apenas trechos relevantes e revisados. Não anexe bancos, gravações pessoais, dumps completos ou relatórios com informações privadas.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Revisão antes de publicar
+      options:
+        - label: Revisei este relato e seus anexos para remover dados pessoais, segredos e áudio de terceiros.
+          required: true

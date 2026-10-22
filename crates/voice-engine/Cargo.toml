@@ -1,0 +1,18 @@
+[package]
+name = "voice-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+voice-core.workspace = true
+voice-dsp.workspace = true
+voice-pipewire.workspace = true
+voice-library.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hound.workspace = true
+libc = "0.2"
+
