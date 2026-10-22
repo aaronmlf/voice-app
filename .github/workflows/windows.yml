@@ -99,7 +99,13 @@ jobs:
           }
           $expectedHash = $Matches[1]
           if ($Matches[2] -cne $archive[0].Name) { throw 'Checksum filename differs from the candidate.' }
-          $actualHash = (Get-FileHash -LiteralPath $archive[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $stream = [System.IO.File]::OpenRead($archive[0].FullName)
+          try {
+            $algorithm = [System.Security.Cryptography.SHA256]::Create()
+            try {
+              $actualHash = [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+            } finally { $algorithm.Dispose() }
+          } finally { $stream.Dispose() }
           if ($actualHash -cne $expectedHash) { throw 'Candidate SHA-256 mismatch.' }
           Expand-Archive -LiteralPath $archive[0].FullName -DestinationPath target/windows-extracted
           $root = @(Get-ChildItem -LiteralPath target/windows-extracted -Directory)
