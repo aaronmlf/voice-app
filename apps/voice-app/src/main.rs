@@ -100,6 +100,7 @@ enum Tag {
     MonitorGain,
     Configure,
     DesktopCapture,
+    RemoveClip,
     PresetImage(u64),
 }
 struct Reply {
@@ -157,6 +158,8 @@ struct App {
     trim_start: f64,
     trim_end: f64,
     trim_name: String,
+    remove_clip_confirmation: Option<(String, String)>,
+    remove_clip_pending: Option<String>,
     started: Instant,
     smoke_seconds: Option<f32>,
     screenshot: Option<PathBuf>,
@@ -216,6 +219,7 @@ impl App {
                         | Command::CreateBoard { .. }
                         | Command::ImportClip { .. }
                         | Command::TrimClip { .. }
+                        | Command::RemoveClip { .. }
                 );
                 let value = client::send(&socket, command).map_err(|e| format!("{e:#}"));
                 let preset_image = requested_image.and_then(|id| {
@@ -289,6 +293,8 @@ impl App {
             trim_start: 0.,
             trim_end: 1.,
             trim_name: String::new(),
+            remove_clip_confirmation: None,
+            remove_clip_pending: None,
             started: Instant::now(),
             smoke_seconds,
             screenshot,
@@ -384,6 +390,15 @@ impl App {
     }
     fn action(&mut self, command: Command) {
         let configure = matches!(&command, Command::Configure { .. });
+        let removed_clip = match &command {
+            Command::RemoveClip { id } => {
+                if self.remove_clip_pending.is_some() {
+                    return;
+                }
+                Some(id.clone())
+            }
+            _ => None,
+        };
         let desktop = matches!(
             &command,
             Command::StartDesktopCapture { .. } | Command::StopDesktopCapture
@@ -406,6 +421,8 @@ impl App {
             Tag::AudioStart
         } else if desktop {
             Tag::DesktopCapture
+        } else if removed_clip.is_some() {
+            Tag::RemoveClip
         } else {
             Tag::Action
         };
@@ -421,7 +438,19 @@ impl App {
             self.audio_start_pending = Some(config);
         } else if desktop {
             self.desktop_capture_pending = true;
+        } else if let Some(id) = removed_clip {
+            self.remove_clip_pending = Some(id);
         }
+    }
+    fn refresh_library(&self) {
+        self.send(Tag::Presets, Command::Presets);
+        self.send(Tag::Boards, Command::Boards);
+        self.send(
+            Tag::Clips,
+            Command::Clips {
+                board_id: self.board.clone(),
+            },
+        );
     }
     fn request_status(&mut self) {
         if !self.poll_pending && self.tx.try_send((Tag::Status, Command::Status)).is_ok() {
@@ -588,6 +617,9 @@ impl App {
                         self.desktop_capture_pending = false;
                         self.request_status();
                     }
+                    if matches!(reply.tag, Tag::RemoveClip) {
+                        self.remove_clip_pending = None;
+                    }
                     if matches!(reply.tag, Tag::Configure) {
                         self.settings_pending = false;
                         if !self.settings_dirty
@@ -702,6 +734,31 @@ impl App {
                         self.notice = None;
                         self.request_status();
                     }
+                    Tag::RemoveClip => {
+                        let requested = self.remove_clip_pending.take();
+                        if value["removed"].as_bool() == Some(true)
+                            && value["id"].as_str() == requested.as_deref()
+                            && let Some(id) = requested
+                        {
+                            self.clips.retain(|clip| clip.id != id);
+                            if self.trim_id.as_deref() == Some(id.as_str()) {
+                                self.trim_id = None;
+                                self.trim_name.clear();
+                                self.trim_start = 0.;
+                                self.trim_end = 1.;
+                            }
+                            self.notice = None;
+                            self.request_status();
+                            if reply.refresh_library {
+                                self.refresh_library();
+                            }
+                        } else {
+                            self.notice = Some((
+                                "O serviço não confirmou a remoção do som. Atualize o painel antes de tentar novamente.".into(),
+                                true,
+                            ));
+                        }
+                    }
                     Tag::Action | Tag::AudioStart => {
                         if matches!(reply.tag, Tag::AudioStart)
                             && let Some(applied) = self.audio_start_pending.take()
@@ -712,14 +769,7 @@ impl App {
                         self.notice = None;
                         self.request_status();
                         if reply.refresh_library {
-                            self.send(Tag::Presets, Command::Presets);
-                            self.send(Tag::Boards, Command::Boards);
-                            self.send(
-                                Tag::Clips,
-                                Command::Clips {
-                                    board_id: self.board.clone(),
-                                },
-                            );
+                            self.refresh_library();
                         }
                     }
                 },
@@ -1422,21 +1472,18 @@ impl App {
                             {
                                 self.play(&clip.id, false);
                             }
-                            response.context_menu(|ui| {
-                                if ui.button("Pré-escutar nos fones").clicked() {
-                                    self.play(&clip.id, true);
-                                    ui.close();
-                                }
-                                if ui.button("Cortar áudio").clicked() {
-                                    self.trim_id = Some(clip.id.clone());
-                                    self.trim_start = 0.;
-                                    self.trim_end = clip.duration_seconds;
-                                    self.trim_name = format!("{} — corte", clip.name);
-                                    ui.close();
-                                }
-                            });
+                            response.context_menu(|ui| self.clip_menu(ui, clip));
                             ui.add_space(5.);
-                            ui.label(RichText::new(&clip.name).size(13.));
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    Vec2::new((width.min(144.) - 42.).max(20.), 24.),
+                                    egui::Label::new(RichText::new(&clip.name).size(13.))
+                                        .truncate(),
+                                );
+                                ui.menu_button("⋮", |ui| self.clip_menu(ui, clip))
+                                    .response
+                                    .on_hover_text("Opções do som");
+                            });
                         },
                     );
                 }
@@ -1504,6 +1551,60 @@ impl App {
                         }
                     });
                 });
+        }
+    }
+    fn clip_menu(&mut self, ui: &mut egui::Ui, clip: &Clip) {
+        if ui.button("Pré-escutar nos fones").clicked() {
+            self.play(&clip.id, true);
+            ui.close();
+        }
+        if ui.button("Cortar áudio").clicked() {
+            self.trim_id = Some(clip.id.clone());
+            self.trim_start = 0.;
+            self.trim_end = clip.duration_seconds;
+            self.trim_name = format!("{} — corte", clip.name);
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .add_enabled(
+                self.remove_clip_pending.is_none(),
+                egui::Button::new("Remover do soundboard"),
+            )
+            .clicked()
+        {
+            self.remove_clip_confirmation = Some((clip.id.clone(), clip.name.clone()));
+            ui.close();
+        }
+    }
+    fn confirm_clip_removal(&mut self, ctx: &egui::Context) {
+        let Some((id, name)) = self.remove_clip_confirmation.clone() else {
+            return;
+        };
+        let mut cancel = false;
+        let mut confirm = false;
+        let modal = egui::Modal::new(egui::Id::new("remove-soundboard-clip")).show(ctx, |ui| {
+            ui.set_max_width(360.);
+            ui.horizontal(|ui| {
+                ui.heading("Remover som?");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    cancel = ui.small_button("×").on_hover_text("Cancelar").clicked();
+                });
+            });
+            ui.label(RichText::new(&name).strong());
+            ui.label("O som sairá do soundboard. O arquivo de áudio original será mantido.");
+            ui.add_space(12.);
+            ui.horizontal(|ui| {
+                cancel |= ui.button("Cancelar").clicked();
+                confirm = ui.button("Remover").clicked();
+            });
+        });
+        if cancel || modal.should_close() {
+            self.remove_clip_confirmation = None;
+        } else if confirm {
+            self.action(Command::RemoveClip { id });
+            // Queue failures are reported by action in the main notification area.
+            self.remove_clip_confirmation = None;
         }
     }
     fn import_clip(&mut self, path: PathBuf) {
@@ -2198,6 +2299,7 @@ impl eframe::App for App {
                     Page::Settings => self.settings_page(ui),
                 });
             });
+        self.confirm_clip_removal(ui.ctx());
         self.flush_monitor_volume();
         if !self.screenshot_requested
             && self.started.elapsed() > Duration::from_secs(2)
