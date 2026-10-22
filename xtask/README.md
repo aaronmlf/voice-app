@@ -26,9 +26,12 @@ MPL-2.0 and the embedded fonts' OFL-1.1 / Ubuntu-font-1.0.
 Registry origins and SHA-256 hashes of locally cached crate archives are recorded;
 the default nnnoiseless `src/weights.rnn` denoising model has a separate fingerprint
 and BSD-3-Clause/COPYING notice. External or future models remain outside this
-inventory. Hashes use `sha256sum` on Linux and built-in Windows PowerShell
-`Get-FileHash` on Windows; paths are passed through an environment variable,
-never interpolated into PowerShell source.
+inventory. Hashes use `sha256sum` on Linux and .NET's streaming
+`System.Security.Cryptography.SHA256.ComputeHash` on Windows through built-in
+Windows PowerShell. The Windows helper requires no cmdlet modules, disposes its
+file stream and hash state, and validates exactly 64 hexadecimal digits. Paths
+are passed through an environment variable, never interpolated into PowerShell
+source.
 This declared-metadata check is not a legal, source-code, embedded-asset or security
 audit. System libraries and future model weights require separate review.
 
