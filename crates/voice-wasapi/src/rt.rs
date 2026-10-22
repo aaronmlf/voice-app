@@ -93,7 +93,9 @@ impl VoiceOutput {
             }
             self.process(frames);
             for (frame, sample) in output
-                .chunks_exact_mut(2)
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
                 .zip(self.listening[..frames].iter())
             {
                 frame.fill(*sample);
