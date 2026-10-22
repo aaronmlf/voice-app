@@ -1,0 +1,114 @@
+name: Windows experimental release
+
+# A separate manual namespace leaves existing Linux tags/assets untouched.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'New Windows preview tag (windows-v0.1.0-alpha.1)'
+        required: true
+        default: windows-v0.1.0-alpha.1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-windows-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: version
+        name: Validate Windows tag and exact source
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, tomllib
+          from pathlib import Path
+          tag = os.environ['REQUESTED_TAG']
+          if not re.fullmatch(r'windows-v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+', tag):
+              raise SystemExit('Use the Windows preview namespace windows-v0.1.0-alpha.1')
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          if tag.removeprefix('windows-v').split('-')[0] != version.split('-')[0]:
+              raise SystemExit('Tag and Cargo workspace version disagree')
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          remote = subprocess.check_output(['git', 'ls-remote', '--tags', 'origin', f'refs/tags/{tag}'], text=True)
+          if remote.strip():
+              raise SystemExit('Windows releases require a new, unused tag')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as stream:
+              stream.write(f'tag={tag}\nsha={sha}\n')
+          PY
+
+  checks:
+    needs: prepare
+    uses: ./.github/workflows/windows.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.sha }}
+
+  publish:
+    needs: [prepare, checks]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: voice-app-windows-candidate
+          path: dist
+      - name: Validate the verified Windows release files
+        id: files
+        run: |
+          python3 - <<'PY'
+          import os, tomllib, zipfile
+          from pathlib import Path, PurePosixPath
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          stem = f'voice-app-{version}-x86_64-pc-windows-msvc'
+          name = f'{stem}.zip'
+          if {p.name for p in Path('dist').iterdir()} != {name, 'SHA256SUMS.txt'}:
+              raise SystemExit('Unexpected Windows release assets')
+          with zipfile.ZipFile(Path('dist') / name) as archive:
+              members = archive.infolist()
+              if not members:
+                  raise SystemExit('Empty Windows package')
+              for member in members:
+                  path = PurePosixPath(member.filename.replace('\\', '/'))
+                  if path.is_absolute() or '..' in path.parts or path.parts[0] != stem:
+                      raise SystemExit('Unsafe archive path')
+              names = {entry.filename.replace('\\', '/') for entry in members}
+              if not {f'{stem}/voice-app.exe', f'{stem}/voice-cli.exe'} <= names:
+                  raise SystemExit('Windows binaries missing')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as stream:
+              stream.write(f'archive=dist/{name}\n')
+          PY
+          cd dist
+          sha256sum --check SHA256SUMS.txt
+      - name: Create new draft, attach verified ZIP and publish preview
+        env:
+          ARCHIVE: ${{ steps.files.outputs.archive }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" --draft --prerelease \
+            --title "Voice App $TAG — Windows experimental preview" \
+            --notes-file packaging/windows/README.md
+          gh release upload "$TAG" "$ARCHIVE" dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --draft=false --prerelease --latest=false \
+            --repo "$GITHUB_REPOSITORY"
