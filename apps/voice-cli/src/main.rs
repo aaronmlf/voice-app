@@ -45,7 +45,7 @@ enum Action {
         #[arg(long, default_value_t = 256)]
         quantum: u32,
     },
-    /// Probe PipeWire devices without opening capture.
+    /// Probe the native audio backend without opening capture.
     Doctor,
     Status,
     Devices,
@@ -299,11 +299,11 @@ fn run(cli: Cli) -> Result<()> {
         Action::Doctor => {
             return match voice_engine::probe_devices() {
                 Ok(devices) => emit(
-                    &json!({"pipewire_available":true,"capture_started":false,"devices":devices}),
+                    &json!({"backend":voice_engine::BACKEND_NAME,"backend_available":true,"pipewire_available":voice_engine::BACKEND_NAME == "pipewire","virtual_microphone":voice_engine::VIRTUAL_MICROPHONE,"capture_started":false,"devices":devices}),
                 ),
                 Err(error) => {
                     emit(
-                        &json!({"pipewire_available":false,"capture_started":false,"error":error.to_string()}),
+                        &json!({"backend":voice_engine::BACKEND_NAME,"backend_available":false,"pipewire_available":false,"virtual_microphone":voice_engine::VIRTUAL_MICROPHONE,"capture_started":false,"error":error.to_string()}),
                     )?;
                     Err(error)
                 }
