@@ -26,8 +26,14 @@ code-signing certificate. The executables are currently unsigned.
 Verify the ZIP's SHA-256 using PowerShell:
 
 ```powershell
-Get-FileHash .\voice-app-0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
-Get-Content .\SHA256SUMS.txt
+$stream = [System.IO.File]::OpenRead((Join-Path $PWD 'voice-app-0.1.0-x86_64-pc-windows-msvc.zip'))
+try {
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally { $algorithm.Dispose() }
+} finally { $stream.Dispose() }
+[System.IO.File]::ReadAllText((Join-Path $PWD 'SHA256SUMS.txt'))
 ```
 
 Compare all 64 hexadecimal digits. The optional developer smoke script requires
