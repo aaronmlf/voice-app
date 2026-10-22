@@ -730,7 +730,7 @@ fn package(root: &Path) -> Result<()> {
             archive.display()
         );
         Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory($env:VOICE_APP_ZIP_SOURCE, $env:VOICE_APP_ZIP_TARGET, [System.IO.Compression.CompressionLevel]::Optimal, $true)"])
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; [void][System.Reflection.Assembly]::Load('System.IO.Compression.FileSystem, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'); [System.IO.Compression.ZipFile]::CreateFromDirectory($env:VOICE_APP_ZIP_SOURCE, $env:VOICE_APP_ZIP_TARGET, [System.IO.Compression.CompressionLevel]::Optimal, $true)"])
             .env("VOICE_APP_ZIP_SOURCE", &staging)
             .env("VOICE_APP_ZIP_TARGET", &archive)
             .status()?
