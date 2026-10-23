@@ -1,5 +1,10 @@
 //! Enumeration, format checks, and stream lifetime run on the engine's control thread.
-use crate::rt::{DesktopCapture, INPUT_QUEUE, InputCapture, VoiceOutput};
+use crate::identity::{
+    OwnedEndpoint, OwnedIdentity, is_owned_adapter_path, owned_identity, verified_pair,
+};
+use crate::rt::{
+    DesktopCapture, INPUT_QUEUE, InputCapture, LocalMonitor, MONITOR_QUEUE, VoiceOutput,
+};
 use anyhow::{Context, Result, anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{
@@ -12,14 +17,22 @@ use std::sync::{
 use std::time::Duration;
 use voice_core::{
     AudioConfig, AudioShared, DesktopShared, DeviceInfo, DeviceKind, SAMPLE_RATE, SampleQueue,
+    VirtualMicrophoneStatus,
+};
+
+use windows::Win32::{
+    Media::Audio::IDeviceTopology,
+    System::Com::{CLSCTX_ALL, CoTaskMemFree},
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
 
-/// Owns physical capture and local stereo playback. No virtual endpoint is created.
+/// Owns capture, local playback and an optional explicitly selected installed-driver route.
+/// This user-mode adapter never creates or installs a virtual endpoint.
 pub struct AudioHandle {
     input: Option<Stream>,
     output: Option<Stream>,
+    virtual_output: Option<Stream>,
     running: Arc<AtomicBool>,
     shared: Arc<AudioShared>,
 }
@@ -28,6 +41,10 @@ impl AudioHandle {
     pub fn stop(&mut self) {
         self.running.store(false, Ordering::Release);
         self.shared.metrics.active.store(false, Ordering::Release);
+        self.shared
+            .metrics
+            .virtual_microphone_active
+            .store(false, Ordering::Release);
         self.shared.metrics.output_peak.store(0, Ordering::Relaxed);
         self.shared
             .metrics
@@ -36,6 +53,7 @@ impl AudioHandle {
         // Joining backend threads and freeing prepared callback state happens here,
         // never inside a PCM callback. Stop capture before destroying playback.
         drop(self.input.take());
+        drop(self.virtual_output.take());
         drop(self.output.take());
         self.shared.metrics.output_peak.store(0, Ordering::Relaxed);
         self.shared
@@ -83,22 +101,75 @@ fn host() -> Result<Host> {
     cpal::host_from_id(HostId::Wasapi).context("initialize Windows WASAPI")
 }
 
-/// Stable endpoint IDs are returned as names; the friendly labels are descriptions.
-pub fn list_devices() -> Result<Vec<DeviceInfo>> {
-    let host = host()?;
-    let mut devices = Vec::new();
+/// The connected adapter topology is independent of the editable endpoint label.
+/// COM/device queries and returned-string cleanup run only on the control thread.
+fn connected_adapter_path(device: &Device) -> Result<String> {
+    let device = match device.as_inner() {
+        cpal::platform::DeviceInner::Wasapi(device) => device,
+        #[allow(unreachable_patterns)]
+        _ => bail!("endpoint does not belong to WASAPI"),
+    };
+    let device = device
+        .immdevice()
+        .context("Windows endpoint disconnected")?;
+    // Microsoft documents endpoint topologies as one connector, connected to the
+    // adapter topology. Its ID contains the PnP instance and INF interface reference.
+    unsafe {
+        let topology: IDeviceTopology = device
+            .Activate(CLSCTX_ALL, None)
+            .context("read endpoint adapter topology")?;
+        if topology.GetConnectorCount()? != 1 {
+            bail!("unexpected Windows endpoint topology");
+        }
+        let path = topology.GetConnector(0)?.GetDeviceIdConnectedTo()?;
+        if path.0.is_null() {
+            bail!("Windows endpoint has no connected adapter identity");
+        }
+        let result = path.to_string();
+        CoTaskMemFree(Some(path.0.cast()));
+        result.context("invalid connected Windows adapter identity")
+    }
+}
+
+struct Inventory {
+    physical: Vec<DeviceInfo>,
+    owned: Vec<OwnedEndpoint>,
+}
+
+fn inventory(host: &Host) -> Result<Inventory> {
+    let mut inventory = Inventory {
+        physical: Vec::new(),
+        owned: Vec::new(),
+    };
     fn append(
         endpoints: impl Iterator<Item = Device>,
         kind: DeviceKind,
-        devices: &mut Vec<DeviceInfo>,
+        inventory: &mut Inventory,
     ) {
         for device in endpoints {
-            let Ok(id) = device.id() else {
+            let Ok(id) = device.id() else { continue };
+            let name = id.to_string();
+            // If topology identity cannot be established, do not offer this endpoint
+            // as a physical/default route: a renamed virtual capture must never leak in.
+            let Ok(adapter) = connected_adapter_path(&device) else {
                 continue;
             };
-            let name = id.to_string();
-            // CPAL Device::Display assumes description succeeds and can panic
-            // when an endpoint disappears during enumeration. Keep this fallible.
+            if is_owned_adapter_path(&adapter) {
+                // An unreadable role is still owned. Keep it in the inventory as an
+                // invalid candidate so probing fails closed instead of offering it
+                // as a physical/default endpoint after a friendly-name change.
+                let identity = owned_identity(&adapter).unwrap_or(OwnedIdentity {
+                    instance: String::new(),
+                    role: None,
+                });
+                inventory.owned.push(OwnedEndpoint {
+                    id: name,
+                    identity,
+                    kind: kind.clone(),
+                });
+                continue;
+            }
+            // Description is fallible when an endpoint disappears during enumeration.
             let Ok(description) = device.description() else {
                 continue;
             };
@@ -110,24 +181,61 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
             if !eligible(&name, &description) {
                 continue;
             }
-            devices.push(DeviceInfo {
-                id: (devices.len() + 1) as u32,
+            inventory.physical.push(DeviceInfo {
+                id: (inventory.physical.len() + 1) as u32,
                 name,
                 description,
                 kind: kind.clone(),
             });
         }
     }
-    append(host.input_devices()?, DeviceKind::Input, &mut devices);
-    append(host.output_devices()?, DeviceKind::Output, &mut devices);
-    devices.sort_by(|a, b| a.description.cmp(&b.description));
-    Ok(devices)
+    append(host.input_devices()?, DeviceKind::Input, &mut inventory);
+    append(host.output_devices()?, DeviceKind::Output, &mut inventory);
+    inventory
+        .physical
+        .sort_by(|a, b| a.description.cmp(&b.description));
+    Ok(inventory)
+}
+
+/// Stable endpoint IDs are names; owned driver endpoints never appear as physical routes.
+pub fn list_devices() -> Result<Vec<DeviceInfo>> {
+    Ok(inventory(&host()?)?.physical)
 }
 
 fn eligible(name: &str, description: &str) -> bool {
     !name.starts_with("voice-app.")
         && !description.starts_with("voice-app.")
         && description != "Voice App Virtual Microphone"
+        && description != "Voice App Virtual Input"
+}
+
+fn pair_status(host: &Host, inventory: &Inventory) -> VirtualMicrophoneStatus {
+    let mut status = VirtualMicrophoneStatus::default();
+    let invalid = || {
+        Some("Voice App driver endpoint pair is missing, ambiguous or mismatched; no virtual route was changed".to_owned())
+    };
+    let Some((render, capture)) = verified_pair(&inventory.owned) else {
+        status.diagnostic = invalid();
+        return status;
+    };
+    let format = endpoint(host, &render.id)
+        .and_then(|device| virtual_native_config(&device, false, 256))
+        .and_then(|_| endpoint(host, &capture.id))
+        .and_then(|device| virtual_native_config(&device, true, 256));
+    if let Err(error) = format {
+        status.diagnostic = Some(format!("Voice App driver format is unsupported: {error:#}"));
+        return status;
+    }
+    status.available = true;
+    status.render_device = Some(render.id.clone());
+    status.capture_device = Some(capture.id.clone());
+    status
+}
+
+/// Probe an installed first-party endpoint pair without opening audio streams.
+pub fn virtual_microphone_status() -> Result<VirtualMicrophoneStatus> {
+    let host = host()?;
+    Ok(pair_status(&host, &inventory(&host)?))
 }
 
 fn select_device(
@@ -171,17 +279,26 @@ fn select_device(
 pub fn resolve_config(config: &AudioConfig) -> Result<AudioConfig> {
     config.validate().map_err(anyhow::Error::msg)?;
     let host = host()?;
-    let devices = list_devices()?;
+    let inventory = inventory(&host)?;
+    let devices = &inventory.physical;
+    if let Some(requested) = config.virtual_output_device.as_deref() {
+        let pair = pair_status(&host, &inventory);
+        if !pair.available || pair.render_device.as_deref() != Some(requested) {
+            bail!(
+                "selected virtual output is not the exact available Voice App driver endpoint; no route was changed"
+            );
+        }
+    }
     let mut config = config.clone();
     config.input_device = Some(select_device(
         &host,
-        &devices,
+        devices,
         config.input_device.as_deref(),
         DeviceKind::Input,
     )?);
     config.output_device = Some(select_device(
         &host,
-        &devices,
+        devices,
         config.output_device.as_deref(),
         DeviceKind::Output,
     )?);
@@ -231,9 +348,21 @@ fn native_config(device: &Device, input: bool, quantum: u32) -> Result<StreamCon
     Ok(config)
 }
 
+fn virtual_native_config(device: &Device, input: bool, quantum: u32) -> Result<StreamConfig> {
+    let config = native_config(device, input, quantum)?;
+    if config.channels != 2 {
+        bail!("Voice App virtual endpoints require a native 48000 Hz stereo F32 shared mix");
+    }
+    Ok(config)
+}
+
 fn fail_audio(running: &AtomicBool, shared: &AudioShared) {
     running.store(false, Ordering::Release);
     shared.metrics.active.store(false, Ordering::Release);
+    shared
+        .metrics
+        .virtual_microphone_active
+        .store(false, Ordering::Release);
     shared.metrics.output_peak.store(0, Ordering::Relaxed);
     shared
         .metrics
@@ -256,6 +385,17 @@ fn handle_audio_error(kind: ErrorKind, monitor: bool, running: &AtomicBool, shar
     }
 }
 
+fn handle_virtual_error(kind: ErrorKind, running: &AtomicBool, shared: &AudioShared) {
+    if kind == ErrorKind::Xrun {
+        shared
+            .metrics
+            .virtual_microphone_overruns
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        fail_audio(running, shared);
+    }
+}
+
 fn handle_desktop_error(kind: ErrorKind, running: &AtomicBool, shared: &DesktopShared) {
     if kind == ErrorKind::Xrun {
         shared.overruns.fetch_add(1, Ordering::Relaxed);
@@ -267,7 +407,8 @@ fn handle_desktop_error(kind: ErrorKind, running: &AtomicBool, shared: &DesktopS
 }
 
 /// Capture, process, record, and optionally monitor the physical microphone.
-/// Monitoring is controlled by the existing atomics; this does not publish a virtual mic.
+/// The owned virtual render endpoint, when explicitly requested, clocks the final mix.
+/// Monitoring and previews stay on a separate prepared queue and physical output.
 pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandle> {
     let config = resolve_config(&config)?;
     let host = host()?;
@@ -287,14 +428,26 @@ pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandl
     )?;
     let input_config = native_config(&input, true, config.quantum)?;
     let output_config = native_config(&output, false, config.quantum)?;
+    let virtual_device = config
+        .virtual_output_device
+        .as_deref()
+        .map(|id| endpoint(&host, id))
+        .transpose()?;
+    let virtual_config = virtual_device
+        .as_ref()
+        .map(|device| virtual_native_config(device, false, config.quantum))
+        .transpose()?;
     let channels = usize::from(input_config.channels);
     shared.metrics.active.store(false, Ordering::Release);
+    shared
+        .metrics
+        .virtual_microphone_active
+        .store(false, Ordering::Release);
     shared.soundboard.discard();
     shared.preview.discard();
     let queue = Arc::new(SampleQueue::new(INPUT_QUEUE));
     let running = Arc::new(AtomicBool::new(true));
     let mut capture = InputCapture::new(shared.clone(), queue.clone());
-    let mut processor = VoiceOutput::new(shared.clone(), queue, SAMPLE_RATE);
     let capture_gate = running.clone();
     let capture_error_gate = running.clone();
     let capture_error_shared = shared.clone();
@@ -320,19 +473,53 @@ pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandl
     let output_gate = running.clone();
     let output_error_gate = running.clone();
     let output_error_shared = shared.clone();
-    let output = output
-        .build_output_stream::<f32, _, _>(
-            output_config,
-            move |samples, _| processor.render_if_running(samples, &output_gate),
-            move |error| {
-                handle_audio_error(error.kind(), true, &output_error_gate, &output_error_shared)
-            },
-            Some(CONNECT_TIMEOUT),
-        )
-        .context("open native 48 kHz stereo local playback")?;
+    let (output, virtual_output) = if let Some(virtual_device) = virtual_device {
+        let monitor_queue = Arc::new(SampleQueue::new(MONITOR_QUEUE));
+        let mut processor =
+            VoiceOutput::publishing(shared.clone(), queue, monitor_queue.clone(), SAMPLE_RATE);
+        let mut monitor = LocalMonitor::new(shared.clone(), monitor_queue);
+        let virtual_gate = running.clone();
+        let virtual_error_gate = running.clone();
+        let virtual_error_shared = shared.clone();
+        let virtual_output = virtual_device
+            .build_output_stream::<f32, _, _>(
+                virtual_config.context("virtual output format missing")?,
+                move |samples, _| processor.render_if_running(samples, &virtual_gate),
+                move |error| {
+                    handle_virtual_error(error.kind(), &virtual_error_gate, &virtual_error_shared)
+                },
+                Some(CONNECT_TIMEOUT),
+            )
+            .context("open explicit Voice App virtual output")?;
+        let output = output
+            .build_output_stream::<f32, _, _>(
+                output_config,
+                move |samples, _| monitor.render_if_running(samples, &output_gate),
+                move |error| {
+                    handle_audio_error(error.kind(), true, &output_error_gate, &output_error_shared)
+                },
+                Some(CONNECT_TIMEOUT),
+            )
+            .context("open native 48 kHz stereo local monitor")?;
+        (output, Some(virtual_output))
+    } else {
+        let mut processor = VoiceOutput::new(shared.clone(), queue, SAMPLE_RATE);
+        let output = output
+            .build_output_stream::<f32, _, _>(
+                output_config,
+                move |samples, _| processor.render_if_running(samples, &output_gate),
+                move |error| {
+                    handle_audio_error(error.kind(), true, &output_error_gate, &output_error_shared)
+                },
+                Some(CONNECT_TIMEOUT),
+            )
+            .context("open native 48 kHz stereo local playback")?;
+        (output, None)
+    };
     let handle = AudioHandle {
         input: Some(input),
         output: Some(output),
+        virtual_output,
         running,
         shared,
     };
@@ -346,13 +533,21 @@ pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandl
         .as_ref()
         .context("output stream missing")?
         .play()?;
+    if let Some(virtual_output) = &handle.virtual_output {
+        virtual_output.play()?;
+    }
     if !handle.running.load(Ordering::Acquire) {
         bail!("Windows audio failed during startup; output remains silent");
     }
     handle.shared.metrics.active.store(true, Ordering::Release);
+    handle
+        .shared
+        .metrics
+        .virtual_microphone_active
+        .store(handle.virtual_output.is_some(), Ordering::Release);
     // Never overwrite an error concurrently delivered between the readiness checks.
     if !handle.running.load(Ordering::Acquire) {
-        handle.shared.metrics.active.store(false, Ordering::Release);
+        fail_audio(&handle.running, &handle.shared);
         bail!("Windows audio failed during startup; output remains silent");
     }
     Ok(handle)
@@ -474,5 +669,41 @@ mod tests {
         assert!(!running.load(Ordering::Acquire));
         assert!(!shared.active.load(Ordering::Acquire));
         assert_eq!(shared.peak.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn virtual_xrun_has_its_own_counter_and_fatal_failure_stops_both_outputs() {
+        let running = AtomicBool::new(true);
+        let shared = AudioShared::default();
+        shared.metrics.active.store(true, Ordering::Release);
+        shared
+            .metrics
+            .virtual_microphone_active
+            .store(true, Ordering::Release);
+        handle_virtual_error(ErrorKind::Xrun, &running, &shared);
+        assert!(running.load(Ordering::Acquire));
+        assert!(
+            shared
+                .metrics
+                .virtual_microphone_active
+                .load(Ordering::Acquire)
+        );
+        assert_eq!(
+            shared
+                .metrics
+                .virtual_microphone_overruns
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(shared.metrics.monitor_overruns.load(Ordering::Relaxed), 0);
+        handle_virtual_error(ErrorKind::DeviceNotAvailable, &running, &shared);
+        assert!(!running.load(Ordering::Acquire));
+        assert!(!shared.metrics.active.load(Ordering::Acquire));
+        assert!(
+            !shared
+                .metrics
+                .virtual_microphone_active
+                .load(Ordering::Acquire)
+        );
     }
 }

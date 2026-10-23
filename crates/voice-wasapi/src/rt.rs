@@ -7,6 +7,7 @@ use voice_core::{AudioShared, DesktopShared, SampleQueue};
 
 pub(crate) const MAX_BLOCK: usize = 8192;
 pub(crate) const INPUT_QUEUE: usize = 8192;
+pub(crate) const MONITOR_QUEUE: usize = 8192;
 
 pub(crate) struct InputCapture {
     shared: Arc<AudioShared>,
@@ -68,6 +69,8 @@ pub(crate) struct VoiceOutput {
     voice: Box<[f32]>,
     scratch: Box<[f32]>,
     listening: Box<[f32]>,
+    // When present, this processor is clocked by the owned virtual render endpoint.
+    monitor: Option<Arc<SampleQueue>>,
 }
 
 impl VoiceOutput {
@@ -79,11 +82,24 @@ impl VoiceOutput {
             voice: vec![0.; MAX_BLOCK].into_boxed_slice(),
             scratch: vec![0.; MAX_BLOCK].into_boxed_slice(),
             listening: vec![0.; MAX_BLOCK].into_boxed_slice(),
+            monitor: None,
         }
     }
 
+    pub(crate) fn publishing(
+        shared: Arc<AudioShared>,
+        input: Arc<SampleQueue>,
+        monitor: Arc<SampleQueue>,
+        rate: u32,
+    ) -> Self {
+        let mut processor = Self::new(shared, input, rate);
+        processor.monitor = Some(monitor);
+        processor
+    }
+
     /// The sole consumers of input/soundboard/preview and sole recording producer.
-    /// Device output is stereo, with the same local-monitoring sample in left and right.
+    /// Device output is stereo. Publishing emits only the final voice/soundboard mix;
+    /// local-only mode emits the independent listening mix, including preview.
     pub(crate) fn render(&mut self, stereo: &mut [f32]) {
         stereo.fill(0.);
         for output in stereo.chunks_mut(MAX_BLOCK * 2) {
@@ -92,13 +108,19 @@ impl VoiceOutput {
                 continue;
             }
             self.process(frames);
-            for (frame, sample) in output
-                .as_chunks_mut::<2>()
-                .0
-                .iter_mut()
-                .zip(self.listening[..frames].iter())
-            {
+            let samples = if self.monitor.is_some() {
+                &self.voice[..frames]
+            } else {
+                &self.listening[..frames]
+            };
+            for (frame, sample) in output.as_chunks_mut::<2>().0.iter_mut().zip(samples.iter()) {
                 frame.fill(*sample);
+            }
+            if self.monitor.is_some() {
+                self.shared
+                    .metrics
+                    .virtual_microphone_frames
+                    .fetch_add(frames as u64, Ordering::Relaxed);
             }
         }
     }
@@ -199,10 +221,81 @@ impl VoiceOutput {
         {
             *out = finite_sample(*out + preview, &mut invalid);
         }
+        if let Some(monitor) = &self.monitor
+            && monitor.push(&self.listening[..frames]) < frames
+        {
+            self.shared
+                .metrics
+                .monitor_producer_overruns
+                .fetch_add(1, Ordering::Relaxed);
+            self.shared
+                .metrics
+                .monitor_overruns
+                .fetch_add(1, Ordering::Relaxed);
+        }
         self.shared
             .metrics
             .non_finite_samples
             .fetch_add(invalid, Ordering::Relaxed);
+    }
+}
+
+/// The sole monitor-queue consumer; never consumes microphone, soundboard or preview.
+pub(crate) struct LocalMonitor {
+    shared: Arc<AudioShared>,
+    queue: Arc<SampleQueue>,
+    scratch: Box<[f32]>,
+}
+
+impl LocalMonitor {
+    pub(crate) fn new(shared: Arc<AudioShared>, queue: Arc<SampleQueue>) -> Self {
+        Self {
+            shared,
+            queue,
+            scratch: vec![0.; MAX_BLOCK].into_boxed_slice(),
+        }
+    }
+
+    pub(crate) fn render_if_running(&mut self, stereo: &mut [f32], running: &AtomicBool) {
+        stereo.fill(0.);
+        if !running.load(Ordering::Acquire) {
+            return;
+        }
+        let mut invalid = 0;
+        for output in stereo.chunks_mut(MAX_BLOCK * 2) {
+            let frames = output.len() / 2;
+            if frames == 0 {
+                continue;
+            }
+            let trimmed = trim_backlog(&self.queue, &mut self.scratch, frames);
+            if trimmed > 0 {
+                self.shared
+                    .metrics
+                    .monitor_trimmed_frames
+                    .fetch_add(trimmed as u64, Ordering::Relaxed);
+                self.shared
+                    .metrics
+                    .monitor_overruns
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            self.scratch[..frames].fill(0.);
+            self.queue.pop(&mut self.scratch[..frames]);
+            for (frame, sample) in output
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .zip(&self.scratch[..frames])
+            {
+                frame.fill(finite_sample(*sample, &mut invalid));
+            }
+        }
+        self.shared
+            .metrics
+            .non_finite_samples
+            .fetch_add(invalid, Ordering::Relaxed);
+        if !running.load(Ordering::Acquire) {
+            stereo.fill(0.);
+        }
     }
 }
 
@@ -262,6 +355,9 @@ fn finite_gain(bits: u32) -> f32 {
 }
 
 fn trim_backlog(queue: &SampleQueue, scratch: &mut [f32], frames: usize) -> usize {
+    if frames == 0 {
+        return 0;
+    }
     let backlog = queue.len();
     let mut dropped = 0;
     if backlog > frames.saturating_mul(4) {
@@ -322,6 +418,193 @@ mod tests {
         let input = Arc::new(SampleQueue::new(INPUT_QUEUE));
         let output = VoiceOutput::new(shared.clone(), input.clone(), SAMPLE_RATE);
         (shared, input, output)
+    }
+
+    fn publishing() -> (
+        Arc<AudioShared>,
+        Arc<SampleQueue>,
+        VoiceOutput,
+        LocalMonitor,
+    ) {
+        let shared = Arc::new(AudioShared::default());
+        shared.bypass.store(true, Ordering::Relaxed);
+        let input = Arc::new(SampleQueue::new(INPUT_QUEUE));
+        let queue = Arc::new(SampleQueue::new(MONITOR_QUEUE));
+        let output =
+            VoiceOutput::publishing(shared.clone(), input.clone(), queue.clone(), SAMPLE_RATE);
+        let monitor = LocalMonitor::new(shared.clone(), queue);
+        (shared, input, output, monitor)
+    }
+
+    #[test]
+    fn virtual_output_includes_soundboard_with_monitor_off_and_excludes_preview() {
+        let (shared, input, mut output, mut monitor) = publishing();
+        shared
+            .monitor_gain
+            .store(0_f32.to_bits(), Ordering::Relaxed);
+        input.push(&[0.4, -0.2]);
+        shared.soundboard.push(&[0.1, 0.1]);
+        shared.preview.push(&[0.7, 0.6]);
+        let mut virtual_pcm = [0.; 4];
+        let mut headphones = [0.; 4];
+        output.render_if_running(&mut virtual_pcm, &AtomicBool::new(true));
+        monitor.render_if_running(&mut headphones, &AtomicBool::new(true));
+        assert_eq!(virtual_pcm, [0.5, 0.5, -0.1, -0.1]);
+        assert_eq!(headphones, [0.7, 0.7, 0.6, 0.6]);
+        let mut recorded = [0.; 2];
+        assert_eq!(shared.recording.pop(&mut recorded), 2);
+        assert_eq!(recorded, [0.5, -0.1]);
+        assert_eq!(
+            shared
+                .metrics
+                .virtual_microphone_frames
+                .load(Ordering::Relaxed),
+            2
+        );
+    }
+
+    #[test]
+    fn virtual_publishing_advances_without_monitor_callbacks_and_has_bounded_backlog() {
+        let (shared, input, mut output, mut monitor) = publishing();
+        shared.monitor_enabled.store(true, Ordering::Relaxed);
+        shared
+            .monitor_gain
+            .store(1_f32.to_bits(), Ordering::Relaxed);
+        let mut virtual_pcm = [0.; 512];
+        for _ in 0..40 {
+            input.push(&[0.1; 256]);
+            output.render(&mut virtual_pcm);
+        }
+        assert_eq!(
+            shared
+                .metrics
+                .virtual_microphone_frames
+                .load(Ordering::Relaxed),
+            10240
+        );
+        assert_eq!(monitor.queue.len(), MONITOR_QUEUE);
+        assert_eq!(
+            shared
+                .metrics
+                .monitor_producer_overruns
+                .load(Ordering::Relaxed),
+            8
+        );
+        let mut headphones = [0.; 512];
+        monitor.render_if_running(&mut headphones, &AtomicBool::new(true));
+        assert!(headphones.iter().all(|sample| *sample == 0.1));
+        assert_eq!(
+            shared
+                .metrics
+                .monitor_trimmed_frames
+                .load(Ordering::Relaxed),
+            (MONITOR_QUEUE - 512) as u64
+        );
+        assert_eq!(monitor.queue.capacity(), MONITOR_QUEUE);
+        assert_eq!(monitor.scratch.len(), MAX_BLOCK);
+    }
+
+    #[test]
+    fn virtual_muted_voice_keeps_soundboard_and_failure_silences_all_routes() {
+        let (shared, input, mut output, mut monitor) = publishing();
+        shared.muted.store(true, Ordering::Relaxed);
+        shared.monitor_enabled.store(true, Ordering::Relaxed);
+        input.push(&[0.8]);
+        shared.soundboard.push(&[0.3]);
+        let mut virtual_pcm = [f32::NAN; 2];
+        output.render_if_running(&mut virtual_pcm, &AtomicBool::new(true));
+        assert_eq!(virtual_pcm, [0.3; 2]);
+        input.push(&[0.8]);
+        shared.soundboard.push(&[0.3]);
+        let mut headphones = [f32::NAN; 2];
+        let stopped = AtomicBool::new(false);
+        output.render_if_running(&mut virtual_pcm, &stopped);
+        monitor.render_if_running(&mut headphones, &stopped);
+        assert_eq!(virtual_pcm, [0.; 2]);
+        assert_eq!(headphones, [0.; 2]);
+        assert_eq!(input.len(), 1);
+        assert_eq!(shared.soundboard.len(), 1);
+        assert_eq!(monitor.queue.len(), 1);
+    }
+
+    #[test]
+    fn empty_monitor_callback_does_not_discard_backlog_and_underflow_is_silent() {
+        let (shared, _, _, mut monitor) = publishing();
+        monitor.queue.push(&[0.2; 16]);
+        monitor.render_if_running(&mut [], &AtomicBool::new(true));
+        assert_eq!(monitor.queue.len(), 16);
+        assert_eq!(shared.metrics.monitor_overruns.load(Ordering::Relaxed), 0);
+        let mut headphones = [1.; 32];
+        monitor.render_if_running(&mut headphones, &AtomicBool::new(true));
+        assert_eq!(headphones, [0.2; 32]);
+        headphones.fill(1.);
+        monitor.render_if_running(&mut headphones, &AtomicBool::new(true));
+        assert_eq!(headphones, [0.; 32]);
+    }
+
+    #[test]
+    fn virtual_pcm_sanitizes_non_finite_mix_and_bounds_the_safety_ceiling() {
+        let (shared, input, mut output, _) = publishing();
+        input.push(&[0.8, f32::NAN, f32::INFINITY, -0.8]);
+        shared.soundboard.push(&[0.8, 0.3, f32::NAN, -0.8]);
+        let mut virtual_pcm = [f32::NAN; 8];
+        output.render(&mut virtual_pcm);
+        assert_eq!(virtual_pcm, [1., 1., 0.3, 0.3, 0., 0., -1., -1.]);
+        assert_eq!(shared.metrics.non_finite_samples.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn virtual_effects_blend_soundboard_and_monitor_callbacks_allocate_or_free_nothing() {
+        let (shared, input, mut output, mut monitor) = publishing();
+        shared.bypass.store(false, Ordering::Relaxed);
+        shared.monitor_enabled.store(true, Ordering::Relaxed);
+        shared.dsp.store(DspSettings {
+            gain_db: -6.,
+            pitch_semitones: -2.,
+            robot_mix: 0.15,
+            chorus_mix: 0.2,
+            blend: Some(VoiceBlend {
+                secondary: VoiceLayer::from(DspSettings {
+                    formant_semitones: -1.,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let mut virtual_pcm = [0.; 512];
+        let mut headphones = [0.; 512];
+        let mut recording = [0.; 256];
+        let running = AtomicBool::new(true);
+        CALLS.with(|calls| calls.set(0));
+        TRACK.with(|track| track.set(true));
+        for _ in 0..64 {
+            input.push(&[0.1; 256]);
+            shared.soundboard.push(&[0.03; 256]);
+            shared.preview.push(&[0.02; 256]);
+            output.render_if_running(&mut virtual_pcm, &running);
+            monitor.render_if_running(&mut headphones, &running);
+            shared.recording.pop(&mut recording);
+        }
+        TRACK.with(|track| track.set(false));
+        assert_eq!(CALLS.with(Cell::get), 0);
+        assert!(
+            virtual_pcm
+                .iter()
+                .all(|sample| sample.is_finite() && sample.abs() <= 1.)
+        );
+        assert!(
+            headphones
+                .iter()
+                .all(|sample| sample.is_finite() && sample.abs() <= 1.)
+        );
+        assert!(virtual_pcm.iter().any(|sample| *sample != 0.));
+        assert!(
+            virtual_pcm
+                .iter()
+                .zip(headphones)
+                .any(|(published, local)| (*published - local).abs() > 0.001)
+        );
     }
 
     #[test]
