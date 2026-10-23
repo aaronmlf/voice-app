@@ -661,22 +661,37 @@ impl Engine {
             return;
         }
         let now = Instant::now();
-        // Only automatic routes follow desktop default changes. Fixed names never
-        // fall back to another microphone. Discovery runs outside process callbacks.
+        // Automatic physical routes follow desktop defaults. An explicit virtual
+        // route must also remain a valid owned pair, even with fixed physical IDs.
+        // Discovery runs outside process callbacks; fixed IDs never fall back.
         if self.audio.is_some()
             && (self.session.config.input_device.is_none()
-                || self.session.config.output_device.is_none())
+                || self.session.config.output_device.is_none()
+                || self.session.config.virtual_output_device.is_some())
             && now >= self.next_device_check
         {
             self.next_device_check = now + Duration::from_secs(2);
-            if let Ok(resolved) = crate::audio::resolve_config(&self.session.config)
-                && self.resolved_config.as_ref() != Some(&resolved)
-            {
-                if let Err(error) = self.stop_audio(false) {
-                    self.last_audio_error =
-                        Some(format!("Não foi possível finalizar a gravação: {error:#}"));
+            match crate::audio::resolve_config(&self.session.config) {
+                Ok(resolved) if self.resolved_config.as_ref() != Some(&resolved) => {
+                    if let Err(error) = self.stop_audio(false) {
+                        self.last_audio_error =
+                            Some(format!("Não foi possível finalizar a gravação: {error:#}"));
+                    }
+                    self.next_audio_retry = Instant::now();
                 }
-                self.next_audio_retry = Instant::now();
+                Err(error) if self.session.config.virtual_output_device.is_some() => {
+                    // A missing/ambiguous pair must stop transmission rather than
+                    // leave an old render stream active while discovery reports failure.
+                    let error = match self.stop_audio(false) {
+                        Ok(()) => error,
+                        Err(finalization) => error.context(format!(
+                            "Falha ao finalizar a gravação após perder a rota virtual: {finalization:#}"
+                        )),
+                    };
+                    self.next_virtual_probe = Instant::now();
+                    self.schedule_retry(&error);
+                }
+                _ => {}
             }
         }
         if self.audio.is_none() && Instant::now() >= self.next_audio_retry {
