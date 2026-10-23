@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{B66329AF-BF1F-5E43-B760-B0465FE111D3}</ProjectGuid>
+    <RootNamespace>VoiceAppVirtualAudio</RootNamespace>
+    <Configuration Condition="'$(Configuration)'==''">Release</Configuration>
+    <Platform Condition="'$(Platform)'==''">x64</Platform>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
+    <KmdfLibraryVersion>1.33</KmdfLibraryVersion>
+    <RequiresPackageProject>false</RequiresPackageProject>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatform>Windows Driver</DriverTargetPlatform>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <TargetName>VoiceAppVirtualAudio</TargetName>
+    <VoiceAppBuildRoot Condition="'$(VoiceAppBuildRoot)'==''">$(MSBuildThisFileDirectory)..\..\target\windows-driver</VoiceAppBuildRoot>
+    <IntDir>$(VoiceAppBuildRoot)\obj\</IntDir>
+    <OutDir>$(VoiceAppBuildRoot)\bin\</OutDir>
+    <SignMode>Off</SignMode>
+    <EnableInf2Cat>false</EnableInf2Cat>
+    <RunInf2Cat>false</RunInf2Cat>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>VOICE_APP_KERNEL;_USE_WAVERT_;_NEW_DELETE_OPERATORS_;UNICODE;_UNICODE;PC_IMPLEMENTATION;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>false</MultiProcessorCompilation>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <AdditionalOptions>/Zc:threadSafeInit- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>portcls.lib;stdunk.lib;libcntpr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <ResourceCompile><AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(DDK_INC_PATH)</AdditionalIncludeDirectories></ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\adapter.cpp" />
+    <ClCompile Include="src\basetopo.cpp" />
+    <ClCompile Include="src\common.cpp" />
+    <ClCompile Include="src\hw.cpp" />
+    <ClCompile Include="src\kshelper.cpp" />
+    <ClCompile Include="src\micarraytopo.cpp" />
+    <ClCompile Include="src\mintopo.cpp" />
+    <ClCompile Include="src\minwavert.cpp" />
+    <ClCompile Include="src\minwavertstream.cpp" />
+    <ClCompile Include="src\NewDelete.cpp" />
+    <ClCompile Include="src\speakertopo.cpp" />
+    <ResourceCompile Include="VoiceAppVirtualAudio.rc" />
+    <Inf Include="VoiceAppVirtualAudio.inx" />
+    <FilesToPackage Include="$(TargetPath)" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

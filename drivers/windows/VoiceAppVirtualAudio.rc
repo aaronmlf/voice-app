@@ -1,0 +1,12 @@
+// Derived from Microsoft SimpleAudioSample. SPDX-License-Identifier: MS-PL
+#include <windows.h>
+#include <ntverp.h>
+#define VER_FILETYPE VFT_DRV
+#define VER_FILESUBTYPE VFT2_DRV_SOUND
+#define VER_FILEDESCRIPTION_STR "Voice App Virtual Audio Driver"
+#define VER_PRODUCTNAME_STR "Voice App"
+#define VER_COMPANYNAME_STR "Voice App contributors"
+#define VER_INTERNALNAME_STR "VoiceAppVirtualAudio.sys"
+#define VER_ORIGINALFILENAME_STR "VoiceAppVirtualAudio.sys"
+#define VER_LEGALCOPYRIGHT_STR "Copyright Microsoft Corporation and Voice App contributors"
+#include "common.ver"

@@ -1,0 +1,191 @@
+; Derived from Microsoft SimpleAudioSample; Copyright (c) Microsoft Corporation.
+; Voice App modifications; SPDX-License-Identifier: MS-PL
+[Version]
+Signature   = "$Windows NT$"
+Class       = MEDIA
+Provider    = %ProviderName%
+ClassGUID   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+DriverVer   = 10/23/2026, 0.1.0.0
+CatalogFile = VoiceAppVirtualAudio.cat
+PnpLockDown = 1
+
+[SourceDisksNames]
+222="VOICEAPPVIRTUALAUDIO Driver Disk","",222
+
+[SourceDisksFiles]
+VoiceAppVirtualAudio.sys=222
+
+[Manufacturer]
+%MfgName%=VOICEAPPVIRTUALAUDIO,NT$ARCH$.10.0...22000
+
+[VOICEAPPVIRTUALAUDIO.NT$ARCH$.10.0...22000]
+%VOICEAPPVIRTUALAUDIO_SA.DeviceDesc%=VOICEAPPVIRTUALAUDIO_SA, ROOT\VoiceAppVirtualAudio
+
+[DestinationDirs]
+VOICEAPPVIRTUALAUDIO_SA.CopyList=13 ; 13=Package's DriverStore directory
+
+;======================================================
+; VOICEAPPVIRTUALAUDIO_SA
+;======================================================
+[VOICEAPPVIRTUALAUDIO_SA.CopyList]
+VoiceAppVirtualAudio.sys
+
+[VOICEAPPVIRTUALAUDIO_SA.AddReg]
+HKR,,AssociatedFilters,,"wdmaud,swmidi,redbook"
+HKR,,Driver,,VoiceAppVirtualAudio.sys
+
+;
+; For demo only, please review these power management settings for your architecture. 
+;
+
+HKR,Drivers,SubClasses,,"wave,midi,mixer"
+
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\midi\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+
+HKR,Drivers\wave\wdmaud.drv,Description,,%VOICEAPPVIRTUALAUDIO_SA.DeviceDesc%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%VOICEAPPVIRTUALAUDIO_SA.DeviceDesc%
+
+;======================================================
+; capture interfaces: mic array (internal: front)
+;======================================================
+[VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppCapture]
+AddReg=VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppCapture.AddReg
+[VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppCapture.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%VOICEAPPVIRTUALAUDIO.WaveVoiceAppCapture.szPname%
+
+[VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppCapture]
+AddReg=VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppCapture.AddReg
+
+[VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppCapture.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%VOICEAPPVIRTUALAUDIO.TopologyVoiceAppCapture.szPname%
+
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+
+; The following lines opt-in to pull mode.
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
+
+;======================================================
+; render interfaces: speaker (internal)
+;======================================================
+[VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppRender]
+AddReg=VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppRender.AddReg
+
+[VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppRender.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%VOICEAPPVIRTUALAUDIO.WaveVoiceAppRender.szPname%
+
+[VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppRender]
+AddReg=VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppRender.AddReg
+
+[VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppRender.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%VOICEAPPVIRTUALAUDIO.TopologyVoiceAppRender.szPname%
+
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+
+; The following lines opt-in to pull mode.
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
+
+;======================================================
+; VOICEAPPVIRTUALAUDIO_SA
+;======================================================
+[VOICEAPPVIRTUALAUDIO_SA.NT]
+Include=ks.inf,wdmaudio.inf
+Needs=KS.Registration, WDMAUDIO.Registration
+CopyFiles=VOICEAPPVIRTUALAUDIO_SA.CopyList
+AddReg=VOICEAPPVIRTUALAUDIO_SA.AddReg
+
+[VOICEAPPVIRTUALAUDIO_SA.NT.Interfaces]
+;
+; Interfaces for speaker (internal) render endpoint.
+;
+AddInterface=%KSCATEGORY_AUDIO%, %KSNAME_WaveVoiceAppRender%, VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppRender
+AddInterface=%KSCATEGORY_RENDER%, %KSNAME_WaveVoiceAppRender%, VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppRender
+AddInterface=%KSCATEGORY_REALTIME%, %KSNAME_WaveVoiceAppRender%, VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppRender
+AddInterface=%KSCATEGORY_AUDIO%, %KSNAME_TopologyVoiceAppRender%, VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppRender
+AddInterface=%KSCATEGORY_TOPOLOGY%, %KSNAME_TopologyVoiceAppRender%, VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppRender
+
+;
+; Interfaces for microphone array 1 (internal: front) capture endpoint.
+;
+AddInterface=%KSCATEGORY_AUDIO%,    %KSNAME_WaveVoiceAppCapture%, VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppCapture
+AddInterface=%KSCATEGORY_REALTIME%, %KSNAME_WaveVoiceAppCapture%, VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppCapture
+AddInterface=%KSCATEGORY_CAPTURE%,  %KSNAME_WaveVoiceAppCapture%, VOICEAPPVIRTUALAUDIO.I.WaveVoiceAppCapture
+AddInterface=%KSCATEGORY_AUDIO%,    %KSNAME_TopologyVoiceAppCapture%, VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppCapture
+AddInterface=%KSCATEGORY_TOPOLOGY%, %KSNAME_TopologyVoiceAppCapture%, VOICEAPPVIRTUALAUDIO.I.TopologyVoiceAppCapture
+
+[VOICEAPPVIRTUALAUDIO_SA.NT.Services]
+AddService=VoiceAppVirtualAudio,0x00000002,VoiceAppVirtualAudio_Service_Inst
+
+[VoiceAppVirtualAudio_Service_Inst]
+DisplayName=%VoiceAppVirtualAudio.SvcDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\VoiceAppVirtualAudio.sys
+
+[VOICEAPPVIRTUALAUDIO_SA.NT.HW]
+AddReg = AUDIOHW.AddReg
+
+[AUDIOHW.AddReg]
+; FILE_DEVICE_SOUND
+HKR,,DeviceType,0x10001,0x0000001D
+; SDDL_DEVOBJ_SYS_ALL_ADM_RWX_WORLD_RWX_RES_RWX
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GRGWGX;;;BA)(A;;GRGWGX;;;WD)(A;;GRGWGX;;;RC)"
+
+
+;======================================================
+; WDF
+;======================================================
+[VOICEAPPVIRTUALAUDIO_SA.NT.Wdf]
+KmdfService = VoiceAppVirtualAudio, VOICEAPPVIRTUALAUDIO_SA_WdfSect
+[VOICEAPPVIRTUALAUDIO_SA_WdfSect]
+KmdfLibraryVersion = $KMDFVERSION$
+
+;======================================================
+; COMMON
+;======================================================
+[Strings]
+
+;Non-localizable
+
+KSNAME_WaveVoiceAppRender="WaveVoiceAppRender"
+KSNAME_TopologyVoiceAppRender="TopologyVoiceAppRender"
+
+KSNAME_WaveVoiceAppCapture="WaveVoiceAppCapture"
+KSNAME_TopologyVoiceAppCapture="TopologyVoiceAppCapture"
+
+Proxy.CLSID="{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO="{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER="{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_CAPTURE="{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME ="{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+
+KSNODETYPE_ANY   = "{00000000-0000-0000-0000-000000000000}"
+
+PKEY_AudioEndpoint_Association               = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+PKEY_AudioEndpoint_Supports_EventDriven_Mode = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},7"
+
+;Localizable
+
+ProviderName = "Voice App contributors"
+MfgName      = "Voice App"
+MsCopyRight  = "Microsoft Corporation and Voice App contributors"
+
+VOICEAPPVIRTUALAUDIO_SA.DeviceDesc="Voice App Virtual Audio"
+VoiceAppVirtualAudio.SvcDesc="Voice App Virtual Audio"
+
+;; friendly names
+VOICEAPPVIRTUALAUDIO.WaveVoiceAppRender.szPname="Voice App Virtual Input"
+VOICEAPPVIRTUALAUDIO.TopologyVoiceAppRender.szPname="Voice App Virtual Input"
+
+VOICEAPPVIRTUALAUDIO.WaveVoiceAppCapture.szPname="Voice App Virtual Microphone"
+VOICEAPPVIRTUALAUDIO.TopologyVoiceAppCapture.szPname="Voice App Virtual Microphone"
+
+MicArray1CustomName= "Voice App Virtual Microphone"
+

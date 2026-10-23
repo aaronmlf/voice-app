@@ -1,0 +1,14 @@
+{
+  "hardware_id": "ROOT\\VoiceAppVirtualAudio",
+  "render_reference": "WaveVoiceAppRender",
+  "capture_reference": "WaveVoiceAppCapture",
+  "render_topology": "TopologyVoiceAppRender",
+  "capture_topology": "TopologyVoiceAppCapture",
+  "guids": {
+    "product": "9153E0F4-7F61-55FD-A1D3-F43F03DCFA49",
+    "name": "96C9FC3B-A32D-50FC-ADD1-63496536CF34",
+    "adapter-interface": "F1999D42-E46C-5EB2-96B1-7718E7222C27",
+    "capture-name": "440A51A5-FE5C-5A41-B4DA-B6B09420AA09",
+    "project": "B66329AF-BF1F-5E43-B760-B0465FE111D3"
+  }
+}

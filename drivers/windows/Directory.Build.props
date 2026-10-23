@@ -1,0 +1,11 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<Project>
+  <!-- SDK and WDK build/QFE are pinned together; build tools only, never bundled. -->
+  <PropertyGroup>
+    <VoiceAppKitVersion>10.0.28000.2526</VoiceAppKitVersion>
+    <VoiceAppWdkPackages Condition="'$(VoiceAppWdkPackages)'==''">$(MSBuildThisFileDirectory)..\..\target\windows-driver\packages</VoiceAppWdkPackages>
+  </PropertyGroup>
+  <Import Project="$(VoiceAppWdkPackages)\Microsoft.Windows.WDK.x64.$(VoiceAppKitVersion)\build\native\Microsoft.Windows.WDK.x64.props" />
+  <Import Project="$(VoiceAppWdkPackages)\Microsoft.Windows.SDK.CPP.x64.$(VoiceAppKitVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props" />
+  <Import Project="$(VoiceAppWdkPackages)\Microsoft.Windows.SDK.CPP.$(VoiceAppKitVersion)\build\native\Microsoft.Windows.SDK.cpp.props" />
+</Project>

@@ -1,0 +1,202 @@
+{
+  "repository": "https://github.com/microsoft/Windows-driver-samples",
+  "commit": "bb68ed5e770bce04dc5395ec9258dafab034184d",
+  "license": "MS-PL",
+  "files": [
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/micarray1toptable.h",
+      "upstream_git_blob": "3bbd80f34e1fdc8abae744902f62ab0e2af218e9",
+      "upstream_sha256": "57301df8e50928cc8cb23618ac64fbb9be2bb839b5f3a261d56abaa5b7496555",
+      "local_path": "src/micarray1toptable.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/micarraytopo.cpp",
+      "upstream_git_blob": "ebb9784d72f70e7c639e9ce232f8c7f89e3d2904",
+      "upstream_sha256": "7b783f8cf163fe3549de64236a37f591bc795717809b3c0e2b2b395f18f56c28",
+      "local_path": "src/micarraytopo.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/micarraytopo.h",
+      "upstream_git_blob": "4f4a621f229f337daafd4992758738cb69ceaa59",
+      "upstream_sha256": "fc7349cf5447dca37ebf518bdc1afc116568e89cc32cc73cd0a87659bde778ec",
+      "local_path": "src/micarraytopo.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/micarraywavtable.h",
+      "upstream_git_blob": "536560382b3541486448b18b4ae49ac91fd4eb3e",
+      "upstream_sha256": "690509f9851c3f58eade493867bcfb7cd78d31d4aeea49bdd771f822c14b0c51",
+      "local_path": "src/micarraywavtable.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/minipairs.h",
+      "upstream_git_blob": "b7d8950f45fa9433c8fe57853ebc0ac49708f4f8",
+      "upstream_sha256": "e47817bb956fbe418103de3fe5c1be854e917576aadaf0791555d6e93be56c97",
+      "local_path": "src/minipairs.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/speakertopo.cpp",
+      "upstream_git_blob": "d1635efa9c5a21b51a43fde746447aac1080ba18",
+      "upstream_sha256": "486580b6733add12bc159108c9caa634742ef9a4b14cfde55f164a410778105b",
+      "local_path": "src/speakertopo.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/speakertopo.h",
+      "upstream_git_blob": "0eff1ebbe0edaf0901a8d909278a1c58b35198ce",
+      "upstream_sha256": "64eb861b0dc647c013cb704c3d200dd420ac1b0f8510dc8dac411adcf5ab4819",
+      "local_path": "src/speakertopo.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/speakertoptable.h",
+      "upstream_git_blob": "f9e54df63f700dd85b5dc9fba9074be669e46cb5",
+      "upstream_sha256": "895016cbd07ceb7d893efe02ad458e16d78c330e632b237288a4b3c60c987e77",
+      "local_path": "src/speakertoptable.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Filters/speakerwavtable.h",
+      "upstream_git_blob": "e67a673c1c3c23ed7d011ef4718ea7db09630f34",
+      "upstream_sha256": "10f950408d77d6388103f3324c7b12fee29c623638c7501bf326804350268af4",
+      "local_path": "src/speakerwavtable.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Inc/NewDelete.h",
+      "upstream_git_blob": "ebeab0377f28c362908db9499d03a884094c988f",
+      "upstream_sha256": "4c5bfa315cfbc536dfde02c8198ed2b7f471152abf0b6e67d7756cd5b030fe51",
+      "local_path": "src/NewDelete.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Inc/basetopo.h",
+      "upstream_git_blob": "a893aa3efadbdcdc05bcfd5ef9723cc2bb59019f",
+      "upstream_sha256": "2e917dbaf5f1b79b4d01041308b985cf81ebfe16a1f5802109ee4bec94a59347",
+      "local_path": "src/basetopo.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Inc/common.h",
+      "upstream_git_blob": "2d2db7dbd96cc8cc1cac5c19971f80da2615cae5",
+      "upstream_sha256": "82fc312746ee7f424ce697cb1514b921c9ee9e891f72d77cab88c2dae27d9160",
+      "local_path": "src/common.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Inc/definitions.h",
+      "upstream_git_blob": "9fb4547aae287342924cfdbdf701053796a9df20",
+      "upstream_sha256": "7512272d6bc2dd028ae21783ad47f7b7f4c11dda622b5005e13f3e1f164e4ab3",
+      "local_path": "src/definitions.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Inc/endpoints.h",
+      "upstream_git_blob": "44a858a0cc1b9c088c7474c2536528e8e42c4c57",
+      "upstream_sha256": "48c9bfe6e76d40d9f7673ee31946562586a11fd26bd6742408e03ff9b148555d",
+      "local_path": "src/endpoints.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Inc/kshelper.h",
+      "upstream_git_blob": "023f773a958613737a55bc4134100fb32a70a3ad",
+      "upstream_sha256": "94c4c5dc2fa6cae976361ca818ac9a8ea3ac0afd457f4bf6941f6bae22af23cf",
+      "local_path": "src/kshelper.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Inc/mintopo.h",
+      "upstream_git_blob": "5e7fe466c25c3179d67a26e65eb4bebdd5ac60e4",
+      "upstream_sha256": "6927c19207d08f2059617486261e9720da0440ce44356a7f76242890096f5e9d",
+      "local_path": "src/mintopo.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/NewDelete.cpp",
+      "upstream_git_blob": "8ef3797deb13927e0fac7ebf311bb5ae57e039f4",
+      "upstream_sha256": "d43699924e75388f7319ba30fd7101ba9759f3c7cca55926e8f0fdf11e04eac6",
+      "local_path": "src/NewDelete.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/adapter.cpp",
+      "upstream_git_blob": "a66ee5a29a74f39b8cfa38d920135c6f92f97d21",
+      "upstream_sha256": "8f6efb9c478840b25cf70c8ca55ae166376f32a13ee464554097873cfe21997a",
+      "local_path": "src/adapter.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/basetopo.cpp",
+      "upstream_git_blob": "b29a9bb16393bec331ed3417de753deebc8b7004",
+      "upstream_sha256": "67c7f8025a986b4af206178d3049178880f41d180a896693bef38b447a74adb5",
+      "local_path": "src/basetopo.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/common.cpp",
+      "upstream_git_blob": "7c19130ef62e062d0490e843738dfa168d64b9c2",
+      "upstream_sha256": "8a31754d810a9d9b9f6a58b68b6efd51f5ceaaaa1a4e9a8887925fff5261d552",
+      "local_path": "src/common.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/mintopo.cpp",
+      "upstream_git_blob": "6ab1624f8374a8e4b0b70891a3e8c2ba1bc3d766",
+      "upstream_sha256": "bc7db02fb9f5d8cf2cb25813bf9481101cf5dc7aa90be1c8fc2e74be38936549",
+      "local_path": "src/mintopo.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/minwavert.cpp",
+      "upstream_git_blob": "1d92073d119b07aa4fab1907f1826294f9b75f20",
+      "upstream_sha256": "8a666ed7e8f1ae3e5e78df4ce65911d8e540c6d3579687280266f0ac81184d31",
+      "local_path": "src/minwavert.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/minwavert.h",
+      "upstream_git_blob": "a5ed89ff1139d39f7aecfd2a1056f7679d09f04e",
+      "upstream_sha256": "e436d2bb6bc192921eb39a7dfd8bab9b2f138daabe09073e7e7fc76d00910e66",
+      "local_path": "src/minwavert.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/minwavertstream.cpp",
+      "upstream_git_blob": "c189c9390838013b8b40183ecf874f5dacda82ae",
+      "upstream_sha256": "196890d22169ffe1ef62a345eb642ddf9b6d95d9c5efc033423b624262b69547",
+      "local_path": "src/minwavertstream.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/minwavertstream.h",
+      "upstream_git_blob": "0124cab2d387349dabe8add64701fcbd86d5abdb",
+      "upstream_sha256": "f99fd8327dcb91179992d13cde0e120878ff4bdc04f4fa50d6781600375c9886",
+      "local_path": "src/minwavertstream.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Utilities/hw.cpp",
+      "upstream_git_blob": "133bcc994d723aa9edb824760b1685b496376c20",
+      "upstream_sha256": "eaf02af0b9381b7c8208016e2e49b772f3e0352f31a4940b910a2a4d4616cabe",
+      "local_path": "src/hw.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Utilities/hw.h",
+      "upstream_git_blob": "3360c24acbc2c42884908284d5b60a360eddad1d",
+      "upstream_sha256": "5ad4597198703161c30e305ab110445a0c4081b1e2c51f72a89cec96fcebe4a7",
+      "local_path": "src/hw.h"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Utilities/kshelper.cpp",
+      "upstream_git_blob": "e71c602188a3c9caeccfbe87cbc086fa086a8247",
+      "upstream_sha256": "d0c10e68f8500b136f813f4266c0767ab9e3bb5ea274c7b9e3ce7753efda04fc",
+      "local_path": "src/kshelper.cpp"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/SimpleAudioSample.inx",
+      "upstream_git_blob": "db2b62c1e0c161b9562c838c14f74e58543d6c2d",
+      "upstream_sha256": "d055427be8c5e4e3411f4b5f7232ca01a71134b3ee50dfbebff3c30595f5a14e",
+      "local_path": "VoiceAppVirtualAudio.inx"
+    },
+    {
+      "upstream_path": "audio/simpleaudiosample/Source/Main/SimpleAudioSample.rc",
+      "upstream_git_blob": "7fbb48938185385455cd2d052cf509832abb83fe",
+      "upstream_sha256": "b9c8497998e9d868281e428b25a81ac83a48aa462b27d0d74cb8deee9c0f55c5",
+      "local_path": "VoiceAppVirtualAudio.rc"
+    }
+  ],
+  "own_code_license": "MIT OR Apache-2.0",
+  "independently_original_files": [
+    "src/voicebridge.h",
+    "tests/bridge_tests.cpp",
+    "build-driver.ps1",
+    "Directory.Build.props",
+    "VoiceAppVirtualAudio.vcxproj"
+  ],
+  "excluded_upstream_components": [
+    "ToneGenerator.cpp",
+    "ToneGenerator.h",
+    "savedata.cpp",
+    "savedata.h",
+    "sample solutions/projects and package scripts"
+  ]
+}
