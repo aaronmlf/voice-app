@@ -42,6 +42,9 @@ enum Action {
         input: Option<String>,
         #[arg(long)]
         output: Option<String>,
+        /// Explicit owned virtual render endpoint from doctor/status (Windows).
+        #[arg(long, requires = "start")]
+        virtual_output: Option<String>,
         #[arg(long, default_value_t = 256)]
         quantum: u32,
     },
@@ -55,6 +58,9 @@ enum Action {
         input: Option<String>,
         #[arg(long)]
         output: Option<String>,
+        /// Send final voice and soundboard to this detected owned virtual render endpoint.
+        #[arg(long)]
+        virtual_output: Option<String>,
         #[arg(long, default_value_t = 256)]
         quantum: u32,
     },
@@ -268,8 +274,13 @@ fn run(cli: Cli) -> Result<()> {
             start,
             input,
             output,
+            virtual_output,
             quantum,
         } => {
+            ensure!(
+                start || (input.is_none() && output.is_none() && virtual_output.is_none()),
+                "--input/--output/--virtual-output require serve --start"
+            );
             let mut service = voice_engine::spawn_service(paths.clone())?;
             let stopping = Arc::new(AtomicBool::new(false));
             let signal = stopping.clone();
@@ -279,6 +290,7 @@ fn run(cli: Cli) -> Result<()> {
                 let config = AudioConfig {
                     input_device: input,
                     output_device: output,
+                    virtual_output_device: virtual_output,
                     quantum,
                     ..Default::default()
                 };
@@ -286,9 +298,6 @@ fn run(cli: Cli) -> Result<()> {
                     service.stop()?;
                     return Err(error);
                 }
-            } else if input.is_some() || output.is_some() {
-                service.stop()?;
-                bail!("--input/--output require serve --start");
             }
             let status = send(&paths.socket, Command::Status)?;
             emit(
@@ -301,13 +310,20 @@ fn run(cli: Cli) -> Result<()> {
             return Ok(());
         }
         Action::Doctor => {
+            let virtual_microphone =
+                voice_engine::probe_virtual_microphone().unwrap_or_else(|error| {
+                    voice_core::VirtualMicrophoneStatus {
+                        diagnostic: Some(format!("Virtual microphone discovery failed: {error:#}")),
+                        ..Default::default()
+                    }
+                });
             return match voice_engine::probe_devices() {
                 Ok(devices) => emit(
-                    &json!({"backend":voice_engine::BACKEND_NAME,"backend_available":true,"pipewire_available":voice_engine::BACKEND_NAME == "pipewire","virtual_microphone":voice_engine::VIRTUAL_MICROPHONE,"capture_started":false,"devices":devices}),
+                    &json!({"backend":voice_engine::BACKEND_NAME,"backend_available":true,"pipewire_available":voice_engine::BACKEND_NAME == "pipewire","virtual_microphone":virtual_microphone.available,"virtual_microphone_status":virtual_microphone,"capture_started":false,"devices":devices}),
                 ),
                 Err(error) => {
                     emit(
-                        &json!({"backend":voice_engine::BACKEND_NAME,"backend_available":false,"pipewire_available":false,"virtual_microphone":voice_engine::VIRTUAL_MICROPHONE,"capture_started":false,"error":error.to_string()}),
+                        &json!({"backend":voice_engine::BACKEND_NAME,"backend_available":false,"pipewire_available":false,"virtual_microphone":virtual_microphone.available,"virtual_microphone_status":virtual_microphone,"capture_started":false,"error":error.to_string()}),
                     )?;
                     Err(error)
                 }
@@ -359,11 +375,13 @@ fn run(cli: Cli) -> Result<()> {
         Action::Start {
             input,
             output,
+            virtual_output,
             quantum,
         } => Command::Start {
             config: AudioConfig {
                 input_device: input,
                 output_device: output,
+                virtual_output_device: virtual_output,
                 quantum,
                 ..Default::default()
             },
@@ -564,4 +582,78 @@ fn benchmark(blocks: usize, advanced: bool) -> Result<()> {
         "advanced":advanced,"algorithmic_latency_frames":processor.latency_frames(&settings),
         "end_to_end_latency_measured":false,"audio_devices_opened":false}),
     )
+}
+
+#[cfg(test)]
+mod virtual_output_tests {
+    use super::*;
+
+    #[test]
+    fn serve_requires_explicit_start_for_a_virtual_route_before_starting_a_service() {
+        assert!(
+            Cli::try_parse_from(["voice-cli", "serve", "--virtual-output", "owned-id"]).is_err()
+        );
+        let cli = Cli::try_parse_from([
+            "voice-cli",
+            "serve",
+            "--start",
+            "--output",
+            "headphones",
+            "--virtual-output",
+            "owned-id",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Action::Serve {
+            start: true,
+            output: Some(ref output),
+            virtual_output: Some(ref virtual_output),
+            ..
+        } if output == "headphones" && virtual_output == "owned-id"));
+    }
+
+    #[test]
+    fn start_accepts_an_explicit_virtual_id_separately_from_headphones() {
+        let cli = Cli::try_parse_from([
+            "voice-cli",
+            "start",
+            "--input",
+            "microphone",
+            "--output",
+            "headphones",
+            "--virtual-output",
+            "owned-id",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Action::Start {
+            input: Some(ref input),
+            output: Some(ref output),
+            virtual_output: Some(ref virtual_output),
+            ..
+        } if input == "microphone" && output == "headphones" && virtual_output == "owned-id"));
+        let legacy = Cli::try_parse_from(["voice-cli", "start"]).unwrap();
+        assert!(matches!(
+            legacy.command,
+            Action::Start {
+                virtual_output: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn shared_start_registry_accepts_the_same_config_as_raw_cli_and_mcp() {
+        let wire = json!({"op":"start","config":{
+            "output_device":"headphones", "virtual_output_device":"owned-id"
+        }});
+        let command: Command = serde_json::from_value(wire).unwrap();
+        let Command::Start { config } = &command else {
+            panic!("wrong command");
+        };
+        assert_eq!(config.output_device.as_deref(), Some("headphones"));
+        assert_eq!(config.virtual_output_device.as_deref(), Some("owned-id"));
+        assert_eq!(
+            serde_json::to_value(command).unwrap()["config"]["virtual_output_device"],
+            "owned-id"
+        );
+    }
 }
