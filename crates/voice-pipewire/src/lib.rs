@@ -58,6 +58,9 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
 /// Resolve automatic routes against the desktop defaults without changing those defaults.
 /// An explicitly selected device must still exist; it is never silently replaced.
 pub fn resolve_config(config: &AudioConfig) -> Result<AudioConfig> {
+    if config.virtual_output_device.is_some() {
+        anyhow::bail!("an explicit Windows virtual output cannot be used by PipeWire");
+    }
     config.validate().map_err(anyhow::Error::msg)?;
     let snapshot = device_snapshot()?;
     let mut resolved = config.clone();
@@ -943,6 +946,15 @@ fn monitor_process(stream: &pw::stream::Stream, state: &mut Monitor, quantum: us
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rejects_a_windows_virtual_route_before_opening_pipewire() {
+        let config = voice_core::AudioConfig {
+            virtual_output_device: Some("windows-owned-endpoint".into()),
+            ..Default::default()
+        };
+        let error = super::resolve_config(&config).unwrap_err();
+        assert!(error.to_string().contains("Windows virtual output"));
+    }
     use super::*;
     fn device(id: u32, name: &str, kind: DeviceKind) -> DeviceInfo {
         DeviceInfo {
