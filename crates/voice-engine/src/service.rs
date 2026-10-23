@@ -603,13 +603,13 @@ impl Engine {
     fn virtual_microphone_status(&mut self) -> VirtualMicrophoneStatus {
         let now = Instant::now();
         if now >= self.next_virtual_probe {
-            self.virtual_microphone =
-                crate::audio::virtual_microphone_status().unwrap_or_else(|error| {
-                    VirtualMicrophoneStatus {
-                        diagnostic: Some(format!("Virtual microphone discovery failed: {error:#}")),
-                        ..Default::default()
-                    }
-                });
+            self.virtual_microphone = crate::audio::virtual_microphone_status_for(
+                self.session.config.virtual_output_device.as_deref(),
+            )
+            .unwrap_or_else(|error| VirtualMicrophoneStatus {
+                diagnostic: Some(format!("Virtual microphone discovery failed: {error:#}")),
+                ..Default::default()
+            });
             self.next_virtual_probe = now + Duration::from_secs(2);
         }
         let mut status = self.virtual_microphone.clone();
@@ -662,7 +662,7 @@ impl Engine {
         }
         let now = Instant::now();
         // Automatic physical routes follow desktop defaults. An explicit virtual
-        // route must also remain a valid owned pair, even with fixed physical IDs.
+        // route must also remain a validated installed pair, even with fixed physical IDs.
         // Discovery runs outside process callbacks; fixed IDs never fall back.
         if self.audio.is_some()
             && (self.session.config.input_device.is_none()
@@ -1732,6 +1732,13 @@ mod tests {
             available: true,
             render_device: Some("owned-render-id".into()),
             capture_device: Some("owned-capture-id".into()),
+            targets: vec![voice_core::VirtualMicrophoneTarget {
+                provider: "vb_cable".into(),
+                render_device: "external-render-id".into(),
+                capture_device: "external-capture-id".into(),
+                render_description: "CABLE Input".into(),
+                capture_description: "CABLE Output".into(),
+            }],
             ..Default::default()
         };
         engine.next_virtual_probe = Instant::now() + Duration::from_secs(60);
@@ -1739,6 +1746,14 @@ mod tests {
         assert_eq!(status["capabilities"]["virtual_microphone"], true);
         assert_eq!(status["virtual_microphone"]["available"], true);
         assert_eq!(status["virtual_microphone"]["active"], false);
+        assert_eq!(
+            status["virtual_microphone"]["targets"][0]["provider"],
+            "vb_cable"
+        );
+        assert_eq!(
+            status["virtual_microphone"]["targets"][0]["render_device"],
+            "external-render-id"
+        );
         assert_eq!(
             status["virtual_microphone"]["capture_device"],
             "owned-capture-id"
