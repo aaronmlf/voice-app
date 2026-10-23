@@ -73,6 +73,10 @@ pub enum Command {
         end_seconds: f64,
         name: String,
     },
+    /// Remove only this library entry; source and managed audio files are retained.
+    RemoveClip {
+        id: String,
+    },
     Play {
         id: String,
         preview: bool,

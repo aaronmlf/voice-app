@@ -259,6 +259,7 @@ impl Library {
     }
 
     pub fn clip(&self, id: &str) -> Result<Clip> {
+        validate_id(id)?;
         let row = self
             .db
             .query_row(
@@ -268,6 +269,18 @@ impl Library {
             )
             .context("clip not found")?;
         self.finish_clip(row)
+    }
+
+    /// Remove a soundboard entry, keeping both its original source and normalized
+    /// managed WAV intact. Retained audio still occupies disk space; this operation
+    /// deliberately performs no decoding, file deletion or garbage collection.
+    pub fn remove_clip(&self, id: &str) -> Result<()> {
+        validate_id(id)?;
+        ensure!(
+            self.db.execute("DELETE FROM clips WHERE id=?1", [id])? > 0,
+            "clip not found: {id}"
+        );
+        Ok(())
     }
 
     fn finish_clip(&self, row: ClipRow) -> Result<Clip> {
@@ -1096,6 +1109,64 @@ mod tests {
                 .import_clip(&temp.0.join("bad.mp3"), DEFAULT_BOARD_ID, "Bad")
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn remove_clip_persists_metadata_only_and_retains_all_audio() -> Result<()> {
+        let temp = Temp::new();
+        let root = temp.0.join("library");
+        let source = temp.0.join("original.wav");
+        write_wav(&source, &[0.25; 32])?;
+        let original_bytes = fs::read(&source)?;
+        let library = Library::open(&root)?;
+        let board = library.create_board("Other panel")?;
+        let removed = library.import_clip(&source, DEFAULT_BOARD_ID, "Remove from panel")?;
+        let other = library.import_clip(&source, &board.id, "Keep on other panel")?;
+        let managed_bytes = fs::read(&removed.path)?;
+        let other_bytes = fs::read(&other.path)?;
+        library.remove_clip(&removed.id)?;
+        assert!(library.clip(&removed.id).is_err());
+        assert!(library.load_clip(&removed.id).is_err());
+        assert!(library.clips(DEFAULT_BOARD_ID)?.is_empty());
+        assert_eq!(library.clips(&board.id)?, vec![other.clone()]);
+        assert_eq!(library.presets()?.len(), 12);
+        assert_eq!(fs::read(&source)?, original_bytes);
+        assert_eq!(fs::read(&removed.path)?, managed_bytes);
+        assert_eq!(fs::read(&other.path)?, other_bytes);
+        drop(library);
+
+        let reopened = Library::open(&root)?;
+        assert!(reopened.clip(&removed.id).is_err());
+        assert_eq!(reopened.clips(&board.id)?, vec![other.clone()]);
+        assert_eq!(reopened.load_clip(&other.id)?.len(), 32);
+        assert_eq!(fs::read(&source)?, original_bytes);
+        assert_eq!(fs::read(&removed.path)?, managed_bytes);
+        assert_eq!(fs::read(&other.path)?, other_bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn removal_rejects_unknown_ids_and_does_not_read_managed_audio() -> Result<()> {
+        let temp = Temp::new();
+        let library = Library::open(&temp.0.join("library"))?;
+        let first = library.save_clip(&[0.1; 16], DEFAULT_BOARD_ID, "First")?;
+        let second = library.save_clip(&[0.2; 16], DEFAULT_BOARD_ID, "Second")?;
+        let first_bytes = fs::read(&first.path)?;
+        let second_bytes = fs::read(&second.path)?;
+        for id in ["", "../original.wav", "clip/invalid", "clip.missing"] {
+            assert!(library.remove_clip(id).is_err(), "unexpected removal: {id}");
+            assert_eq!(library.clips(DEFAULT_BOARD_ID)?.len(), 2);
+        }
+        assert_eq!(fs::read(&first.path)?, first_bytes);
+        assert_eq!(fs::read(&second.path)?, second_bytes);
+        // An unreadable/invalid audio payload must not prevent removal of its
+        // panel entry, and retained bytes must not be modified as a side effect.
+        fs::write(&first.path, b"not a WAV")?;
+        library.remove_clip(&first.id)?;
+        assert_eq!(fs::read(&first.path)?, b"not a WAV");
+        assert!(library.remove_clip(&first.id).is_err());
+        assert_eq!(library.clips(DEFAULT_BOARD_ID)?, vec![second]);
         Ok(())
     }
 

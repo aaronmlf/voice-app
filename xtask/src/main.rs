@@ -235,6 +235,7 @@ fn boundary_policy() -> BTreeMap<&'static str, &'static [&'static str]> {
                 "anyhow",
                 "serde_json",
                 "eframe",
+                "wgpu",
                 "rfd",
                 "image",
             ][..],
@@ -684,6 +685,10 @@ fn package(root: &Path) -> Result<()> {
         fs::copy(
             root.join("scripts/test-windows-offline.ps1"),
             staging.join("scripts/test-windows-offline.ps1"),
+        )?;
+        fs::copy(
+            root.join("scripts/test-windows-gui.ps1"),
+            staging.join("scripts/test-windows-gui.ps1"),
         )?;
     } else {
         copy_directory(&root.join("docs"), &staging.join("docs"))?;

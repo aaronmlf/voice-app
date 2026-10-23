@@ -809,6 +809,10 @@ impl SourceProcessor {
         if written < n {
             self.shared
                 .metrics
+                .monitor_producer_overruns
+                .fetch_add(1, Ordering::Relaxed);
+            self.shared
+                .metrics
                 .monitor_overruns
                 .fetch_add(1, Ordering::Relaxed);
         }
@@ -821,6 +825,9 @@ fn finite_gain(bits: u32) -> f32 {
 }
 
 fn trim_backlog(queue: &SampleQueue, scratch: &mut [f32], frames: usize) -> usize {
+    if frames == 0 {
+        return 0;
+    }
     let backlog = queue.len();
     let mut dropped = 0;
     if backlog > frames.saturating_mul(4) {
@@ -880,7 +887,19 @@ impl Monitor {
         let n = (bytes.len() / MONITOR_STRIDE)
             .min(requested_frames)
             .min(self.scratch.len());
-        if trim_backlog(&self.queue, &mut self.scratch, n) > 0 {
+        if n == 0 {
+            self.shared
+                .metrics
+                .monitor_empty_callbacks
+                .fetch_add(1, Ordering::Relaxed);
+            return 0;
+        }
+        let trimmed = trim_backlog(&self.queue, &mut self.scratch, n);
+        if trimmed > 0 {
+            self.shared
+                .metrics
+                .monitor_trimmed_frames
+                .fetch_add(trimmed as u64, Ordering::Relaxed);
             self.shared
                 .metrics
                 .monitor_overruns
@@ -1087,6 +1106,113 @@ mod tests {
         assert_eq!(&bytes[4..8], &0.75_f32.to_le_bytes());
         assert!(bytes[MONITOR_STRIDE..].iter().all(|byte| *byte == 0xCC));
         assert_eq!(queue.len(), 1);
+    }
+    #[test]
+    fn monitor_without_output_frames_preserves_queued_audio() {
+        for (byte_count, requested_frames) in [(0, 8), (7, 8), (16, 0)] {
+            let shared = Arc::new(AudioShared::default());
+            let queue = Arc::new(SampleQueue::new(16));
+            assert_eq!(queue.push(&[0.25, -0.5]), 2);
+            let mut monitor = Monitor {
+                shared: shared.clone(),
+                queue: queue.clone(),
+                scratch: vec![0.; 4].into_boxed_slice(),
+            };
+            let mut bytes = vec![0xCC; byte_count];
+            assert_eq!(monitor.render(&mut bytes, requested_frames), 0);
+            assert!(bytes.iter().all(|byte| *byte == 0xCC));
+            assert_eq!(queue.len(), 2);
+            let metrics = shared.metrics.snapshot();
+            assert_eq!(metrics.monitor_overruns, 0);
+            assert_eq!(metrics.monitor_producer_overruns, 0);
+            assert_eq!(metrics.monitor_trimmed_frames, 0);
+            assert_eq!(metrics.monitor_empty_callbacks, 1);
+
+            let mut output = [0; 2 * MONITOR_STRIDE];
+            assert_eq!(monitor.render(&mut output, 2), 2);
+            let samples: Vec<_> = output
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|sample| f32::from_le_bytes(*sample))
+                .collect();
+            assert_eq!(samples, [0.25, 0.25, -0.5, -0.5]);
+            assert!(queue.is_empty());
+            let metrics = shared.metrics.snapshot();
+            assert_eq!(metrics.monitor_overruns, 0);
+            assert_eq!(metrics.monitor_producer_overruns, 0);
+            assert_eq!(metrics.monitor_trimmed_frames, 0);
+            assert_eq!(metrics.monitor_empty_callbacks, 1);
+        }
+    }
+    #[test]
+    fn zero_frame_backlog_trim_preserves_the_fifo() {
+        let queue = SampleQueue::new(16);
+        let samples = [0.25, -0.5, 0.75, -1.0];
+        assert_eq!(queue.push(&samples), samples.len());
+        let mut scratch = [42.; 4];
+        assert_eq!(trim_backlog(&queue, &mut scratch, 0), 0);
+        assert_eq!(scratch, [42.; 4]);
+        assert_eq!(queue.len(), samples.len());
+        assert_eq!(trim_backlog(&queue, &mut scratch, samples.len()), 0);
+        assert_eq!(queue.pop(&mut scratch), samples.len());
+        assert_eq!(scratch, samples);
+    }
+    #[test]
+    fn monitor_still_counts_and_recovers_from_a_real_backlog() {
+        let shared = Arc::new(AudioShared::default());
+        let queue = Arc::new(SampleQueue::new(64));
+        let samples: Vec<_> = (0..64).map(|n| n as f32 / 64.).collect();
+        assert_eq!(queue.push(&samples), samples.len());
+        let mut monitor = Monitor {
+            shared: shared.clone(),
+            queue: queue.clone(),
+            scratch: vec![0.; 8].into_boxed_slice(),
+        };
+        let mut bytes = [0; 8 * MONITOR_STRIDE];
+        for (start, remaining) in [(48, 8), (56, 0)] {
+            assert_eq!(monitor.render(&mut bytes, 8), 8);
+            for (frame, expected) in bytes
+                .as_chunks::<MONITOR_STRIDE>()
+                .0
+                .iter()
+                .zip(&samples[start..start + 8])
+            {
+                assert_eq!(&frame[..4], &expected.to_le_bytes());
+                assert_eq!(&frame[4..], &expected.to_le_bytes());
+            }
+            assert_eq!(queue.len(), remaining);
+            let metrics = shared.metrics.snapshot();
+            assert_eq!(metrics.monitor_overruns, 1);
+            assert_eq!(metrics.monitor_producer_overruns, 0);
+            assert_eq!(metrics.monitor_trimmed_frames, 48);
+            assert_eq!(metrics.monitor_empty_callbacks, 0);
+        }
+    }
+    #[test]
+    fn monitor_queue_overflow_still_counts_rejected_audio() {
+        let shared = Arc::new(AudioShared::default());
+        shared.bypass.store(true, Ordering::Relaxed);
+        let input = Arc::new(SampleQueue::new(16));
+        let monitor = Arc::new(SampleQueue::new(16));
+        assert_eq!(input.push(&[0.25; 8]), 8);
+        assert_eq!(shared.preview.push(&[0.4; 8]), 8);
+        assert_eq!(monitor.push(&[0.1; 16]), 16);
+        let mut processor = SourceProcessor::new(48_000, shared.clone(), input, monitor.clone());
+        processor.process(8);
+        let metrics = shared.metrics.snapshot();
+        assert_eq!(metrics.monitor_overruns, 1);
+        assert_eq!(metrics.monitor_producer_overruns, 1);
+        assert_eq!(metrics.monitor_trimmed_frames, 0);
+        assert_eq!(metrics.monitor_empty_callbacks, 0);
+        assert_eq!(monitor.len(), 16);
+        let mut queued = [0.; 16];
+        assert_eq!(monitor.pop(&mut queued), 16);
+        assert_eq!(queued, [0.1; 16]);
+        assert_eq!(&processor.output[..8], &[0.25; 8]);
+        let mut recorded = [0.; 8];
+        assert_eq!(shared.recording.pop(&mut recorded), 8);
+        assert_eq!(recorded, [0.25; 8]);
     }
     #[test]
     fn a_delayed_consumer_recovers_recent_audio_instead_of_old_backlog() {

@@ -49,7 +49,7 @@ enum Action {
     Doctor,
     Status,
     Devices,
-    /// Start the virtual microphone; device node names come from devices.
+    /// Start voice processing streams; device identifiers come from devices.
     Start {
         #[arg(long)]
         input: Option<String>,
@@ -103,6 +103,10 @@ enum Action {
         board: String,
         #[arg(long)]
         name: Option<String>,
+    },
+    /// Remove a soundboard entry and stop that sound; keep all audio files.
+    RemoveClip {
+        id: String,
     },
     Play {
         id: String,
@@ -414,6 +418,7 @@ fn run(cli: Cli) -> Result<()> {
             overlap,
             gain,
         },
+        Action::RemoveClip { id } => Command::RemoveClip { id },
         Action::StopSounds => Command::StopSounds,
         Action::Record { path, source } => Command::StartRecording {
             path: absolute(path)?,

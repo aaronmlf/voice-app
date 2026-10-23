@@ -106,6 +106,10 @@ enum WorkerCommand {
         reply: mpsc::Sender<Result<()>>,
     },
     StopAll,
+    StopClip {
+        id: String,
+        reply: mpsc::Sender<Result<()>>,
+    },
     /// Sent only after the previous backend has stopped producing recorded samples.
     /// The worker is the sole recording queue consumer and acknowledges the reset.
     Reset {
@@ -336,6 +340,18 @@ impl Worker {
                             mix.stop_all();
                             preview.stop_all();
                         }
+                        WorkerCommand::StopClip { id, reply } => {
+                            mix.stop(&id);
+                            preview.stop(&id);
+                            voices.store(
+                                mix.active_count() + preview.active_count(),
+                                Ordering::Relaxed,
+                            );
+                            // Mixed PCM already queued can contain other sounds:
+                            // retain that bounded prepared tail rather than interrupt
+                            // unrelated clips or add a second queue consumer.
+                            let _ = reply.send(Ok(()));
+                        }
                         WorkerCommand::Reset {
                             clear_replay,
                             reply,
@@ -451,6 +467,13 @@ impl Worker {
         self.tx
             .try_send(command)
             .map_err(|e| anyhow!("audio worker busy or disconnected: {e}"))
+    }
+    fn stop_clip(&self, id: String) -> Result<()> {
+        let (reply, acknowledgement) = mpsc::channel();
+        self.send(WorkerCommand::StopClip { id, reply })?;
+        acknowledgement
+            .recv_timeout(Duration::from_secs(3))
+            .context("audio worker clip-stop acknowledgement timed out")?
     }
     fn reset_desktop(&self, clear_replay: bool) -> Result<()> {
         let (reply, acknowledgement) = mpsc::channel();
@@ -819,6 +842,14 @@ impl Engine {
                 end_seconds,
                 &name,
             )?)?),
+            Command::RemoveClip { id } => {
+                // Validate ID and existence using metadata before stopping any
+                // voices. Removal never loads PCM or deletes retained audio.
+                self.library.clip(&id)?;
+                self.worker.stop_clip(id.clone())?;
+                self.library.remove_clip(&id)?;
+                Ok(json!({"removed":true,"id":id}))
+            }
             Command::Play {
                 id,
                 preview,
@@ -1069,6 +1100,127 @@ mod tests {
             false
         );
         server.stop()?;
+        fs::remove_dir_all(paths.data.parent().unwrap())?;
+        Ok(())
+    }
+
+    #[test]
+    fn remove_clip_stops_only_its_mix_and_preview_instances_and_persists() -> Result<()> {
+        let paths = test_paths();
+        let mut engine = Engine::new(paths.clone())?;
+        let target = engine.library.save_clip(
+            &[0.1; 480],
+            voice_library::DEFAULT_BOARD_ID,
+            "Remove this sound",
+        )?;
+        let other = engine.library.save_clip(
+            &[0.2; 480],
+            voice_library::DEFAULT_BOARD_ID,
+            "Keep this sound",
+        )?;
+        let target_bytes = fs::read(&target.path)?;
+        let other_bytes = fs::read(&other.path)?;
+        let stop = AtomicBool::new(false);
+        assert_eq!(
+            serde_json::to_value(Command::RemoveClip {
+                id: target.id.clone(),
+            })?,
+            json!({"op":"remove_clip","id":target.id})
+        );
+        // Only the synthetic producer-ready flag is enabled: no device/backend
+        // is opened, and this test is the sole consumer of the prepared queues.
+        engine.shared.metrics.active.store(true, Ordering::Release);
+        for (id, preview) in [
+            (&target.id, false),
+            (&target.id, false),
+            (&target.id, true),
+            (&other.id, false),
+            (&other.id, true),
+        ] {
+            engine.execute(
+                Command::Play {
+                    id: id.clone(),
+                    preview,
+                    looped: true,
+                    overlap: true,
+                    gain: 1.0,
+                },
+                &stop,
+            )?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while engine.worker.playing.load(Ordering::Relaxed) != 5 {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not start all test voices"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        for id in ["../invalid.wav", "clip.missing"] {
+            assert!(
+                engine
+                    .execute(Command::RemoveClip { id: id.into() }, &stop)
+                    .is_err()
+            );
+            assert_eq!(engine.worker.playing.load(Ordering::Relaxed), 5);
+        }
+        let result = engine.execute(
+            Command::RemoveClip {
+                id: target.id.clone(),
+            },
+            &stop,
+        )?;
+        assert_eq!(result, json!({"removed":true,"id":target.id}));
+        // The worker acknowledgment follows both mixer stops and the count update.
+        assert_eq!(engine.worker.playing.load(Ordering::Relaxed), 2);
+        assert!(engine.library.clip(&target.id).is_err());
+        assert_eq!(
+            engine.library.clips(voice_library::DEFAULT_BOARD_ID)?,
+            vec![other.clone()]
+        );
+        // Leave the existing bounded mixed tail intact, then consume it as the
+        // synthetic callback would. Newly produced audio contains the other ID.
+        let mut tail = [0.0; 960];
+        assert_eq!(engine.shared.soundboard.pop(&mut tail), 960);
+        assert_eq!(engine.shared.preview.pop(&mut tail), 960);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while engine.shared.soundboard.len() < 480 || engine.shared.preview.len() < 480 {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not resume the remaining voices"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        let mut samples = [0.0; 480];
+        for queue in [&engine.shared.soundboard, &engine.shared.preview] {
+            assert_eq!(queue.pop(&mut samples), samples.len());
+            assert!(samples.iter().all(|sample| (*sample - 0.2).abs() < 0.00001));
+        }
+        assert_eq!(engine.shared.metrics.frames.load(Ordering::Relaxed), 0);
+        assert!(
+            engine
+                .execute(
+                    Command::RemoveClip {
+                        id: target.id.clone()
+                    },
+                    &stop
+                )
+                .is_err()
+        );
+        assert_eq!(engine.worker.playing.load(Ordering::Relaxed), 2);
+        assert_eq!(fs::read(&target.path)?, target_bytes);
+        assert_eq!(fs::read(&other.path)?, other_bytes);
+        drop(engine);
+
+        let reopened = Engine::new(paths.clone())?;
+        assert!(reopened.library.clip(&target.id).is_err());
+        assert_eq!(
+            reopened.library.clips(voice_library::DEFAULT_BOARD_ID)?,
+            vec![other.clone()]
+        );
+        assert_eq!(fs::read(&target.path)?, target_bytes);
+        assert_eq!(fs::read(&other.path)?, other_bytes);
+        drop(reopened);
         fs::remove_dir_all(paths.data.parent().unwrap())?;
         Ok(())
     }

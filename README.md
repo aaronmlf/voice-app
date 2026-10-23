@@ -87,6 +87,11 @@ cargo run -p voice-cli -- stop
 Use `--help` para todos os comandos. `--data-dir` e `--socket` permitem sessões isoladas.
 Os caminhos enviados pela CLI são relativos ao diretório do cliente, não ao processo do serviço.
 
+Para remover um som, abra **⋮ → Remover do soundboard** no cartão ou use o menu do botão
+direito. Confirme com **Remover**; Cancelar, × e Esc fecham sem alterar o painel. Pela CLI,
+use `voice-cli clips` para encontrar o ID e `voice-cli remove-clip ID`. A remoção é salva na
+biblioteca e interrompe somente esse som; os arquivos de áudio são mantidos.
+
 ### Testar sem microfone
 
 ```bash

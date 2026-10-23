@@ -2,7 +2,9 @@
 """Verify the Windows candidate under Wine in an isolated CI network namespace.
 
 No host audio, default Wine prefix, user library or online service is used.
-This is compatibility evidence, not native Windows/hardware qualification.
+Offline commands and the exact protected-DACL refusal are checked independently.
+An unsupported Wine security environment never qualifies GUI/IPC compatibility or
+native Windows/hardware behavior.
 """
 
 import argparse
@@ -19,6 +21,23 @@ import subprocess
 import time
 import traceback
 import zipfile
+
+
+SECURITY_REFUSAL = "voice-cli: private path must have a protected DACL"
+LOG_LIMIT_BYTES = 2 * 1024**2
+
+
+def is_unsupported_security_environment(returncode, service_log):
+    """Accept only the application's exact secure refusal and an observed failure exit."""
+    return (type(returncode) is int and returncode > 0
+            and service_log.strip() == SECURITY_REFUSAL)
+
+
+class WineServiceExited(RuntimeError):
+    def __init__(self, returncode, service_log):
+        self.returncode = returncode
+        self.service_log = service_log
+        super().__init__(f"Wine service exited {returncode}; see logs/service.log")
 
 
 ORIGINALS = sorted("builtin." + name for name in (
@@ -79,17 +98,19 @@ def read_wav(path):
     require(44 < path.stat().st_size <= 128 * 1024, "Unexpected synthetic WAV size")
     data = path.read_bytes()
     require(data[:4] == b"RIFF" and data[8:12] == b"WAVE", "Invalid WAV header")
+    require(struct.unpack_from("<I", data, 4)[0] == len(data) - 8, "Invalid RIFF size")
     position = 12
     valid_format = False
     samples = None
     while position + 8 <= len(data):
         kind, size = struct.unpack_from("<4sI", data, position)
         position += 8
-        require(position + size <= len(data), "WAV chunk exceeds file bounds")
+        require(position + size + size % 2 <= len(data), "WAV chunk exceeds file bounds")
         if kind == b"fmt ":
-            require(size >= 16, "Invalid WAV format chunk")
-            fmt, channels, rate, _, _, bits = struct.unpack_from("<HHIIHH", data, position)
+            require(not valid_format and size >= 16, "Invalid or duplicate WAV format chunk")
+            fmt, channels, rate, byte_rate, block_align, bits = struct.unpack_from("<HHIIHH", data, position)
             require((channels, rate, bits) == (1, 48000, 32), "Expected mono 48 kHz float32 WAV")
+            require((byte_rate, block_align) == (192000, 4), "Invalid float32 WAV alignment/rate")
             if fmt == 0xfffe:
                 require(size >= 40, "Truncated extensible WAV format")
                 extension_size, valid_bits = struct.unpack_from("<HH", data, position + 16)
@@ -101,12 +122,12 @@ def read_wav(path):
                 require(fmt == 3, "Expected IEEE float or extensible IEEE float WAV")
             valid_format = True
         elif kind == b"data":
-            require(size == 12000 * 4, "DSP changed synthetic frame count")
+            require(samples is None and size == 12000 * 4, "DSP changed synthetic frame count or duplicated data")
             samples = struct.unpack_from("<12000f", data, position)
             require(all(math.isfinite(value) and abs(value) <= 1 for value in samples),
                     "DSP emitted non-finite or out-of-range samples")
         position += size + (size % 2)
-    require(valid_format and samples is not None, "Missing WAV format/data")
+    require(position == len(data) and valid_format and samples is not None, "Missing/trailing WAV format/data")
     return samples
 
 
@@ -124,7 +145,7 @@ class WineSession:
         self.serial = 0
         self.children = []
         self.service = None
-        self.common = None
+        self.common = []
 
     def execute(self, arguments, timeout=20, input_text=None, ok=True):
         self.serial += 1
@@ -143,7 +164,7 @@ class WineSession:
         require(not ok or process.returncode == 0,
                 f"Wine command exited {process.returncode}; see logs/{prefix.name}.err")
         # All commands emit only small structured results. Keep a bound even on errors.
-        require(prefix.with_suffix(".out").stat().st_size <= 2 * 1024**2, "Unexpectedly large command output")
+        require(prefix.with_suffix(".out").stat().st_size <= LOG_LIMIT_BYTES, "Unexpectedly large command output")
         return process.returncode, prefix.with_suffix(".out").read_text(errors="replace")
 
     def winpath(self, path):
@@ -172,8 +193,10 @@ class WineSession:
     def wait_status(self):
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
-            if self.service is not None:
-                require(self.service.poll() is None, "Wine service exited; see logs/service.log")
+            if self.service is not None and self.service.poll() is not None:
+                path = self.output / "logs/service.log"
+                require(path.stat().st_size <= LOG_LIMIT_BYTES, "Unexpectedly large service log")
+                raise WineServiceExited(self.service.returncode, path.read_text(errors="replace"))
             code, text = self.cli("status", ok=False)
             if code == 0:
                 return json.loads(text)
@@ -240,7 +263,10 @@ def run(args):
     require(not output.exists(), "Refusing to overwrite Wine validation evidence")
     output.mkdir(parents=True, mode=0o700)
     (output / "logs").mkdir()
-    report = {"report_version": 1, "result": "failed", "scope": "Windows x64 candidate under Wine; isolated network/prefix and software-rendered GUI; no audio hardware",
+    report = {"report_version": 2, "result": "failed",
+              "scope": "Windows x64 under Wine: offline commands and security behavior; GUI/IPC only if protected DACLs are supported; no audio hardware",
+              "offline_checks_passed": False, "security_refusal_verified": False,
+              "ipc_verified": False, "gui_verified": False, "wine_compatibility_qualified": False,
               "checks": [], "limitations": ["Wine is not physical Windows 10/11 qualification", "No WASAPI hardware/desktop capture or virtual microphone driver qualification", "No Discord/OBS or latency qualification"]}
     session = None
     try:
@@ -250,6 +276,22 @@ def run(args):
         session = WineSession(output, package)
         report["wine_version"] = session.execute([session.wine, "--version"])[1].strip()
         session.execute(["wineboot", "--init"], timeout=90)
+        help_text = session.execute([session.wine, str(package / "voice-cli.exe"), "--help"])[1]
+        require("Usage: voice-cli" in help_text and "--version" in help_text
+                and "tone" in help_text and "serve" in help_text, "Wine CLI help is incomplete")
+        version = session.execute([session.wine, str(package / "voice-cli.exe"), "--version"])[1].strip()
+        require(re.fullmatch(r"voice-cli [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.+-]+)?", version),
+                "Wine CLI version output is invalid")
+        report["cli_version"] = version
+        tone = output / "tone.wav"
+        tone_report = session.cli("tone", session.winpath(tone), "--seconds", "0.25", "--hz", "220")
+        reference = read_wav(tone)
+        require(tone_report.get("offline") is True and tone_report.get("frames") == 12000
+                and tone_report.get("sample_rate") == 48000 and tone_report.get("hz") == 220,
+                "Wine tone metadata differs from the requested synthetic signal")
+        require(max(map(abs, reference)) > 0.0001, "Wine synthetic tone is silent")
+        report["offline_checks_passed"] = True
+        report["checks"].append("CLI help/version and offline 220 Hz tone: exactly 12000 finite bounded float32 frames at 48 kHz; no service or audio devices")
         data = output / "cli-data"
         endpoint = output / "cli-runtime/control.pipe"
         assert_no_audio(session.start(data, endpoint))
@@ -258,9 +300,6 @@ def run(args):
         session.cli("select", "radio")
         session.cli("monitor", "off", "--gain", "0.25")
         board = session.cli("create-board", "Wine synthetic library")
-        tone = output / "tone.wav"
-        session.cli("tone", session.winpath(tone), "--seconds", "0.25", "--hz", "220")
-        reference = read_wav(tone)
         for preset in ("builtin.radio", "builtin.deep"):
             processed = output / (preset + ".wav")
             session.cli("process", session.winpath(tone), session.winpath(processed), "--preset", preset)
@@ -294,9 +333,27 @@ def run(args):
         require([row["id"] for row in session.cli("clips", board["id"])] == [clip["id"]], "Wine SQLite library did not persist")
         session.stop()
         report["checks"].append("SID-restricted IPC, MCP shared state and session/library restart without ACL bypasses")
+        report["ipc_verified"] = True
         report["gui"] = session.gui()
         report["checks"].append("Wine GUI software rendering, screenshot and timed clean shutdown; audio remains off")
+        report["gui_verified"] = True
+        report["wine_compatibility_qualified"] = True
         report["result"] = "passed"
+    except WineServiceExited as error:
+        report["service_exit_code"] = error.returncode
+        report["service_error"] = error.service_log.strip()
+        if report["offline_checks_passed"] and is_unsupported_security_environment(error.returncode, error.service_log):
+            report["result"] = "unsupported_security_environment"
+            report["security_refusal_verified"] = True
+            report["ipc_verified"] = False
+            report["gui_verified"] = False
+            report["wine_compatibility_qualified"] = False
+            report["checks"].append("Service refused the exact unprotected-DACL environment with a nonzero exit; Windows access-control checks remain enforced")
+            report["limitations"].append("This Wine environment cannot preserve the required protected DACL: GUI and IPC were not qualified")
+        else:
+            report["error"] = str(error)
+            (output / "failure.txt").write_text(traceback.format_exc())
+            raise
     except Exception as error:
         report["error"] = str(error)
         (output / "failure.txt").write_text(traceback.format_exc())
@@ -309,7 +366,7 @@ def run(args):
                 report["cleanup_error"] = str(error)
                 report["result"] = "failed"
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-    require(report["result"] == "passed", "Wine cleanup failed; see report")
+    require(report["result"] in ("passed", "unsupported_security_environment"), "Wine validation/cleanup failed; see report")
     print(json.dumps(report, indent=2))
 
 
