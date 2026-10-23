@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 <#
   Windows package/IPC validation using a temporary synthetic library only.
-  Never launches the GUI, enumerates devices or starts WASAPI capture/playback.
+  Never launches the GUI or starts WASAPI capture/playback. Status may query
+  endpoint inventory/topology for virtual-driver discovery without opening streams.
 #>
 [CmdletBinding()]
 param(
