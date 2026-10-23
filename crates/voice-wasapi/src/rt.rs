@@ -464,6 +464,35 @@ mod tests {
     }
 
     #[test]
+    fn cable_final_mix_is_independent_of_listen_toggle_gain_and_preview() {
+        for enabled in [false, true] {
+            for gain in [0_f32, 0.25, 1.0, 2.0] {
+                let (shared, input, mut output, mut monitor) = publishing();
+                shared.monitor_enabled.store(enabled, Ordering::Relaxed);
+                shared.monitor_gain.store(gain.to_bits(), Ordering::Relaxed);
+                input.push(&[0.2; 2]);
+                shared.soundboard.push(&[0.1; 2]);
+                shared.preview.push(&[0.05; 2]);
+                let mut published = [0.; 4];
+                let mut headphones = [0.; 4];
+                let running = AtomicBool::new(true);
+                output.render_if_running(&mut published, &running);
+                monitor.render_if_running(&mut headphones, &running);
+                assert!(published.iter().all(|value| (*value - 0.3).abs() < 1e-6));
+                let listening = if enabled { 0.3 * gain } else { 0.0 } + 0.05;
+                assert!(
+                    headphones
+                        .iter()
+                        .all(|value| (*value - listening).abs() < 1e-6)
+                );
+                let mut recorded = [0.; 2];
+                assert_eq!(shared.recording.pop(&mut recorded), 2);
+                assert!(recorded.iter().all(|value| (*value - 0.3).abs() < 1e-6));
+            }
+        }
+    }
+
+    #[test]
     fn virtual_publishing_advances_without_monitor_callbacks_and_has_bounded_backlog() {
         let (shared, input, mut output, mut monitor) = publishing();
         shared.monitor_enabled.store(true, Ordering::Relaxed);

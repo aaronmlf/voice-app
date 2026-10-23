@@ -1,6 +1,8 @@
 //! Enumeration, format checks, and stream lifetime run on the engine's control thread.
 use crate::identity::{
-    OwnedEndpoint, OwnedIdentity, is_owned_adapter_path, owned_identity, verified_pair,
+    CableEndpoint, OwnedEndpoint, OwnedIdentity, cable_targets, is_owned_adapter_path,
+    is_vbcable_adapter, overlaps_physical_route, owned_identity, selected_status, vbcable_identity,
+    verified_pair,
 };
 use crate::rt::{
     DesktopCapture, INPUT_QUEUE, InputCapture, LocalMonitor, MONITOR_QUEUE, VoiceOutput,
@@ -17,12 +19,26 @@ use std::sync::{
 use std::time::Duration;
 use voice_core::{
     AudioConfig, AudioShared, DesktopShared, DeviceInfo, DeviceKind, SAMPLE_RATE, SampleQueue,
-    VirtualMicrophoneStatus,
+    VirtualMicrophoneStatus, VirtualMicrophoneTarget,
 };
 
-use windows::Win32::{
-    Media::Audio::IDeviceTopology,
-    System::Com::{CLSCTX_ALL, CoTaskMemFree},
+use windows::{
+    Win32::{
+        Devices::{
+            DeviceAndDriverInstallation::{
+                CM_Get_DevNode_PropertyW, CM_Get_Device_Interface_PropertyW,
+                CM_LOCATE_DEVNODE_NORMAL, CM_Locate_DevNodeW, CR_SUCCESS,
+            },
+            Properties::{
+                DEVPKEY_Device_HardwareIds, DEVPKEY_Device_InstanceId, DEVPKEY_Device_Service,
+                DEVPROP_TYPE_STRING, DEVPROP_TYPE_STRING_LIST, DEVPROPTYPE,
+            },
+        },
+        Foundation::DEVPROPKEY,
+        Media::Audio::IDeviceTopology,
+        System::Com::{CLSCTX_ALL, CoTaskMemFree},
+    },
+    core::PCWSTR,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
@@ -131,15 +147,130 @@ fn connected_adapter_path(device: &Device) -> Result<String> {
     }
 }
 
+// These bounded property buffers are temporary control-thread stack storage;
+// they are never captured by an audio callback or allocated per PCM block.
+const PNP_PROPERTY_WORDS: usize = 4096;
+
+struct NativeAdapter {
+    instance: String,
+    hardware_ids: Vec<String>,
+    service: String,
+}
+
+fn property_words(words: &[u16], bytes: u32) -> Result<&[u16]> {
+    let bytes = usize::try_from(bytes)?;
+    if bytes == 0 || !bytes.is_multiple_of(2) || bytes > std::mem::size_of_val(words) {
+        bail!("Windows adapter property has an invalid bounded UTF-16 size");
+    }
+    Ok(&words[..bytes / 2])
+}
+
+fn property_string(words: &[u16]) -> Result<String> {
+    let Some((&0, value)) = words.split_last() else {
+        bail!("Windows adapter property is not terminated");
+    };
+    if value.is_empty() || value.contains(&0) {
+        bail!("Windows adapter property contains an empty or embedded string");
+    }
+    String::from_utf16(value).context("Windows adapter property is invalid UTF-16")
+}
+
+fn devnode_property(devnode: u32, key: &DEVPROPKEY, expected: DEVPROPTYPE) -> Result<Vec<u16>> {
+    let mut words = [0_u16; PNP_PROPERTY_WORDS];
+    let mut bytes = u32::try_from(std::mem::size_of_val(&words))?;
+    let mut property_type = DEVPROPTYPE::default();
+    // ConfigManager reads only configured native devices and properties. No
+    // registry mutation, SetupAPI installer or system-default change is involved.
+    let result = unsafe {
+        CM_Get_DevNode_PropertyW(
+            devnode,
+            key,
+            &mut property_type,
+            Some(words.as_mut_ptr().cast()),
+            &mut bytes,
+            0,
+        )
+    };
+    if result != CR_SUCCESS || property_type != expected {
+        bail!("Windows adapter PnP property is unavailable or has an unexpected type");
+    }
+    Ok(property_words(&words, bytes)?.to_vec())
+}
+
+fn native_adapter(adapter_path: &str) -> Result<NativeAdapter> {
+    if adapter_path.is_empty()
+        || adapter_path.len() > PNP_PROPERTY_WORDS
+        || adapter_path.contains('\0')
+    {
+        bail!("Windows connected adapter interface is invalid");
+    }
+    let path: Vec<u16> = adapter_path.encode_utf16().chain(Some(0)).collect();
+    let mut words = [0_u16; PNP_PROPERTY_WORDS];
+    let mut bytes = u32::try_from(std::mem::size_of_val(&words))?;
+    let mut property_type = DEVPROPTYPE::default();
+    // Interface paths can contain ROOT#MEDIA; never infer the installed driver's
+    // hardware ID or pair identity from that generic path or an endpoint label.
+    let result = unsafe {
+        CM_Get_Device_Interface_PropertyW(
+            PCWSTR(path.as_ptr()),
+            &DEVPKEY_Device_InstanceId,
+            &mut property_type,
+            Some(words.as_mut_ptr().cast()),
+            &mut bytes,
+            0,
+        )
+    };
+    if result != CR_SUCCESS || property_type != DEVPROP_TYPE_STRING {
+        bail!("Windows connected adapter PnP instance is unavailable");
+    }
+    let instance = property_string(property_words(&words, bytes)?)?;
+    let instance_wide: Vec<u16> = instance.encode_utf16().chain(Some(0)).collect();
+    let mut devnode = 0;
+    let result = unsafe {
+        CM_Locate_DevNodeW(
+            &mut devnode,
+            PCWSTR(instance_wide.as_ptr()),
+            CM_LOCATE_DEVNODE_NORMAL,
+        )
+    };
+    if result != CR_SUCCESS {
+        bail!("Windows connected adapter disappeared");
+    }
+    let ids = devnode_property(
+        devnode,
+        &DEVPKEY_Device_HardwareIds,
+        DEVPROP_TYPE_STRING_LIST,
+    )?;
+    if !ids.ends_with(&[0, 0]) {
+        bail!("Windows adapter hardware IDs are not a terminated string list");
+    }
+    let hardware_ids = ids[..ids.len() - 1]
+        .split_inclusive(|word| *word == 0)
+        .map(property_string)
+        .collect::<Result<Vec<_>>>()?;
+    let service = property_string(&devnode_property(
+        devnode,
+        &DEVPKEY_Device_Service,
+        DEVPROP_TYPE_STRING,
+    )?)?;
+    Ok(NativeAdapter {
+        instance,
+        hardware_ids,
+        service,
+    })
+}
+
 struct Inventory {
     physical: Vec<DeviceInfo>,
     owned: Vec<OwnedEndpoint>,
+    cables: Vec<CableEndpoint>,
 }
 
 fn inventory(host: &Host) -> Result<Inventory> {
     let mut inventory = Inventory {
         physical: Vec::new(),
         owned: Vec::new(),
+        cables: Vec::new(),
     };
     fn append(
         endpoints: impl Iterator<Item = Device>,
@@ -149,15 +280,12 @@ fn inventory(host: &Host) -> Result<Inventory> {
         for device in endpoints {
             let Ok(id) = device.id() else { continue };
             let name = id.to_string();
-            // If topology identity cannot be established, do not offer this endpoint
-            // as a physical/default route: a renamed virtual capture must never leak in.
+            // Missing native identity fails closed before offering physical/default
+            // routes: a renamed virtual capture must never leak into the voice path.
             let Ok(adapter) = connected_adapter_path(&device) else {
                 continue;
             };
             if is_owned_adapter_path(&adapter) {
-                // An unreadable role is still owned. Keep it in the inventory as an
-                // invalid candidate so probing fails closed instead of offering it
-                // as a physical/default endpoint after a friendly-name change.
                 let identity = owned_identity(&adapter).unwrap_or(OwnedIdentity {
                     instance: String::new(),
                     role: None,
@@ -169,7 +297,40 @@ fn inventory(host: &Host) -> Result<Inventory> {
                 });
                 continue;
             }
-            // Description is fallible when an endpoint disappears during enumeration.
+            let Ok(native) = native_adapter(&adapter) else {
+                continue;
+            };
+            if is_vbcable_adapter(&native.hardware_ids, &native.service) {
+                // Quarantine every recognized base VB-CABLE endpoint, including
+                // legacy/unknown references, malformed metadata and 16-channel
+                // outputs. Only a complete profile may become a publishable target.
+                let identity = vbcable_identity(
+                    &adapter,
+                    &native.instance,
+                    &native.hardware_ids,
+                    &native.service,
+                )
+                .unwrap_or(OwnedIdentity {
+                    instance: String::new(),
+                    role: None,
+                });
+                let description = device
+                    .description()
+                    .ok()
+                    .map(|description| description.name().to_owned())
+                    .filter(|description| !description.trim().is_empty())
+                    .unwrap_or_else(|| name.clone());
+                let supported_format =
+                    virtual_native_config(&device, kind == DeviceKind::Input, 256).is_ok();
+                inventory.cables.push(CableEndpoint {
+                    id: name,
+                    description,
+                    identity,
+                    kind: kind.clone(),
+                    supported_format,
+                });
+                continue;
+            }
             let Ok(description) = device.description() else {
                 continue;
             };
@@ -197,7 +358,8 @@ fn inventory(host: &Host) -> Result<Inventory> {
     Ok(inventory)
 }
 
-/// Stable endpoint IDs are names; owned driver endpoints never appear as physical routes.
+/// Stable endpoint IDs are names; recognized virtual adapters never appear as
+/// physical microphone/headphones/default/desktop-loopback routes.
 pub fn list_devices() -> Result<Vec<DeviceInfo>> {
     Ok(inventory(&host()?)?.physical)
 }
@@ -209,33 +371,41 @@ fn eligible(name: &str, description: &str) -> bool {
         && description != "Voice App Virtual Input"
 }
 
-fn pair_status(host: &Host, inventory: &Inventory) -> VirtualMicrophoneStatus {
-    let mut status = VirtualMicrophoneStatus::default();
-    let invalid = || {
-        Some("Voice App driver endpoint pair is missing, ambiguous or mismatched; no virtual route was changed".to_owned())
-    };
-    let Some((render, capture)) = verified_pair(&inventory.owned) else {
-        status.diagnostic = invalid();
-        return status;
-    };
-    let format = endpoint(host, &render.id)
-        .and_then(|device| virtual_native_config(&device, false, 256))
-        .and_then(|_| endpoint(host, &capture.id))
-        .and_then(|device| virtual_native_config(&device, true, 256));
-    if let Err(error) = format {
-        status.diagnostic = Some(format!("Voice App driver format is unsupported: {error:#}"));
-        return status;
+fn pair_status(
+    host: &Host,
+    inventory: &Inventory,
+    selected: Option<&str>,
+) -> VirtualMicrophoneStatus {
+    let mut targets = cable_targets(&inventory.cables);
+    // Preserve compatibility with a separately installed old first-party pair.
+    // Its driver development/signing is not part of the external cable route.
+    if let Some((render, capture)) = verified_pair(&inventory.owned) {
+        let pair = endpoint(host, &render.id)
+            .and_then(|device| virtual_native_config(&device, false, 256))
+            .and_then(|_| endpoint(host, &capture.id))
+            .and_then(|device| virtual_native_config(&device, true, 256));
+        if pair.is_ok() {
+            targets.push(VirtualMicrophoneTarget {
+                provider: "voice_app".into(),
+                render_device: render.id.clone(),
+                capture_device: capture.id.clone(),
+                render_description: "Voice App Virtual Input".into(),
+                capture_description: "Voice App Virtual Microphone".into(),
+            });
+        }
     }
-    status.available = true;
-    status.render_device = Some(render.id.clone());
-    status.capture_device = Some(capture.id.clone());
-    status
+    selected_status(targets, selected)
 }
 
-/// Probe an installed first-party endpoint pair without opening audio streams.
-pub fn virtual_microphone_status() -> Result<VirtualMicrophoneStatus> {
+/// Discover installed cable targets without opening streams or enabling a route.
+/// A saved ID is never replaced; multiple targets require an explicit choice.
+pub fn virtual_microphone_status_for(selected: Option<&str>) -> Result<VirtualMicrophoneStatus> {
     let host = host()?;
-    Ok(pair_status(&host, &inventory(&host)?))
+    Ok(pair_status(&host, &inventory(&host)?, selected))
+}
+
+pub fn virtual_microphone_status() -> Result<VirtualMicrophoneStatus> {
+    virtual_microphone_status_for(None)
 }
 
 fn select_device(
@@ -282,10 +452,10 @@ pub fn resolve_config(config: &AudioConfig) -> Result<AudioConfig> {
     let inventory = inventory(&host)?;
     let devices = &inventory.physical;
     if let Some(requested) = config.virtual_output_device.as_deref() {
-        let pair = pair_status(&host, &inventory);
+        let pair = pair_status(&host, &inventory, Some(requested));
         if !pair.available || pair.render_device.as_deref() != Some(requested) {
             bail!(
-                "selected virtual output is not the exact available Voice App driver endpoint; no route was changed"
+                "selected virtual output is unavailable or unsupported; select an exact detected VB-CABLE target, with both endpoints set to 48000 Hz stereo. No route was substituted"
             );
         }
     }
@@ -302,6 +472,26 @@ pub fn resolve_config(config: &AudioConfig) -> Result<AudioConfig> {
         config.output_device.as_deref(),
         DeviceKind::Output,
     )?);
+    if let Some(requested) = config.virtual_output_device.as_deref() {
+        let target = pair_status(&host, &inventory, Some(requested))
+            .targets
+            .into_iter()
+            .find(|target| target.render_device == requested)
+            .context("selected virtual target disappeared")?;
+        if overlaps_physical_route(
+            &target,
+            config
+                .input_device
+                .as_deref()
+                .context("resolved input missing")?,
+            config
+                .output_device
+                .as_deref()
+                .context("resolved headphones missing")?,
+        ) {
+            bail!("virtual cable endpoints cannot also be the physical microphone or headphones");
+        }
+    }
     Ok(config)
 }
 
@@ -351,7 +541,7 @@ fn native_config(device: &Device, input: bool, quantum: u32) -> Result<StreamCon
 fn virtual_native_config(device: &Device, input: bool, quantum: u32) -> Result<StreamConfig> {
     let config = native_config(device, input, quantum)?;
     if config.channels != 2 {
-        bail!("Voice App virtual endpoints require a native 48000 Hz stereo F32 shared mix");
+        bail!("Virtual cable endpoints require a native 48000 Hz stereo F32 shared mix");
     }
     Ok(config)
 }
@@ -407,7 +597,7 @@ fn handle_desktop_error(kind: ErrorKind, running: &AtomicBool, shared: &DesktopS
 }
 
 /// Capture, process, record, and optionally monitor the physical microphone.
-/// The owned virtual render endpoint, when explicitly requested, clocks the final mix.
+/// The explicitly selected virtual render endpoint clocks the final mix.
 /// Monitoring and previews stay on a separate prepared queue and physical output.
 pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandle> {
     let config = resolve_config(&config)?;
@@ -490,7 +680,7 @@ pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandl
                 },
                 Some(CONNECT_TIMEOUT),
             )
-            .context("open explicit Voice App virtual output")?;
+            .context("open explicit external virtual output")?;
         let output = output
             .build_output_stream::<f32, _, _>(
                 output_config,
@@ -616,6 +806,24 @@ pub fn start_desktop(target: String, shared: Arc<DesktopShared>) -> Result<Deskt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_native_pnp_properties_reject_bad_sizes_terminators_and_utf16() {
+        assert_eq!(property_words(&[65, 0], 4).unwrap(), &[65, 0]);
+        for bytes in [0, 1, 3, 6] {
+            assert!(property_words(&[65, 0], bytes).is_err());
+        }
+        assert_eq!(property_string(&[65, 0]).unwrap(), "A");
+        for words in [
+            &[][..],
+            &[0][..],
+            &[65][..],
+            &[65, 0, 66, 0][..],
+            &[0xd800, 0][..],
+        ] {
+            assert!(property_string(words).is_err());
+        }
+    }
 
     #[test]
     fn transient_xruns_increment_counters_without_stopping_voice() {

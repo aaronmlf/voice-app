@@ -234,3 +234,369 @@ mod tests {
         )));
     }
 }
+
+/// The externally installed base VB-CABLE profile observed in the official Pack45
+/// Windows 10/11 INF. Identity is native PnP data, never editable endpoint names.
+const VBCABLE_HARDWARE_ID: &str = "VBAudioVACWDM";
+const VBCABLE_SERVICE: &str = "VBAudioVACMME";
+
+/// Classification is deliberately broader than publishable identity: an incomplete
+/// or unsupported VB-CABLE endpoint must never become a physical/default route.
+pub(crate) fn is_vbcable_adapter(hardware_ids: &[String], service: &str) -> bool {
+    hardware_ids
+        .iter()
+        .any(|id| id.eq_ignore_ascii_case(VBCABLE_HARDWARE_ID))
+        || service.eq_ignore_ascii_case(VBCABLE_SERVICE)
+}
+
+pub(crate) fn vbcable_identity(
+    adapter_path: &str,
+    instance: &str,
+    hardware_ids: &[String],
+    service: &str,
+) -> Option<OwnedIdentity> {
+    if !hardware_ids
+        .iter()
+        .any(|id| id.eq_ignore_ascii_case(VBCABLE_HARDWARE_ID))
+        || !service.eq_ignore_ascii_case(VBCABLE_SERVICE)
+    {
+        return None;
+    }
+    // This instance comes from ConfigManager for this interface, not from an
+    // endpoint ID, friendly label, or assumptions about ROOT\\MEDIA numbering.
+    if instance.len() > 4096 || adapter_path.len() > 4096 {
+        return None;
+    }
+    let parts: Vec<_> = instance.split('\\').collect();
+    if parts.len() != 3
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'&' | b'_' | b'-'))
+        })
+    {
+        return None;
+    }
+    let path = adapter_path.to_ascii_lowercase();
+    let path = path.strip_prefix(r"\\?\")?;
+    let (prefix, reference) = path.rsplit_once('\\')?;
+    let (device, category) = prefix.rsplit_once('#')?;
+    if !guid(category)
+        || device.split('#').count() != 3
+        || device.split('#').any(|part| {
+            part.is_empty()
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'&' | b'_' | b'-'))
+        })
+        || reference.is_empty()
+        || reference.contains(['\\', '#', '/'])
+    {
+        return None;
+    }
+    let role = match reference {
+        "vbaudiovacwdm2022_out1_wave_e51a78a01fb100001"
+        | "vbaudiovacwdm2022_out1_topo_e51a78a01fb100001" => Some(OwnedRole::Render),
+        "vbaudiovacwdm2022_in1_wave_e51a78a01fb200001"
+        | "vbaudiovacwdm2022_in1_topo_e51a78a01fb200001" => Some(OwnedRole::Capture),
+        _ => None,
+    };
+    Some(OwnedIdentity {
+        instance: instance.to_ascii_lowercase(),
+        role,
+    })
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CableEndpoint {
+    pub(crate) id: String,
+    pub(crate) description: String,
+    pub(crate) identity: OwnedIdentity,
+    pub(crate) kind: DeviceKind,
+    pub(crate) supported_format: bool,
+}
+
+/// Multiple supported renders can share the one cable capture. They remain exact
+/// user-selectable targets; no label or enumeration order chooses one implicitly.
+/// Extra captures fail closed, including a duplicate with an unsupported format.
+pub(crate) fn cable_targets(
+    endpoints: &[CableEndpoint],
+) -> Vec<voice_core::VirtualMicrophoneTarget> {
+    let mut targets = Vec::new();
+    for render in endpoints.iter().filter(|endpoint| {
+        endpoint.kind == DeviceKind::Output
+            && endpoint.identity.role == Some(OwnedRole::Render)
+            && endpoint.supported_format
+    }) {
+        let mut captures = endpoints.iter().filter(|endpoint| {
+            endpoint.identity.instance == render.identity.instance
+                && endpoint.kind == DeviceKind::Input
+                && endpoint.identity.role == Some(OwnedRole::Capture)
+        });
+        let Some(capture) = captures.next() else {
+            continue;
+        };
+        if captures.next().is_some() || !capture.supported_format || capture.id == render.id {
+            continue;
+        }
+        if targets
+            .iter()
+            .any(|target: &voice_core::VirtualMicrophoneTarget| target.render_device == render.id)
+        {
+            continue;
+        }
+        targets.push(voice_core::VirtualMicrophoneTarget {
+            provider: "vb_cable".into(),
+            render_device: render.id.clone(),
+            capture_device: capture.id.clone(),
+            render_description: render.description.clone(),
+            capture_description: capture.description.clone(),
+        });
+    }
+    targets.sort_by(|left, right| left.render_device.cmp(&right.render_device));
+    targets
+}
+
+pub(crate) fn selected_status(
+    targets: Vec<voice_core::VirtualMicrophoneTarget>,
+    selected: Option<&str>,
+) -> voice_core::VirtualMicrophoneStatus {
+    let mut status = voice_core::VirtualMicrophoneStatus {
+        targets,
+        ..Default::default()
+    };
+    let target = match selected {
+        Some(selected) => status
+            .targets
+            .iter()
+            .find(|target| target.render_device == selected),
+        None if status.targets.len() == 1 => status.targets.first(),
+        None => None,
+    };
+    if let Some(target) = target {
+        status.available = true;
+        status.render_device = Some(target.render_device.clone());
+        status.capture_device = Some(target.capture_device.clone());
+    } else {
+        status.diagnostic = Some(if selected.is_some() {
+            "The saved virtual output is unavailable or unsupported; select its exact installed endpoint again. No route was substituted".into()
+        } else if status.targets.is_empty() {
+            "No supported VB-CABLE pair found. Install VB-CABLE separately, then set its playback and recording endpoints to 48000 Hz stereo in Windows sound settings".into()
+        } else {
+            "Multiple virtual outputs are available; choose one explicitly. No route is enabled automatically".into()
+        });
+    }
+    status
+}
+
+pub(crate) fn overlaps_physical_route(
+    target: &voice_core::VirtualMicrophoneTarget,
+    input: &str,
+    headphones: &str,
+) -> bool {
+    [input, headphones]
+        .iter()
+        .any(|id| *id == target.render_device.as_str() || *id == target.capture_device.as_str())
+}
+
+#[cfg(test)]
+mod cable_tests {
+    use super::*;
+    const PREFIX: &str = r"\\?\ROOT#MEDIA#0000#{6994AD04-93EF-11D0-A3CC-00A0C9223196}\";
+    const INSTANCE: &str = r"ROOT\MEDIA\0000";
+    const RENDER: &str = "VBAudioVACWDM2022_Out1_Topo_E51A78A01FB100001";
+    const CAPTURE: &str = "VBAudioVACWDM2022_In1_Topo_E51A78A01FB200001";
+
+    fn hardware() -> Vec<String> {
+        vec![VBCABLE_HARDWARE_ID.into()]
+    }
+
+    fn identity(reference: &str, instance: &str) -> OwnedIdentity {
+        vbcable_identity(
+            &format!("{PREFIX}{reference}"),
+            instance,
+            &hardware(),
+            VBCABLE_SERVICE,
+        )
+        .unwrap()
+    }
+
+    fn endpoint(id: &str, role: OwnedRole, instance: &str) -> CableEndpoint {
+        CableEndpoint {
+            id: id.into(),
+            description: "User renamed this endpoint".into(),
+            identity: identity(
+                if role == OwnedRole::Render {
+                    RENDER
+                } else {
+                    CAPTURE
+                },
+                instance,
+            ),
+            kind: if role == OwnedRole::Render {
+                DeviceKind::Output
+            } else {
+                DeviceKind::Input
+            },
+            supported_format: true,
+        }
+    }
+
+    #[test]
+    fn cable_uses_native_hardware_service_and_reference_without_labels() {
+        for reference in [RENDER, "VBAudioVACWDM2022_Out1_Wave_E51A78A01FB100001"] {
+            assert_eq!(identity(reference, INSTANCE).role, Some(OwnedRole::Render));
+        }
+        assert_eq!(identity(CAPTURE, INSTANCE).role, Some(OwnedRole::Capture));
+        assert!(
+            vbcable_identity(&format!("{PREFIX}{RENDER}"), INSTANCE, &[], VBCABLE_SERVICE)
+                .is_none()
+        );
+        assert!(
+            vbcable_identity(
+                &format!("{PREFIX}{RENDER}"),
+                INSTANCE,
+                &hardware(),
+                "OtherService"
+            )
+            .is_none()
+        );
+        assert!(!is_vbcable_adapter(
+            &["VBAudioVACWDMFake".into()],
+            "VBAudioVACMMEFake"
+        ));
+        assert!(is_vbcable_adapter(&hardware(), "UnknownService"));
+        assert!(is_vbcable_adapter(&[], VBCABLE_SERVICE));
+    }
+
+    #[test]
+    fn legacy_unknown_and_malformed_cable_paths_are_not_publishable() {
+        for reference in [
+            "Wave",
+            "Topo",
+            "FutureReference",
+            "VBAudioVACWDM2022_Out2_Topo_unknown",
+        ] {
+            assert_eq!(identity(reference, INSTANCE).role, None);
+        }
+        for path in [
+            format!("{PREFIX}{RENDER}\\extra"),
+            format!("{PREFIX}{RENDER}/extra"),
+            format!("{PREFIX}{RENDER}").replace("6994AD04", "not-guid"),
+            "CABLE Input (VB-Audio Virtual Cable)".into(),
+        ] {
+            assert!(vbcable_identity(&path, INSTANCE, &hardware(), VBCABLE_SERVICE).is_none());
+            assert!(is_vbcable_adapter(&hardware(), VBCABLE_SERVICE));
+        }
+        for instance in [
+            "",
+            "ROOT\\MEDIA",
+            "ROOT\\MEDIA\\",
+            "ROOT\\MEDIA\\0000\\extra",
+            "ROOT\\MEDIA\\0000\0",
+        ] {
+            assert!(
+                vbcable_identity(
+                    &format!("{PREFIX}{RENDER}"),
+                    instance,
+                    &hardware(),
+                    VBCABLE_SERVICE
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn cable_pairs_stay_on_one_actual_pnp_adapter_and_require_one_capture() {
+        let render = endpoint("render", OwnedRole::Render, INSTANCE);
+        let capture = endpoint("capture", OwnedRole::Capture, INSTANCE);
+        assert_eq!(cable_targets(&[render.clone(), capture.clone()]).len(), 1);
+        assert!(
+            cable_targets(&[
+                render.clone(),
+                endpoint("other-capture", OwnedRole::Capture, r"ROOT\MEDIA\0001")
+            ])
+            .is_empty()
+        );
+        assert!(cable_targets(&[render.clone(), capture.clone(), capture.clone()]).is_empty());
+        let mut invalid = capture.clone();
+        invalid.supported_format = false;
+        assert!(cable_targets(&[render.clone(), capture.clone(), invalid]).is_empty());
+        let mut invalid = capture;
+        invalid.identity.role = None;
+        assert!(cable_targets(&[render, invalid]).is_empty());
+    }
+
+    #[test]
+    fn complete_adapters_remain_separate_manual_targets_and_wrong_flow_fails_closed() {
+        let render = endpoint("render-0", OwnedRole::Render, INSTANCE);
+        let capture = endpoint("capture-0", OwnedRole::Capture, INSTANCE);
+        let targets = cable_targets(&[
+            render.clone(),
+            capture.clone(),
+            endpoint("render-1", OwnedRole::Render, r"ROOT\MEDIA\0001"),
+            endpoint("capture-1", OwnedRole::Capture, r"ROOT\MEDIA\0001"),
+        ]);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].capture_device, "capture-0");
+        assert_eq!(targets[1].capture_device, "capture-1");
+        assert!(!selected_status(targets, None).available);
+        let mut wrong_flow = capture;
+        wrong_flow.kind = DeviceKind::Output;
+        assert!(cable_targets(&[render.clone(), wrong_flow]).is_empty());
+        assert!(
+            cable_targets(&[render, endpoint("render-0", OwnedRole::Capture, INSTANCE)]).is_empty()
+        );
+    }
+
+    #[test]
+    fn unsupported_sixteen_channel_render_is_excluded_and_multiple_stereo_requires_choice() {
+        let render = endpoint("render", OwnedRole::Render, INSTANCE);
+        let capture = endpoint("capture", OwnedRole::Capture, INSTANCE);
+        let mut surround = endpoint("surround", OwnedRole::Render, INSTANCE);
+        surround.supported_format = false;
+        let targets = cable_targets(&[render.clone(), capture.clone(), surround]);
+        assert_eq!(targets.len(), 1);
+        assert!(selected_status(targets, None).available);
+        let second = endpoint("other-render", OwnedRole::Render, INSTANCE);
+        let targets = cable_targets(&[render, capture, second]);
+        assert_eq!(targets.len(), 2);
+        let status = selected_status(targets.clone(), None);
+        assert!(!status.available);
+        assert!(status.render_device.is_none());
+        assert_eq!(
+            selected_status(targets.clone(), Some("other-render"))
+                .render_device
+                .as_deref(),
+            Some("other-render")
+        );
+        let missing = selected_status(targets, Some("saved-disconnected-render"));
+        assert!(!missing.available);
+        assert_eq!(missing.targets.len(), 2);
+    }
+
+    #[test]
+    fn renaming_does_not_affect_identity_and_virtual_endpoints_cannot_be_physical_routes() {
+        let targets = cable_targets(&[
+            endpoint("render", OwnedRole::Render, INSTANCE),
+            endpoint("capture", OwnedRole::Capture, INSTANCE),
+        ]);
+        let target = &targets[0];
+        assert_eq!(target.render_description, "User renamed this endpoint");
+        assert!(!overlaps_physical_route(
+            target,
+            "usb-mic",
+            "usb-headphones"
+        ));
+        for (input, output) in [
+            ("render", "usb-headphones"),
+            ("capture", "usb-headphones"),
+            ("usb-mic", "render"),
+            ("usb-mic", "capture"),
+        ] {
+            assert!(overlaps_physical_route(target, input, output));
+        }
+    }
+}
