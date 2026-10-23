@@ -26,7 +26,9 @@ $failure = $null
 $peakRss = [long]0
 $checks = [Collections.Generic.List[string]]::new()
 $samples = [Collections.Generic.List[object]]::new()
+$windowSamples = [Collections.Generic.List[object]]::new()
 $serial = 0
+$requestedSize = [ordered]@{ width_points = 1280; height_points = 800 }
 $expected = @('alien','broadcast','chorus','clean','deep','echo','high','megaphone','monster','radio','robot','space') | ForEach-Object { 'builtin.' + $_ }
 $adapterFile = Join-Path $output 'adapter.json'
 $screenshot = Join-Path $output 'gui.png'
@@ -39,7 +41,7 @@ $image = $null
 $guiExit = $null
 $voicesChecked = $false
 $report = [ordered]@{
-    report_version = 1
+    report_version = 2
     result = 'failed'
     scope = 'Extracted Windows x64 GUI on native Windows CI with DX12 software rendering and local IPC; no audio opened'
     limitations = @(
@@ -139,6 +141,92 @@ function Sample-GuiMemory {
         # largest OS high-water mark already observed while it was alive.
     }
 }
+function Initialize-WindowDiagnostics {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class VoiceGuiWindowDiagnostics {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO { public uint Size; public RECT Monitor, Work; public uint Flags; }
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetClientRect(IntPtr window, out RECT rectangle);
+    [DllImport("user32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(IntPtr window, out RECT rectangle);
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr window);
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
+    [DllImport("user32.dll", EntryPoint="GetMonitorInfoW", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int index);
+}
+'@
+}
+function Sample-GuiWindow {
+    $restoreFailed = $false
+    try {
+        $gui.Refresh()
+        if ($gui.HasExited) { return }
+        $handle = $gui.MainWindowHandle
+        # No native window exists during early startup. A later rendered frame must
+        # have at least two valid samples; absence is not accepted as a fallback.
+        if ($handle -eq [IntPtr]::Zero) { return }
+        [uint32]$owner = 0
+        [void][VoiceGuiWindowDiagnostics]::GetWindowThreadProcessId($handle, [ref]$owner)
+        Require ($owner -eq $gui.Id) 'GUI window handle belongs to a different process.'
+        # Read physical coordinates even when PowerShell and the GUI have different
+        # DPI awareness. This changes only this thread and is restored in finally.
+        $previous = [VoiceGuiWindowDiagnostics]::SetThreadDpiAwarenessContext([IntPtr]::new(-4))
+        Require ($previous -ne [IntPtr]::Zero) 'Could not enter per-monitor-aware window diagnostics.'
+        try {
+            $client = [VoiceGuiWindowDiagnostics+RECT]::new()
+            $outer = [VoiceGuiWindowDiagnostics+RECT]::new()
+            Require ([VoiceGuiWindowDiagnostics]::GetClientRect($handle, [ref]$client)) 'Could not inspect the GUI client surface.'
+            Require ([VoiceGuiWindowDiagnostics]::GetWindowRect($handle, [ref]$outer)) 'Could not inspect the GUI window bounds.'
+            $dpi = [VoiceGuiWindowDiagnostics]::GetDpiForWindow($handle)
+            Require ($dpi -gt 0) 'Could not inspect the GUI window DPI.'
+            $monitor = [VoiceGuiWindowDiagnostics]::MonitorFromWindow($handle, 2)
+            Require ($monitor -ne [IntPtr]::Zero) 'The GUI window has no associated monitor.'
+            $info = [VoiceGuiWindowDiagnostics+MONITORINFO]::new()
+            $info.Size = [Runtime.InteropServices.Marshal]::SizeOf($info)
+            Require ([VoiceGuiWindowDiagnostics]::GetMonitorInfo($monitor, [ref]$info)) 'Could not inspect the GUI monitor bounds.'
+            $windowSamples.Add([ordered]@{
+                elapsed_ms = $deadline.ElapsedMilliseconds
+                process_id = $owner
+                window_handle = $handle.ToInt64().ToString('x')
+                client_width = $client.Right - $client.Left
+                client_height = $client.Bottom - $client.Top
+                outer_width = $outer.Right - $outer.Left
+                outer_height = $outer.Bottom - $outer.Top
+                dpi = $dpi
+                monitor_width = $info.Monitor.Right - $info.Monitor.Left
+                monitor_height = $info.Monitor.Bottom - $info.Monitor.Top
+                work_width = $info.Work.Right - $info.Work.Left
+                work_height = $info.Work.Bottom - $info.Work.Top
+                monitor_count = [VoiceGuiWindowDiagnostics]::GetSystemMetrics(80)
+                remote_session = ([VoiceGuiWindowDiagnostics]::GetSystemMetrics(0x1000) -ne 0)
+            })
+        } finally {
+            if ([VoiceGuiWindowDiagnostics]::SetThreadDpiAwarenessContext($previous) -eq [IntPtr]::Zero) {
+                $restoreFailed = $true
+                throw 'Could not restore the diagnostics thread DPI awareness.'
+            }
+        }
+    } catch {
+        if (-not $restoreFailed -and $gui.HasExited) { return }
+        throw
+    }
+}
 function Read-PngHeader([string]$Path) {
     $length = (Get-Item -LiteralPath $Path).Length
     Require ($length -gt 128 -and $length -lt 16777216) 'Missing or unexpectedly large GUI screenshot.'
@@ -152,8 +240,33 @@ function Read-PngHeader([string]$Path) {
     Require ([Text.Encoding]::ASCII.GetString($header, 12, 4) -ceq 'IHDR') 'PNG is missing its IHDR header.'
     $width = [long]$header[16] * 16777216 + [long]$header[17] * 65536 + [long]$header[18] * 256 + [long]$header[19]
     $height = [long]$header[20] * 16777216 + [long]$header[21] * 65536 + [long]$header[22] * 256 + [long]$header[23]
-    Require ($width -ge 1080 -and $width -le 3840 -and $height -ge 720 -and $height -le 2160) 'Unexpected GUI screenshot dimensions.'
+    Require ($width -gt 0 -and $width -le 3840 -and $height -gt 0 -and $height -le 2160) 'Invalid or unexpectedly large GUI screenshot dimensions.'
     return [ordered]@{ width = $width; height = $height; bytes = $length; sha256 = (Get-StreamSha256 $Path) }
+}
+function Assert-ScreenshotSurface($Image) {
+    $matching = @($windowSamples | Where-Object { $_.client_width -eq $Image.width -and $_.client_height -eq $Image.height })
+    Require ($matching.Count -ge 2) ('GUI screenshot {0}x{1} does not match two observed live client surfaces.' -f $Image.width, $Image.height)
+    $observed = $matching[-1]
+    $nominalWidth = [long][Math]::Round($requestedSize.width_points * $observed.dpi / 96.0, [MidpointRounding]::AwayFromZero)
+    $nominalHeight = [long][Math]::Round($requestedSize.height_points * $observed.dpi / 96.0, [MidpointRounding]::AwayFromZero)
+    $clampedWidth = [Math]::Min($nominalWidth, $observed.monitor_width)
+    $clampedHeight = [Math]::Min($nominalHeight, $observed.monitor_height)
+    $mode = 'requested_size'
+    if ($Image.width -ne $nominalWidth -or $Image.height -ne $nominalHeight) {
+        # eframe 0.37 native/epi_integration.rs clamps an initial viewport to the
+        # largest monitor. Only accept that exact outcome on a single-monitor
+        # runner, independently measured through native APIs. A generic smaller
+        # screenshot, missing diagnostics or an unexplained resize still fails.
+        Require ($observed.monitor_count -eq 1 -and $Image.width -eq $clampedWidth -and $Image.height -eq $clampedHeight -and ($clampedWidth -lt $nominalWidth -or $clampedHeight -lt $nominalHeight)) (
+            'Unexpected GUI screenshot {0}x{1}; requested physical {2}x{3}, observed monitor {4}x{5}, DPI {6}, monitor count {7}.' -f $Image.width, $Image.height, $nominalWidth, $nominalHeight, $observed.monitor_width, $observed.monitor_height, $observed.dpi, $observed.monitor_count
+        )
+        $mode = 'single_monitor_size_clamp'
+        $report.limitations += 'GUI smoke viewport was clamped to the native runner monitor; this is not full-size layout qualification'
+    }
+    $Image.dimension_validation = $mode
+    $Image.nominal_physical_width = $nominalWidth
+    $Image.nominal_physical_height = $nominalHeight
+    $Image.observed_dpi = $observed.dpi
 }
 
 try {
@@ -166,6 +279,7 @@ try {
     [void][IO.Directory]::CreateDirectory($reportParent)
     $CliPath = (Resolve-Path -LiteralPath $CliPath).Path
     $GuiPath = (Resolve-Path -LiteralPath $GuiPath).Path
+    Initialize-WindowDiagnostics
     Require (-not (Test-Path -LiteralPath $data)) 'The application data directory must not be pre-created.'
     $report.gui_sha256 = Get-StreamSha256 $GuiPath
     $report.cli_sha256 = Get-StreamSha256 $CliPath
@@ -177,7 +291,8 @@ try {
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
-    $arguments = $common + @('--smoke-seconds', '4', '--screenshot', $screenshot, '--page', 'voices', '--qa-size', '1280x800', '--qa-software-renderer', '--qa-report', $adapterFile)
+    $sizeArgument = '{0}x{1}' -f $requestedSize.width_points, $requestedSize.height_points
+    $arguments = $common + @('--smoke-seconds', '4', '--screenshot', $screenshot, '--page', 'voices', '--qa-size', $sizeArgument, '--qa-software-renderer', '--qa-report', $adapterFile)
     foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
     $gui = [Diagnostics.Process]::new()
     $gui.StartInfo = $info
@@ -195,6 +310,7 @@ try {
             if ($probe.Success) {
                 $status = $probe.Text | ConvertFrom-Json -Depth 100
                 Assert-NoAudio $status
+                Sample-GuiWindow
                 $samples.Add([ordered]@{
                     elapsed_ms = $deadline.ElapsedMilliseconds
                     frames = $status.metrics.frames
@@ -229,8 +345,10 @@ try {
     Require ($adapter.report_version -eq 1 -and $adapter.renderer -ceq 'wgpu' -and $adapter.backend -ceq 'Dx12' -and $adapter.device_type -ceq 'Cpu' -and $adapter.software_requested -eq $true) 'The actual GUI renderer was not DX12 software rendering.'
     Require (Test-Path -LiteralPath $screenshot -PathType Leaf) 'The GUI did not render its requested screenshot.'
     $image = Read-PngHeader $screenshot
+    Assert-ScreenshotSurface $image
     $checks.Add('The extracted GUI initialized DX12 software rendering; actual adapter information recorded')
     $checks.Add('The GUI rendered a PNG screenshot and exited normally after its four-second smoke interval')
+    $checks.Add('PNG dimensions match the observed live client surface and the requested viewport or an independently measured single-monitor clamp')
     $checks.Add('Two or more local IPC snapshots showed zero audio frames and no capture, monitoring, desktop, recording or playback')
     $checks.Add('Fresh GUI library exposes exactly the 12 original built-in voices')
     $report.result = 'passed'
@@ -262,6 +380,8 @@ try {
     $report.memory_measurement = 'Largest OS PeakWorkingSet64 observed while the GUI process was available; no child processes included'
     $report.adapter = $adapter
     $report.screenshot = $image
+    $report.requested_size = $requestedSize
+    $report.window_samples = $windowSamples.ToArray()
     $report.status_samples = $samples.ToArray()
     $report.checks = $checks.ToArray()
     $json = $report | ConvertTo-Json -Depth 30
