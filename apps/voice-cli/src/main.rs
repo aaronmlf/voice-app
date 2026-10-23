@@ -42,7 +42,7 @@ enum Action {
         input: Option<String>,
         #[arg(long)]
         output: Option<String>,
-        /// Explicit owned virtual render endpoint from doctor/status (Windows).
+        /// Explicit validated virtual render ID from doctor/status (Windows, e.g. VB-CABLE).
         #[arg(long, requires = "start")]
         virtual_output: Option<String>,
         #[arg(long, default_value_t = 256)]
@@ -52,13 +52,13 @@ enum Action {
     Doctor,
     Status,
     Devices,
-    /// Start voice processing streams; device identifiers come from devices.
+    /// Start voice streams; physical IDs come from devices, virtual IDs from doctor/status.
     Start {
         #[arg(long)]
         input: Option<String>,
         #[arg(long)]
         output: Option<String>,
-        /// Send final voice and soundboard to this detected owned virtual render endpoint.
+        /// Send final voice and soundboard to this validated virtual render ID (e.g. VB-CABLE).
         #[arg(long)]
         virtual_output: Option<String>,
         #[arg(long, default_value_t = 256)]
@@ -590,46 +590,48 @@ mod virtual_output_tests {
 
     #[test]
     fn serve_requires_explicit_start_for_a_virtual_route_before_starting_a_service() {
-        assert!(
-            Cli::try_parse_from(["voice-cli", "serve", "--virtual-output", "owned-id"]).is_err()
-        );
-        let cli = Cli::try_parse_from([
-            "voice-cli",
-            "serve",
-            "--start",
-            "--output",
-            "headphones",
-            "--virtual-output",
-            "owned-id",
-        ])
-        .unwrap();
-        assert!(matches!(cli.command, Action::Serve {
-            start: true,
-            output: Some(ref output),
-            virtual_output: Some(ref virtual_output),
-            ..
-        } if output == "headphones" && virtual_output == "owned-id"));
+        for id in ["owned-id", "{0.0.0.00000000}.{vb-cable-render}"] {
+            assert!(Cli::try_parse_from(["voice-cli", "serve", "--virtual-output", id]).is_err());
+            let cli = Cli::try_parse_from([
+                "voice-cli",
+                "serve",
+                "--start",
+                "--output",
+                "headphones",
+                "--virtual-output",
+                id,
+            ])
+            .unwrap();
+            assert!(matches!(cli.command, Action::Serve {
+                start: true,
+                output: Some(ref output),
+                virtual_output: Some(ref virtual_output),
+                ..
+            } if output == "headphones" && virtual_output == id));
+        }
     }
 
     #[test]
     fn start_accepts_an_explicit_virtual_id_separately_from_headphones() {
-        let cli = Cli::try_parse_from([
-            "voice-cli",
-            "start",
-            "--input",
-            "microphone",
-            "--output",
-            "headphones",
-            "--virtual-output",
-            "owned-id",
-        ])
-        .unwrap();
-        assert!(matches!(cli.command, Action::Start {
-            input: Some(ref input),
-            output: Some(ref output),
-            virtual_output: Some(ref virtual_output),
-            ..
-        } if input == "microphone" && output == "headphones" && virtual_output == "owned-id"));
+        for id in ["owned-id", "{0.0.0.00000000}.{vb-cable-render}"] {
+            let cli = Cli::try_parse_from([
+                "voice-cli",
+                "start",
+                "--input",
+                "microphone",
+                "--output",
+                "headphones",
+                "--virtual-output",
+                id,
+            ])
+            .unwrap();
+            assert!(matches!(cli.command, Action::Start {
+                input: Some(ref input),
+                output: Some(ref output),
+                virtual_output: Some(ref virtual_output),
+                ..
+            } if input == "microphone" && output == "headphones" && virtual_output == id));
+        }
         let legacy = Cli::try_parse_from(["voice-cli", "start"]).unwrap();
         assert!(matches!(
             legacy.command,
@@ -642,18 +644,20 @@ mod virtual_output_tests {
 
     #[test]
     fn shared_start_registry_accepts_the_same_config_as_raw_cli_and_mcp() {
-        let wire = json!({"op":"start","config":{
-            "output_device":"headphones", "virtual_output_device":"owned-id"
-        }});
-        let command: Command = serde_json::from_value(wire).unwrap();
-        let Command::Start { config } = &command else {
-            panic!("wrong command");
-        };
-        assert_eq!(config.output_device.as_deref(), Some("headphones"));
-        assert_eq!(config.virtual_output_device.as_deref(), Some("owned-id"));
-        assert_eq!(
-            serde_json::to_value(command).unwrap()["config"]["virtual_output_device"],
-            "owned-id"
-        );
+        for id in ["owned-id", "{0.0.0.00000000}.{vb-cable-render}"] {
+            let wire = json!({"op":"start","config":{
+                "output_device":"headphones", "virtual_output_device":id
+            }});
+            let command: Command = serde_json::from_value(wire).unwrap();
+            let Command::Start { config } = &command else {
+                panic!("wrong command");
+            };
+            assert_eq!(config.output_device.as_deref(), Some("headphones"));
+            assert_eq!(config.virtual_output_device.as_deref(), Some(id));
+            assert_eq!(
+                serde_json::to_value(command).unwrap()["config"]["virtual_output_device"],
+                id
+            );
+        }
     }
 }
