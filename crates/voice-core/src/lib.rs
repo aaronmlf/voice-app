@@ -342,6 +342,8 @@ pub struct DeviceInfo {
 pub struct AudioConfig {
     pub input_device: Option<String>,
     pub output_device: Option<String>,
+    /// Explicit owned Windows virtual render endpoint; physical output stays the headphones.
+    pub virtual_output_device: Option<String>,
     pub sample_rate: u32,
     pub quantum: u32,
 }
@@ -350,6 +352,7 @@ impl Default for AudioConfig {
         Self {
             input_device: None,
             output_device: None,
+            virtual_output_device: None,
             sample_rate: SAMPLE_RATE,
             quantum: 256,
         }
@@ -359,6 +362,15 @@ impl AudioConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.sample_rate != SAMPLE_RATE {
             return Err("the initial engine requires 48000 Hz".into());
+        }
+        if self
+            .virtual_output_device
+            .as_ref()
+            .is_some_and(|id| id.trim().is_empty() || id.len() > 2048 || id.contains('\0'))
+        {
+            return Err(
+                "virtual output must be a nonempty endpoint ID of at most 2048 bytes".into(),
+            );
         }
         if !(64..=2048).contains(&self.quantum) || !self.quantum.is_power_of_two() {
             return Err("quantum must be a power of two from 64 to 2048".into());
@@ -372,6 +384,18 @@ impl AudioConfig {
         }
         Ok(())
     }
+}
+
+/// A detected endpoint pair is distinct from an actively transmitting audio route.
+/// Detection never installs a driver or changes system audio defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct VirtualMicrophoneStatus {
+    pub available: bool,
+    pub active: bool,
+    pub render_device: Option<String>,
+    pub capture_device: Option<String>,
+    pub diagnostic: Option<String>,
 }
 
 /// Atomic settings are independent scalar controls, not a transactionally consistent preset snapshot.
@@ -642,6 +666,12 @@ pub struct MetricsSnapshot {
     pub output_peak: f32,
     pub active: bool,
     pub algorithmic_latency_frames: u32,
+    #[serde(default)]
+    pub virtual_microphone_active: bool,
+    #[serde(default)]
+    pub virtual_microphone_frames: u64,
+    #[serde(default)]
+    pub virtual_microphone_overruns: u64,
 }
 #[derive(Default)]
 pub struct AudioMetrics {
@@ -657,6 +687,9 @@ pub struct AudioMetrics {
     pub output_peak: AtomicU32,
     pub active: AtomicBool,
     pub algorithmic_latency_frames: AtomicU32,
+    pub virtual_microphone_active: AtomicBool,
+    pub virtual_microphone_frames: AtomicU64,
+    pub virtual_microphone_overruns: AtomicU64,
 }
 impl AudioMetrics {
     pub fn snapshot(&self) -> MetricsSnapshot {
@@ -673,6 +706,9 @@ impl AudioMetrics {
             output_peak: f32::from_bits(self.output_peak.load(Ordering::Relaxed)),
             active: self.active.load(Ordering::Relaxed),
             algorithmic_latency_frames: self.algorithmic_latency_frames.load(Ordering::Relaxed),
+            virtual_microphone_active: self.virtual_microphone_active.load(Ordering::Acquire),
+            virtual_microphone_frames: self.virtual_microphone_frames.load(Ordering::Relaxed),
+            virtual_microphone_overruns: self.virtual_microphone_overruns.load(Ordering::Relaxed),
         }
     }
 }
@@ -731,6 +767,45 @@ mod tests {
         assert_eq!(snapshot.monitor_empty_callbacks, 0);
         assert_eq!(snapshot.frames, 256);
         assert!(snapshot.active);
+        assert!(!snapshot.virtual_microphone_active);
+        assert_eq!(snapshot.virtual_microphone_frames, 0);
+        assert_eq!(snapshot.virtual_microphone_overruns, 0);
+    }
+    #[test]
+    fn legacy_audio_config_keeps_virtual_transmission_opt_in() {
+        let config: AudioConfig = serde_json::from_str(
+            r#"{"input_device":"mic","output_device":"headphones","sample_rate":48000,"quantum":256}"#,
+        )
+        .unwrap();
+        assert_eq!(config.virtual_output_device, None);
+        assert!(config.validate().is_ok());
+        let enabled = AudioConfig {
+            virtual_output_device: Some("owned-endpoint-id".into()),
+            ..config
+        };
+        let saved = serde_json::to_string(&enabled).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AudioConfig>(&saved).unwrap(),
+            enabled
+        );
+    }
+    #[test]
+    fn malformed_virtual_endpoint_ids_are_rejected_before_device_access() {
+        for id in [
+            String::new(),
+            " ".into(),
+            "id\0suffix".into(),
+            "x".repeat(2049),
+        ] {
+            assert!(
+                AudioConfig {
+                    virtual_output_device: Some(id),
+                    ..Default::default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
     }
     #[test]
     fn legacy_settings_get_default_order_and_invalid_orders_are_rejected() {
