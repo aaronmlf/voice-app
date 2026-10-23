@@ -48,14 +48,23 @@ tests CLI/MCP/persistence/DSP files, and shuts it down. It never starts audio,
 enumerates hardware or opens the GUI. Those tests do not qualify real-time
 audio stability, latency, device reconnection, desktop capture or permissions.
 
-A separate native GUI smoke check has been prepared for the same extracted
-candidate. It requests Windows WARP software rendering through DX12/FXC,
-verifies the initialized adapter is DX12/CPU, captures a PNG and requires a
-normal timed shutdown. While the GUI is alive, local IPC must show exactly the
-12 original voices, zero audio frames, and capture, monitoring, desktop audio,
-recording and playback all off. The helper records the observed GUI process
-memory peak and adapter details. This expanded check is pending execution;
-no new GUI pass is claimed here.
+The [native Windows Server 2022 check for public commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538)
+passed on the same extracted candidate: 99 Rust tests, 15 Python tests, four
+additional corpus regression reruns, formatting, Clippy, dependency boundaries,
+corpus, benchmark, licenses, packaging/checksum, offline CLI/DSP/library/IPC/MCP,
+PE inspection and a short GUI smoke. Corpus reruns reuse four tests from the 99.
+
+The GUI smoke passed in 4.6434662 seconds using WGPU with Windows WARP software
+rendering through DX12/FXC (Microsoft Basic Render Driver, device type CPU).
+It exited normally with code 0 and an observed process memory peak of
+78,139,392 bytes (74.52 MiB). Eleven local IPC snapshots showed audio off and
+zero frames, and the fresh library exposed exactly the 12 original voices.
+The 1024×768 PNG matched ten native client-surface measurements. A single
+1024×768 monitor at DPI 96 explained the viewport clamp from the requested
+1280×800. The helper accepts only the requested size or this independently
+measured single-monitor clamp; it does not qualify full-size layout or manual
+interaction. Audio capture, monitoring, desktop capture, recording and sound
+playback must remain off throughout this smoke.
 
 To invoke the packaged helper explicitly with PowerShell 7:
 
@@ -80,11 +89,21 @@ checksum and bounded ZIP extraction, CLI help/version, and an offline 220 Hz
 quarter-second WAV containing exactly 12,000 finite float32 frames at 48 kHz.
 It then attempts the real service with ownership/ACL checks unchanged.
 Wine 9.0 previously failed before the GUI because it did not preserve the
-required protected DACL. A new classification, pending execution, accepts only
+required protected DACL. The classifier accepts only
 the exact application error `voice-cli: private path must have a protected DACL`
 and a normal nonzero service exit after the offline checks as
 `unsupported_security_environment`. The report explicitly marks GUI, IPC and
 Wine compatibility as unqualified. Other errors still fail the job.
+
+The official Wine 9.0 report (Ubuntu 9.0~repack-4build3) for `bd75106` in
+run `40008350538` recorded `unsupported_security_environment`. CLI help/version
+and the offline 220 Hz tone passed: exactly 12,000 finite bounded float32 frames
+at 48 kHz. The service then exited with code 1 and the exact protected-DACL
+error above. `offline_checks_passed` and `security_refusal_verified` were true;
+`ipc_verified`, `gui_verified` and `wine_compatibility_qualified` were false.
+The gate verified this secure refusal while preserving access controls.
+The program's GUI and IPC are not qualified under this Wine environment.
+
 
 Checking this secure refusal does not mean the program works under Wine. No
 application permission check is weakened or bypassed. If Wine later preserves
