@@ -23,7 +23,8 @@ and release gates independently of branch names.
 - voice-core: serializable contracts, real-time atomics/queues; no OS, GUI or database dependencies.
 - voice-dsp: prepared DSP; depends only on core and DSP libraries, never the GUI or platform adapter.
 - voice-pipewire: Linux device graph and real-time callbacks; no GUI, database or filesystem I/O in callbacks.
-- voice-wasapi: Windows physical devices and explicit desktop loopback; no GUI/database or callback I/O. It does not create a virtual microphone.
+- voice-wasapi: Windows physical devices, explicit desktop loopback and routing to a validated installed virtual endpoint pair; no GUI/database or callback I/O. It never installs a driver or creates endpoints itself.
+- drivers/windows: isolated Microsoft-derived MS-PL PortCls/WaveRT driver, with original MIT/Apache-2.0 transport/test helpers. No DSP, network, file I/O or unbounded buffers in its data path. Driver build, signing, installed-kernel acceptance and destination application tests are separate gates.
 - voice-library: decoded audio, persistent library, interchange and offline mixing.
 - voice-engine: command registry, session, control socket, recording and background workers.
 - apps: clients of the engine; no duplicate command implementations.

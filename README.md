@@ -49,9 +49,11 @@ pré-escuta e gravação, com o mesmo motor/biblioteca. A CI compila com MSVC em
 Server 2022; uma verificação adicional pelo Wine usa um prefixo isolado e áudio sintético.
 Os resultados desses gates são registrados separadamente de testes em Windows 10/11 real.
 
-**O microfone virtual Windows ainda depende de um driver próprio.** Esta versão inicial
-permite preparar efeitos e testar monitoração/gravação; não cria uma entrada para chamadas.
-O pacote será um ZIP experimental com checksum, em uma release `windows-v…` separada do Linux.
+O código experimental inclui um driver próprio e uma rota explícita para enviar efeitos e
+soundboard a **Voice App Virtual Microphone**. O driver tem compilação e validação separadas;
+exige assinatura aceita pelo Windows e instalação administrativa antes do uso. O ZIP já
+publicado em `windows-v0.1.0-alpha.1` não inclui esse driver. A implementação nova ainda precisa
+de validação carregada no Windows e nos aplicativos de destino; Wine não comprova essa etapa.
 Veja o [escopo e as verificações pendentes](docs/WINDOWS.md).
 
 ## Capturar áudio do desktop
