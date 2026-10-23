@@ -6,10 +6,16 @@ commands. Windows 10/11 x64 are the intended desktop targets; a GitHub-hosted
 Windows Server 2022 build and offline tests do not establish physical desktop or
 audio compatibility.
 
-This preview has no virtual microphone driver. It cannot be selected as a voice
-changing microphone in Discord, OBS or games. The experimental WASAPI adapter
-can process microphone audio for local monitoring/recording and capture an
-explicitly selected desktop output, subject to later physical validation.
+This application ZIP does not bundle or install a virtual microphone driver.
+The new experimental source supports explicitly routing the processed voice and
+soundboard to the separately built Voice App driver pair. This requires a signed
+driver package accepted by Windows, explicit administrative installation on
+Windows 11 x64, and subsequent installed-driver acceptance. The unsigned CI
+development artifact is not an installation-ready release. The existing
+windows-v0.1.0-alpha.1 ZIP predates this integration. See docs/WINDOWS.md for the
+route, driver build and outstanding Discord/Audacity/Tenacity checks.
+The WASAPI adapter can also process microphone audio for local monitoring/recording
+and capture an explicitly selected desktop output, subject to physical validation.
 Monitoring is off by default. No driver, service or system audio default is
 installed or changed by extracting or launching this package.
 
