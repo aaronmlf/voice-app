@@ -521,7 +521,7 @@ impl App {
                         .suffix("%"),
                 )
                 .on_hover_text(
-                    "Volume de Ouvir-me nos fones. Não altera a gravação da voz processada.",
+                    "Volume de Ouvir-me nos fones. Não altera a gravação nem o envio ao microfone virtual.",
                 )
             })
             .inner;
@@ -1150,6 +1150,23 @@ impl App {
                         })
                         .size(11.),
                     );
+                    #[cfg(windows)]
+                    if self.virtual_microphone() {
+                        ui.label(
+                            RichText::new(
+                                if self.status["virtual_microphone"]["active"]
+                                    .as_bool()
+                                    .unwrap_or(false)
+                                {
+                                    "Envio ativo"
+                                } else {
+                                    "Envio desligado"
+                                },
+                            )
+                            .size(10.)
+                            .color(MUTED),
+                        );
+                    }
                 });
             });
     }
@@ -2197,6 +2214,9 @@ impl App {
         });
         ui.add_space(18.);
         ui.label(RichText::new("Microfone virtual").size(16.).strong());
+        #[cfg(windows)]
+        self.windows_virtual_microphone_settings(ui);
+        #[cfg(not(windows))]
         if self.virtual_microphone() {
             ui.label(
                 RichText::new("Voice App Virtual Microphone")
@@ -2207,15 +2227,6 @@ impl App {
                 RichText::new("Selecione esta entrada no Discord, OBS ou jogo.")
                     .size(12.)
                     .color(MUTED),
-            );
-        } else {
-            ui.label(RichText::new("Ainda não disponível no Windows").size(13.));
-            ui.label(
-                RichText::new(
-                    "Use esta versão para testar efeitos, Ouvir-me e gravação. O envio da voz para chamadas depende do driver virtual.",
-                )
-                .size(12.)
-                .color(MUTED),
             );
         }
         ui.add_space(22.);
@@ -2328,11 +2339,95 @@ impl eframe::App for App {
         ui.ctx().request_repaint_after(Duration::from_millis(100));
     }
 }
+
+#[cfg(windows)]
+impl App {
+    fn windows_virtual_microphone_settings(&mut self, ui: &mut egui::Ui) {
+        let status = serde_json::from_value::<voice_core::VirtualMicrophoneStatus>(
+            self.status["virtual_microphone"].clone(),
+        )
+        .unwrap_or_default();
+        ui.label(
+            RichText::new(if status.active {
+                "Voice App Virtual Microphone · envio ativo"
+            } else if status.available {
+                "Driver detectado · envio desligado"
+            } else if self.status.is_null() {
+                "Verificando driver…"
+            } else {
+                "Driver virtual ausente ou indisponível"
+            })
+            .size(13.)
+            .color(if status.active { ACCENT } else { TEXT }),
+        );
+        if let Some(diagnostic) = status.diagnostic.as_deref() {
+            ui.label(RichText::new(diagnostic).size(11.).color(MUTED));
+        }
+        let mut enabled = self.audio_config.virtual_output_device.is_some();
+        let can_select = status.available && status.render_device.is_some();
+        if ui
+            .add_enabled(
+                can_select || enabled,
+                egui::Checkbox::new(&mut enabled, "Enviar voz e soundboard ao microfone virtual"),
+            )
+            .changed()
+            && set_virtual_output(
+                &mut self.audio_config,
+                enabled,
+                status.render_device.as_deref(),
+            )
+        {
+            self.audio_config_dirty = true;
+        }
+        if let Some(selected) = self.audio_config.virtual_output_device.as_deref()
+            && status.render_device.as_deref() != Some(selected)
+        {
+            ui.label(
+                RichText::new("O dispositivo salvo não foi detectado. A conexão aguardará esse dispositivo sem trocar a saída.")
+                    .size(11.)
+                    .color(Color32::LIGHT_RED),
+            );
+        }
+        ui.label(
+            RichText::new("Use Conectar áudio ou Aplicar e reconectar após alterar esta opção.")
+                .size(11.)
+                .color(MUTED),
+        );
+        ui.label(
+            RichText::new("No Discord, selecione Voice App Virtual Microphone como entrada. No Audacity/Tenacity, selecione essa entrada para gravação, usando um modo compartilhado.")
+                .size(12.)
+                .color(MUTED),
+        );
+        ui.label(
+            RichText::new("A pré-escuta e o volume de Ouvir-me ficam nos fones. O aplicativo não instala o driver nem altera o microfone padrão. Detectar o driver não confirma os testes de chamada ou gravação no Windows.")
+                .size(11.)
+                .color(MUTED),
+        );
+    }
+}
 fn same_audio_config(left: &AudioConfig, right: &AudioConfig) -> bool {
     left.input_device == right.input_device
         && left.output_device == right.output_device
+        && left.virtual_output_device == right.virtual_output_device
         && left.sample_rate == right.sample_rate
         && left.quantum == right.quantum
+}
+
+#[cfg(any(windows, test))]
+fn set_virtual_output(config: &mut AudioConfig, enabled: bool, detected: Option<&str>) -> bool {
+    let desired = if enabled {
+        let Some(id) = detected.filter(|id| !id.is_empty()) else {
+            return false;
+        };
+        Some(id.to_owned())
+    } else {
+        None
+    };
+    if config.virtual_output_device == desired {
+        return false;
+    }
+    config.virtual_output_device = desired;
+    true
 }
 
 fn device_selection_label(
@@ -3031,5 +3126,49 @@ fn main() {
                 .show();
         }
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod virtual_output_tests {
+    use super::*;
+
+    #[test]
+    fn changing_virtual_routing_is_a_pending_audio_configuration_change() {
+        let original = AudioConfig::default();
+        let mut changed = original.clone();
+        changed.virtual_output_device = Some("owned-id".into());
+        assert!(!same_audio_config(&original, &changed));
+        assert!(same_audio_config(&changed, &changed));
+    }
+
+    #[test]
+    fn explicit_virtual_selection_preserves_the_headphones_and_can_be_disabled() {
+        let mut config = AudioConfig {
+            input_device: Some("microphone".into()),
+            output_device: Some("headphones".into()),
+            ..Default::default()
+        };
+        assert!(set_virtual_output(&mut config, true, Some("owned-id")));
+        assert_eq!(config.virtual_output_device.as_deref(), Some("owned-id"));
+        assert!(!set_virtual_output(&mut config, true, Some("owned-id")));
+        assert!(set_virtual_output(&mut config, false, None));
+        assert!(config.virtual_output_device.is_none());
+        assert_eq!(config.input_device.as_deref(), Some("microphone"));
+        assert_eq!(config.output_device.as_deref(), Some("headphones"));
+    }
+
+    #[test]
+    fn missing_virtual_device_never_enables_or_replaces_a_saved_route() {
+        let mut config = AudioConfig::default();
+        assert!(!set_virtual_output(&mut config, true, None));
+        assert!(!set_virtual_output(&mut config, true, Some("")));
+        assert!(config.virtual_output_device.is_none());
+        config.virtual_output_device = Some("saved-owned-id".into());
+        assert!(!set_virtual_output(&mut config, true, None));
+        assert_eq!(
+            config.virtual_output_device.as_deref(),
+            Some("saved-owned-id")
+        );
     }
 }
