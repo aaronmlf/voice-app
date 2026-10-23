@@ -1,0 +1,72 @@
+name: Windows virtual microphone driver
+
+on:
+  pull_request:
+    branches: [main, beta]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-driver-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-driver:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Locate native MSBuild without installing global components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $installation) { throw 'Visual Studio C++ tools are required.' }
+          $path = Join-Path $installation 'MSBuild\Current\Bin\amd64'
+          if (-not (Test-Path -LiteralPath (Join-Path $path 'MSBuild.exe'))) { throw 'MSBuild not found.' }
+          $path >> $env:GITHUB_PATH
+      - name: Test actual driver bridge and timing without loading a kernel driver
+        run: python scripts/test-windows-driver.py
+      - name: Parse installer and compile SetupAPI declarations without invoking them
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'scripts/install-windows-driver.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+          $definitions = @($ast.FindAll({ param($node)
+            $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type'
+          }, $true))
+          if ($definitions.Count -ne 1) { throw 'Expected exactly one isolated SetupAPI declaration.' }
+          $source = $definitions[0].CommandElements[-1]
+          if ($source -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { throw 'Expected literal C# source.' }
+          Add-Type -TypeDefinition $source.Value
+      - name: Build x64 driver with matched signed pinned SDK and WDK packages
+        shell: pwsh
+        run: ./drivers/windows/build-driver.ps1
+      - name: Retain unsigned development output and provenance only
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-app-unsigned-driver-development
+          path: |
+            target/windows-driver/unsigned-package/
+            target/windows-driver/build-report.json
+            target/windows-driver-tests/report.json
+          if-no-files-found: error
+      - name: Retain failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-app-driver-build-failure
+          path: |
+            target/windows-driver-tests/compile.log
+            target/windows-driver-tests/tests.log
+            target/windows-driver-tests/report.json
+            target/windows-driver/build-report.json
+          if-no-files-found: warn
