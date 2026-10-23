@@ -159,8 +159,9 @@ Audacity/Tenacity também fazem parte da aceitação: selecionar `Voice App Virt
 como entrada, gravar uma frase com efeito e um clipe curto do soundboard, salvar/reproduzir o WAV
 e verificar cortes e canais. Se o gravador oferecer apenas `pulse`/PulseAudio, selecionar a fonte
 na rota de captura desse aplicativo, preservando o microfone padrão do sistema. Essa verificação
-ainda não foi realizada. No Windows, a entrada nesses programas depende do futuro driver virtual;
-WASAPI e gravação interna do Voice App não substituem esse dispositivo.
+ainda não foi realizada. No Windows, a rota atual usa VB-CABLE instalado separadamente;
+selecione sua entrada de captura (normalmente CABLE Output). A aceitação instalada com
+esses gravadores permanece pendente; gravação interna/offline não comprova essa etapa.
 
 ## Evidência remota Windows e Wine
 
@@ -254,3 +255,35 @@ Benchmark local do candidato: 10.000 blocos de 256 frames/48 kHz, cadeia básica
 p50 56,640 µs, p95 84,494 µs, p99 109,092 µs, máximo 273,682 µs. É tempo de CPU
 DSP sem dispositivo, não latência VB-CABLE. Gate repetido após ajuste do rótulo
 VB-CABLE na GUI: mesmos 147 testes Rust/51 Python, formatação/Clippy/limites aprovados.
+
+
+## 2026-10-23 — Gates nativos da rota VB-CABLE
+
+Fonte pública revisada `bcb3f45e7eea8fddcf6596aa6ff37f1928f16da3`:
+[Linux](https://github.com/aaronmlf/voice-app/actions/runs/40037147562) passou
+147 testes Rust/51 Python, formatação, Clippy, limites, corpus, benchmark,
+licenças/dependências, PipeWire privado e pacote. As quatro reexecuções de testes
+do corpus não são contadas novamente nos 147. [Windows nativo](https://github.com/aaronmlf/voice-app/actions/runs/40037022519)
+passou 135 testes Rust e 15 Python (11 guardas Wine/WAV + 4 do gate), quatro
+reexecuções do corpus, demais gates, pacote/checksum e testes offline da CLI,
+DSP, biblioteca, persistência, IPC/MCP e GUI extraídos do ZIP.
+
+Smoke gráfico: Windows Server 2022, WGPU/DX12/software, saída 0, 5,488 s e pico
+observado do processo GUI 78.766.080 bytes (75,12 MiB), sem incluir processos filhos.
+Áudio desligado/zero frames em dez amostras IPC, exatamente 12 vozes originais e
+PNG 1024×768 igual à área cliente observada, limitada ao monitor único do runner.
+Não qualifica configuração manual, layout maior, áudio, sessão longa ou RSS ativo.
+
+Artefatos reais baixados em streaming, sem executar os PE neste host. ZIP Windows:
+12.972.732 bytes, SHA-256 `47f9d97e9093e86e8fb1f0e78313e472e4184ac4802efd6a3a40106a36417717`.
+Ambos PE AMD64 correspondem aos hashes do smoke; 18 documentos/scripts/imagens/licenças
+próprios são idênticos à fonte pública testada. Nenhum SYS/INF/CAT de fornecedor
+integra o pacote. Artefato experimental da CI; não substitui assets das releases
+anteriores. O DEVLOG público continua sendo um resumo curado, separado do histórico
+privado. Correções posteriores de documentação não alteram os binários testados.
+
+O teste Wine deste candidato ainda está em execução nesta atualização. A aceitação
+com VB-CABLE instalado, Discord/Audacity/Tenacity, Ouvir-me em fones, reconexão,
+crash, clientes simultâneos, memória/CPU ativos e latência física continua pendente.
+A meta de 80 ms permanece aberta. Não há promoção a beta nem retomada do driver
+próprio, de sua assinatura ou do lote prolongado abandonado.
