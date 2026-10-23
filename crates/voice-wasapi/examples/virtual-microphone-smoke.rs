@@ -84,7 +84,7 @@ mod native {
 
     impl Waves {
         fn new() -> Self {
-            let wave = |hz, amplitude| {
+            let wave = |hz: f64, amplitude: f64| {
                 (0..RATE)
                     .map(|frame| {
                         (amplitude
@@ -369,7 +369,7 @@ mod native {
                 }
             }
         }
-        let amplitudes = |index| {
+        let amplitudes = |index: usize| {
             std::array::from_fn::<_, 2, _>(|channel| {
                 2. * spectrum.cosine[channel][index].hypot(spectrum.sine[channel][index])
                     / WINDOW_FRAMES as f64
@@ -386,7 +386,7 @@ mod native {
         let expected_energy = WINDOW_FRAMES as f64
             * 0.5
             * (expected_voice * expected_voice + expected_sound * expected_sound);
-        let mut best = [-1.; 2];
+        let mut best = [-1.0_f64; 2];
         let mut best_lag = 0;
         // For these integer-frequency one-second payloads, correlation with the exact
         // prepared composite follows directly from its two Fourier coefficients.
@@ -804,7 +804,7 @@ mod native {
             )?;
             writeln!(
                 file,
-                "  \"limitations\":[\"Alignment uses callback frame counters and software capture; it is not physical end-to-end latency.\",\"PCM memory bound excludes production DSP/shared state, driver and Windows audio-engine buffers; process RSS is not measured.\",\"Synchronous OS discovery and teardown must return; the deadline rejects overruns but is not an external process watchdog.\",\"No crash, concurrent-client, reconnect, hardware, signing or long-session qualification.\",\"The probe never changes endpoint volumes; non-unity user volume can cause a failed amplitude check.\"]"
+                "  \"limitations\":[\"Alignment fits periodic tones using callback counters/software capture; near-equivalent phase matches exist and it is not a latency measurement.\",\"PCM memory bound excludes production DSP/shared state, driver and Windows audio-engine buffers; process RSS is not measured.\",\"Synchronous OS discovery and teardown must return; the deadline rejects overruns but is not an external process watchdog.\",\"Stop silence checks only 750-1000 ms after rendering stops, allowing a 750 ms grace; immediate silence is not qualified. No crash, concurrent-client, reconnect, hardware, signing or long-session qualification.\",\"The probe never changes endpoint volumes; non-unity user volume can cause a failed amplitude check.\"]"
             )?;
             writeln!(file, "}}")?;
             file.flush()?;
