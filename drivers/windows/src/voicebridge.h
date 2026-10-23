@@ -96,10 +96,18 @@ public:
 // fractions so 1 ms timers do not accumulate truncation drift. Long scheduling
 // gaps are marked discontinuities instead of causing unbounded catch-up loops.
 class VoiceFrameClock {
-    VoiceU64 previous_ = 0, carry_ = 0, frequency_ = 1;
+    VoiceU64 previous_ = 0, carry_ = 0, frequency_ = 0;
 public:
-    void Reset(VoiceU64 now, VoiceU64 frequency) { previous_ = now; frequency_ = frequency ? frequency : 1; carry_ = 0; }
+    // Advance only scales delta <= frequency, with carry < frequency. Therefore
+    // delta * 48000 + carry <= frequency * 48001 - 1, without overflow here.
+    static constexpr VoiceU64 MaxFrequency = VoiceMaxU64 / 48001;
+    bool Reset(VoiceU64 now, VoiceU64 frequency) {
+        previous_ = now; carry_ = 0;
+        frequency_ = frequency && frequency <= MaxFrequency ? frequency : 0;
+        return frequency_ != 0;
+    }
     VoiceU64 Advance(VoiceU64 now, bool& discontinuity) {
+        if (!frequency_) { previous_ = now; carry_ = 0; discontinuity = true; return 0; }
         discontinuity = now < previous_;
         const auto delta = now >= previous_ ? now - previous_ : 0;
         previous_ = now;

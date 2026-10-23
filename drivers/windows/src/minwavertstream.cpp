@@ -53,9 +53,10 @@ NTSTATUS CMiniportWaveRTStream::Init(CMiniportWaveRT* miniport,
     m_LastReadPacket.Store(VoiceMaxU64);
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
-    if (frequency.QuadPart <= 0 || frequency.QuadPart > 1000000000LL || !m_Bridge)
+    if (frequency.QuadPart <= 0 || !m_Bridge)
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     m_Frequency = static_cast<VoiceU64>(frequency.QuadPart);
+    if (m_Frequency > VoiceFrameClock::MaxFrequency) return STATUS_DEVICE_CONFIGURATION_ERROR;
     auto status = miniport->StreamCreated(pin, this);
     m_Registered = NT_SUCCESS(status);
     return status;
@@ -75,9 +76,10 @@ void CMiniportWaveRTStream::Quiesce() {
 NTSTATUS CMiniportWaveRTStream::Arm() {
     PAGED_CODE();
     if (m_State.Load() != KSSTATE_RUN) return STATUS_SUCCESS;
+    if (!m_Clock.Reset(static_cast<VoiceU64>(KeQueryPerformanceCounter(nullptr).QuadPart), m_Frequency))
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
     m_Timer = ExAllocateTimer(TimerNotifyRT, this, EX_TIMER_HIGH_RESOLUTION);
     if (!m_Timer) return STATUS_INSUFFICIENT_RESOURCES;
-    m_Clock.Reset(static_cast<VoiceU64>(KeQueryPerformanceCounter(nullptr).QuadPart), m_Frequency);
     m_Arming.Store(1);
     ExSetTimer(m_Timer, -10000LL, 0, nullptr); // one-shot, initially 1 ms
     return STATUS_SUCCESS;
