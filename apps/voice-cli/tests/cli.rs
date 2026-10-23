@@ -94,6 +94,55 @@ impl Drop for Fixture {
 
 #[cfg(unix)]
 #[test]
+fn virtual_start_forwards_exact_render_ids_without_changing_the_headphones() {
+    let fixture = Fixture::new();
+    let runtime = fixture.root.join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let listener = UnixListener::bind(runtime.join("control.sock")).unwrap();
+    let server = std::thread::spawn(move || {
+        let mut commands = Vec::new();
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            commands.push(request["command"].clone());
+            writeln!(
+                stream,
+                "{}",
+                json!({"id":request["id"],"ok":true,"result":{}})
+            )
+            .unwrap();
+        }
+        commands
+    });
+    let ids = ["owned-id", "{0.0.0.00000000}.{vb-cable-render}"];
+    for id in ids {
+        fixture.json(&[
+            "start",
+            "--input",
+            "physical-microphone",
+            "--output",
+            "physical-headphones",
+            "--virtual-output",
+            id,
+        ]);
+    }
+    for (command, id) in server.join().unwrap().iter().zip(ids) {
+        assert_eq!(command["op"], "start");
+        assert_eq!(command["config"]["input_device"], "physical-microphone");
+        assert_eq!(command["config"]["output_device"], "physical-headphones");
+        assert_eq!(command["config"]["virtual_output_device"], id);
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn desktop_commands_forward_explicit_targets_sources_and_absolute_paths() {
     let fixture = Fixture::new();
     let runtime = fixture.root.join("runtime");
