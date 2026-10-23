@@ -352,7 +352,7 @@ mod native {
             sine: [[0.; 3]; 2],
             energy: [0.; 2],
         };
-        for (frame, stereo) in samples.chunks_exact(2).enumerate() {
+        for (frame, stereo) in samples.as_chunks::<2>().0.iter().enumerate() {
             for (channel, sample) in stereo.iter().enumerate() {
                 let value = f64::from(*sample);
                 spectrum.energy[channel] += value * value;
@@ -657,7 +657,9 @@ mod native {
             "capture contained non-finite or out-of-range audio"
         );
         let stereo_difference = log.samples[..log.used]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|frame| f64::from((frame[0] - frame[1]).abs()))
             .fold(0.0_f64, f64::max);
         report.stereo_max_difference = Some(stereo_difference);
