@@ -33,12 +33,12 @@ private:
     ULONG m_Pin = 0;
     BOOLEAN m_Capture = FALSE, m_Registered = FALSE;
     PMDL m_Mdl = nullptr;
-    uint32_t* m_Buffer = nullptr;
+    VoiceU32* m_Buffer = nullptr;
     VoiceAtomic64 m_BufferBytes, m_Notifications;
     PKEVENT m_Events[MaxEvents]{};
     PEX_TIMER m_Timer = nullptr;
     VoiceFrameClock m_Clock;
-    uint64_t m_Frequency = 1;
+    VoiceU64 m_Frequency = 1;
     VoiceAtomic64 m_State, m_Frames, m_Qpc, m_SnapshotSequence, m_CommittedFrames, m_EndFrame;
     VoiceAtomic64 m_LastReadPacket;
     VoiceAtomic64 m_Arming, m_ProcessOwner;
@@ -50,6 +50,6 @@ private:
     NTSTATUS Arm();
     NTSTATUS Allocate(ULONG, ULONG, PMDL*, ULONG*, ULONG*, MEMORY_CACHING_TYPE*);
     void Free(PMDL);
-    bool Snapshot(uint64_t&, uint64_t&);
-    void Process(uint64_t);
+    bool Snapshot(VoiceU64&, VoiceU64&);
+    void Process(VoiceU64);
 };

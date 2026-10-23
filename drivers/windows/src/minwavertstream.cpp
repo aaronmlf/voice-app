@@ -49,13 +49,13 @@ NTSTATUS CMiniportWaveRTStream::Init(CMiniportWaveRT* miniport,
     m_State.Store(KSSTATE_STOP);
     m_Epoch.Store(1);
     m_DrmAllowed.Store(1);
-    m_EndFrame.Store(UINT64_MAX);
-    m_LastReadPacket.Store(UINT64_MAX);
+    m_EndFrame.Store(VoiceMaxU64);
+    m_LastReadPacket.Store(VoiceMaxU64);
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
     if (frequency.QuadPart <= 0 || frequency.QuadPart > 1000000000LL || !m_Bridge)
         return STATUS_DEVICE_CONFIGURATION_ERROR;
-    m_Frequency = static_cast<uint64_t>(frequency.QuadPart);
+    m_Frequency = static_cast<VoiceU64>(frequency.QuadPart);
     auto status = miniport->StreamCreated(pin, this);
     m_Registered = NT_SUCCESS(status);
     return status;
@@ -77,7 +77,7 @@ NTSTATUS CMiniportWaveRTStream::Arm() {
     if (m_State.Load() != KSSTATE_RUN) return STATUS_SUCCESS;
     m_Timer = ExAllocateTimer(TimerNotifyRT, this, EX_TIMER_HIGH_RESOLUTION);
     if (!m_Timer) return STATUS_INSUFFICIENT_RESOURCES;
-    m_Clock.Reset(static_cast<uint64_t>(KeQueryPerformanceCounter(nullptr).QuadPart), m_Frequency);
+    m_Clock.Reset(static_cast<VoiceU64>(KeQueryPerformanceCounter(nullptr).QuadPart), m_Frequency);
     m_Arming.Store(1);
     ExSetTimer(m_Timer, -10000LL, 0, nullptr); // one-shot, initially 1 ms
     return STATUS_SUCCESS;
@@ -114,7 +114,7 @@ NTSTATUS CMiniportWaveRTStream::Allocate(ULONG requested, ULONG notifications, P
     high.QuadPart = MAXLONGLONG;
     auto allocated = m_Port->AllocatePagesForMdl(high, requested);
     if (!allocated) return STATUS_INSUFFICIENT_RESOURCES;
-    auto buffer = static_cast<uint32_t*>(m_Port->MapAllocatedPages(allocated, MmCached));
+    auto buffer = static_cast<VoiceU32*>(m_Port->MapAllocatedPages(allocated, MmCached));
     if (!buffer) { m_Port->FreePagesFromMdl(allocated); return STATUS_INSUFFICIENT_RESOURCES; }
     RtlZeroMemory(buffer, requested);
     m_Mdl = allocated; m_Buffer = buffer; m_BufferBytes = requested; m_Notifications = notifications;
@@ -188,7 +188,7 @@ NTSTATUS CMiniportWaveRTStream::SetState(KSSTATE state) {
     PAGED_CODE(); VoiceControlGuard guard(m_Control);
     if (state < KSSTATE_STOP || state > KSSTATE_RUN) return STATUS_INVALID_PARAMETER;
     const auto previous = m_State.Load();
-    if (previous == static_cast<uint64_t>(state)) return STATUS_SUCCESS;
+    if (previous == static_cast<VoiceU64>(state)) return STATUS_SUCCESS;
     if (state == KSSTATE_RUN && (!m_Buffer || !m_Notifications)) return STATUS_NOT_SUPPORTED;
     if (state == KSSTATE_RUN && !m_DrmAllowed.Load()) return STATUS_ACCESS_DENIED;
     m_State.Store(state);
@@ -197,7 +197,7 @@ NTSTATUS CMiniportWaveRTStream::SetState(KSSTATE state) {
     if (m_Capture) m_Bridge->DropConsumer();
     if (state != KSSTATE_RUN) {
         m_Epoch.Store(m_Epoch.Load() + 1);
-        m_PacketEpoch.Store(0); m_CommittedFrames.Store(0); m_EndFrame.Store(UINT64_MAX);
+        m_PacketEpoch.Store(0); m_CommittedFrames.Store(0); m_EndFrame.Store(VoiceMaxU64);
         if (m_Buffer) RtlZeroMemory(m_Buffer, m_BufferBytes);
     }
     if (state == KSSTATE_STOP) {
@@ -205,7 +205,7 @@ NTSTATUS CMiniportWaveRTStream::SetState(KSSTATE state) {
         m_SnapshotSequence.Store(m_SnapshotSequence.Load() + 1);
         m_Frames.Store(0); m_Qpc.Store(0);
         m_SnapshotSequence.Store(m_SnapshotSequence.Load() + 1);
-        m_CommittedFrames.Store(0); m_EndFrame.Store(UINT64_MAX); m_LastReadPacket.Store(UINT64_MAX);
+        m_CommittedFrames.Store(0); m_EndFrame.Store(VoiceMaxU64); m_LastReadPacket.Store(VoiceMaxU64);
         if (m_Buffer) RtlZeroMemory(m_Buffer, m_BufferBytes);
     }
     if (state == KSSTATE_RUN) {
@@ -250,7 +250,7 @@ STDMETHODIMP_(NTSTATUS) CMiniportWaveRTStream::SetContentId(ULONG id, PCDRMRIGHT
 }
 
 #pragma code_seg()
-bool CMiniportWaveRTStream::Snapshot(uint64_t& frames, uint64_t& qpc) {
+bool CMiniportWaveRTStream::Snapshot(VoiceU64& frames, VoiceU64& qpc) {
     // Bounded retry; never wait for a preempted writer.
     for (unsigned attempt = 0; attempt < 3; ++attempt) {
         const auto sequence = m_SnapshotSequence.Load();
@@ -261,7 +261,7 @@ bool CMiniportWaveRTStream::Snapshot(uint64_t& frames, uint64_t& qpc) {
     return false;
 }
 NTSTATUS CMiniportWaveRTStream::GetPosition(KSAUDIO_POSITION* position) {
-    uint64_t frames, qpc;
+    VoiceU64 frames, qpc;
     if (!position || !Snapshot(frames, qpc)) return STATUS_DEVICE_NOT_READY;
     UNREFERENCED_PARAMETER(qpc);
     const auto bytes = m_BufferBytes.Load();
@@ -269,7 +269,7 @@ NTSTATUS CMiniportWaveRTStream::GetPosition(KSAUDIO_POSITION* position) {
     return STATUS_SUCCESS;
 }
 NTSTATUS CMiniportWaveRTStream::GetReadPacket(ULONG* number, DWORD* flags, ULONG64* timestamp, BOOL* more) {
-    uint64_t frames, qpc;
+    VoiceU64 frames, qpc;
     if (!number || !flags || !timestamp || !more) return STATUS_INVALID_PARAMETER;
     const auto bytes = m_BufferBytes.Load(), notifications = m_Notifications.Load();
     if (!m_Capture || !notifications || !bytes || !Snapshot(frames, qpc)) return STATUS_DEVICE_NOT_READY;
@@ -291,7 +291,7 @@ NTSTATUS CMiniportWaveRTStream::SetWritePacket(ULONG number, DWORD flags, ULONG 
     if (!m_WriteOwner.TryEnter()) return STATUS_DEVICE_BUSY;
     struct ReleaseOwner { VoiceAtomic64& owner; ~ReleaseOwner() { owner.Store(0); } } release{m_WriteOwner};
     if (flags & ~KSSTREAM_HEADER_OPTIONSF_ENDOFSTREAM) return STATUS_INVALID_PARAMETER;
-    if (m_PacketEpoch.Load() == epoch && m_EndFrame.Load() != UINT64_MAX)
+    if (m_PacketEpoch.Load() == epoch && m_EndFrame.Load() != VoiceMaxU64)
         return STATUS_INVALID_DEVICE_STATE;
     const auto packetFrames = bytes / 4 / notifications;
     const auto current = m_Frames.Load() / packetFrames;
@@ -306,7 +306,7 @@ NTSTATUS CMiniportWaveRTStream::SetWritePacket(ULONG number, DWORD flags, ULONG 
         if (eosLength > packetFrames * 4 || eosLength % 4) return STATUS_INVALID_PARAMETER;
         end = expected * packetFrames + eosLength / 4;
         m_EndFrame.Store(end);
-    } else m_EndFrame.Store(UINT64_MAX);
+    } else m_EndFrame.Store(VoiceMaxU64);
     m_CommittedFrames.Store(end);
     m_PacketEpoch.Store(epoch); // old in-flight writes cannot authorize a new RUN
     return STATUS_SUCCESS;
@@ -318,18 +318,18 @@ NTSTATUS CMiniportWaveRTStream::GetPacketCount(ULONG* count) {
     return STATUS_SUCCESS;
 }
 NTSTATUS CMiniportWaveRTStream::GetOutputStreamPresentationPosition(KSAUDIO_PRESENTATION_POSITION* position) {
-    uint64_t frames, qpc;
+    VoiceU64 frames, qpc;
     if (!position || !Snapshot(frames, qpc)) return STATUS_DEVICE_NOT_READY;
     position->u64PositionInBlocks = frames; position->u64QPCPosition = qpc;
     return STATUS_SUCCESS;
 }
 
-void CMiniportWaveRTStream::Process(uint64_t now) {
+void CMiniportWaveRTStream::Process(VoiceU64 now) {
     if (m_State.Load() != KSSTATE_RUN || !m_Buffer || !m_BufferBytes) return;
     bool discontinuity;
     const auto advance = m_Clock.Advance(now, discontinuity);
     if (!advance) return;
-    const uint64_t before = m_Frames.Load();
+    const VoiceU64 before = m_Frames.Load();
     const ULONG capacity = static_cast<ULONG>(m_BufferBytes.Load() / 4);
     const auto bounded = advance < capacity ? static_cast<ULONG>(advance) : capacity;
     // At most one cyclic-buffer worth of data is touched even after a long stall.
@@ -341,7 +341,7 @@ void CMiniportWaveRTStream::Process(uint64_t now) {
             if (m_DrmAllowed.Load()) m_Bridge->StartProducer();
         }
     }
-    uint64_t cursor = before + skip;
+    VoiceU64 cursor = before + skip;
     ULONG remaining = bounded;
     const auto epoch = m_PacketEpoch.Load();
     auto committed = m_CommittedFrames.Load();
@@ -383,7 +383,7 @@ void TimerNotifyRT(PEX_TIMER timer, PVOID context) {
     // to the owner. Timer periodicity is disabled as a second independent guard.
     if (!stream->m_ProcessOwner.TryEnter()) return;
     if (stream->m_Arming.Load())
-        stream->Process(static_cast<uint64_t>(KeQueryPerformanceCounter(nullptr).QuadPart));
+        stream->Process(static_cast<VoiceU64>(KeQueryPerformanceCounter(nullptr).QuadPart));
     stream->m_ProcessOwner.Store(0);
     // A periodic EX_TIMER may run on two CPUs simultaneously. Re-arm a ONE-SHOT
     // only after every state mutation; nothing touches stream state after this.
