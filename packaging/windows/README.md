@@ -50,8 +50,8 @@ pwsh -File .\scripts\test-windows-offline.ps1
 ```
 
 It uses a temporary synthetic library, starts only the local command service,
-tests CLI/MCP/persistence/DSP files, and shuts it down. It never starts audio,
-enumerates hardware or opens the GUI. Those tests do not qualify real-time
+tests CLI/MCP/persistence/DSP files, and shuts it down. It never starts capture/playback or opens the GUI. Status can query the Windows
+endpoint inventory/topology to detect the driver, without opening an audio stream. Those tests do not qualify real-time
 audio stability, latency, device reconnection, desktop capture or permissions.
 
 The [native Windows Server 2022 check for public commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538)
