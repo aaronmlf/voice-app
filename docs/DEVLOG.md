@@ -298,3 +298,40 @@ O motor agora revalida também uma rota virtual com IDs físicos fixos a cada do
 segundos; perder o par interrompe a transmissão e agenda a recuperação sem fallback.
 O teste de aceitação deixa explícito que silêncio é avaliado em 750–1000 ms após
 Stop e que alinhamento de tons periódicos é diagnóstico de fase, sem medir latência.
+
+
+## 2026-10-23 — Saída externa VB-CABLE
+
+Implementada seleção explícita de par VB-CABLE base por ID estável, topologia e
+propriedades PnP nativas (hardware, serviço e mesma instância), com descoberta de
+alvos compartilhada por GUI/CLI/MCP. Não depende da retomada do driver próprio:
+PR #5 permanece fechado. Instalação do cabo é manual e separada, sob licença do
+fornecedor; nenhum arquivo do fornecedor integra o código ou pacote públicos.
+
+O único produtor DSP/soundboard envia a mistura final ao cabo. Ouvir-me e seu
+volume, assim como pré-escuta, permanecem nos fones. Endpoints reconhecidos do cabo
+ficam fora de microfone físico, fones e captura desktop, inclusive perfis incompletos,
+legados ou multicanal. Perda do ID salvo não autoriza troca de dispositivo. O perfil
+inicial exige mix compartilhado nativo F32 estéreo/48 kHz. Propriedades PnP ausentes
+em drivers físicos também omitem esses dispositivos: compatibilidade real pendente.
+
+Gates locais seriais sob limite de 3 GiB, sem swap: 147 testes Rust e 51 Python,
+formatação, Clippy e limites aprovados. Regressão PipeWire privada passou: captura,
+DSP, fonte virtual, soundboard, monitoração/pré-escuta, desktop, gravação/replay,
+defaults, recuperação e Stop. Sem áudio pessoal ou mudança dos padrões. O alinhamento
+de impulso de 512 frames/10,667 ms é do grafo isolado, não latência física Windows.
+
+O caminho reutiliza fila e scratch fixos de monitoração (32 + 32 KiB), sem expandir
+buffers nem duplicar DSP. Isso é limite de PCM preparado, não RSS total medido.
+Novos testes cobrem identidade/ambiguidade, seleção/persistência, encaminhamento
+CLI e oito combinações de Ouvir-me/volume com isolamento da pré-escuta. Aceitação
+sintética Windows foi adaptada para exigir --external-cable e ID exato; ainda não
+executada em VB-CABLE instalado. Compilação nativa atual, áudio real Windows,
+Discord/Audacity/Tenacity, memória/CPU/latência e sessões prolongadas permanecem
+pendentes. A meta de 80 ms não foi promovida. Somente as 12 vozes originais publicáveis.
+
+
+Benchmark local do candidato: 10.000 blocos de 256 frames/48 kHz, cadeia básica,
+p50 56,640 µs, p95 84,494 µs, p99 109,092 µs, máximo 273,682 µs. É tempo de CPU
+DSP sem dispositivo, não latência VB-CABLE. Gate repetido após ajuste do rótulo
+VB-CABLE na GUI: mesmos 147 testes Rust/51 Python, formatação/Clippy/limites aprovados.
