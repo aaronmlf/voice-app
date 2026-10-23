@@ -1,0 +1,6 @@
+# Keep release documentation and scripts byte-identical across checkout platforms.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
