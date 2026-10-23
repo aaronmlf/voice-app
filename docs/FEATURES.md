@@ -54,3 +54,15 @@ Smoke de GUI em Windows Server2022:5,705s, pico75,35MiB, áudio desligado. Wine
 verificou comandos offline e recusa de DACL, sem aprovação GUI/IPC. Isso não
 qualifica driver virtual, dispositivos Windows10/11 físicos, chamadas, gravadores,
 latência física ou beta. Quatro horas continuam deixadas de lado por pedido.
+
+
+Atualização de 23/10/2026: publicada a pré-release experimental
+[Windows windows-v0.1.0-alpha.2](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.2),
+tag `bd6f6b4`, binários da CI `bcb3f45` e apenas 12 vozes originais. O job Wine
+terminou: comandos offline e recusa segura de DACL verificados no Wine 9.0;
+resultado `unsupported_security_environment`, sem qualificação de GUI, IPC ou
+compatibilidade Wine. O VB-CABLE exige instalação separada e licença própria.
+Cabo instalado, Discord/Audacity/Tenacity, hardware, Ouvir-me/pré-escuta nos fones,
+RSS/CPU com áudio ativo, latência física e sessões prolongadas continuam pendentes.
+O pico nativo de 75,12 MiB é apenas da GUI curta com áudio desligado. A meta de
+80 ms continua aberta; não há promoção a beta nem retomada do driver próprio.

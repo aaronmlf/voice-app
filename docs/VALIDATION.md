@@ -287,3 +287,33 @@ com VB-CABLE instalado, Discord/Audacity/Tenacity, Ouvir-me em fones, reconexão
 crash, clientes simultâneos, memória/CPU ativos e latência física continua pendente.
 A meta de 80 ms permanece aberta. Não há promoção a beta nem retomada do driver
 próprio, de sua assinatura ou do lote prolongado abandonado.
+
+## 2026-10-23 — Release Windows VB-CABLE e resultado Wine
+
+Publicada a pré-release experimental
+[windows-v0.1.0-alpha.2](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.2),
+com tag em `bd6f6b4` e binários da CI da fonte revisada `bcb3f45`.
+As alterações entre esses commits são somente documentais. O ZIP mantém SHA-256
+`47f9d97e9093e86e8fb1f0e78313e472e4184ac4802efd6a3a40106a36417717`.
+
+O job Wine do [run 40037022519](https://github.com/aaronmlf/voice-app/actions/runs/40037022519)
+terminou com gate aprovado: comandos offline passaram no Wine 9.0 e a recusa segura
+foi confirmada. O serviço saiu com código 1 e `private path must have a protected DACL`;
+o relatório é `unsupported_security_environment`. GUI, IPC e compatibilidade Wine
+continuam sem qualificação; nenhuma proteção de acesso foi reduzida.
+
+O VB-CABLE é instalado separadamente sob a licença do fornecedor. Aceitação com cabo
+instalado, Discord/Audacity/Tenacity, hardware, Ouvir-me/pré-escuta em fones,
+memória/CPU com áudio ativo e latência física permanecem pendentes. Os 75,12 MiB
+medidos na CI nativa referem-se apenas ao smoke curto da GUI com áudio desligado.
+A meta de 80 ms e sessões prolongadas seguem abertas; esta publicação não promove
+o produto a beta nem retoma o driver próprio ou o lote de quatro horas.
+
+
+Os dois downloads públicos desta release foram relidos em streaming (blocos de
+1 MiB) e são idênticos aos candidatos da CI: ZIP de 12.972.732 bytes, SHA-256
+`47f9d97e9093e86e8fb1f0e78313e472e4184ac4802efd6a3a40106a36417717`,
+e checksum de 109 bytes, SHA-256
+`d5ded513391d38c803b0b3a7c936d0cd9b361f5587a2d4c8995967e6f8b6953d`.
+Publicação sem recompilar, executar binários ou abrir áudio neste host. Assets
+anteriores foram preservados; continuam somente main, beta e windows-native.
