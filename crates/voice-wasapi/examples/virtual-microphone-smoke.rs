@@ -1,6 +1,8 @@
-//! Explicit installed-driver acceptance probe. Never opens a physical microphone or headphones.
-//! Run on Windows with: cargo run -p voice-wasapi --example virtual-microphone-smoke -- --report PATH
-//! A missing, ambiguous or unsupported driver pair is an unsuccessful result, never a pass.
+//! Explicit installed-endpoint acceptance probe. Never opens a physical microphone or headphones.
+//! For VB-CABLE, run on Windows with: cargo run -p voice-wasapi --example
+//! virtual-microphone-smoke -- --external-cable --virtual-output EXACT_ID --report NEW_PATH.json
+//! A missing, ambiguous or unsupported pair is an unsuccessful result, never a pass.
+//! The original --report-only invocation remains for the legacy first-party driver.
 
 // Reuse the exact prepared publisher exercised by the application. Excluding this
 // module from example test harnesses avoids duplicating its unit tests/allocator.
@@ -11,7 +13,9 @@ mod production_rt;
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("virtual-microphone-smoke requires native Windows and an installed Voice App driver");
+    eprintln!(
+        "virtual-microphone-smoke requires native Windows and a validated installed endpoint pair; VB-CABLE requires --external-cable --virtual-output EXACT_ID --report NEW_PATH.json"
+    );
     std::process::exit(2);
 }
 
@@ -321,6 +325,9 @@ mod native {
         elapsed_ms: u128,
         pair_available: bool,
         owned_capture_exercised: bool,
+        provider: Option<String>,
+        explicit_render_selection: bool,
+        external_cable_required: bool,
         captured_frames: u64,
         rendered_frames: u64,
         baseline_peak: Option<f64>,
@@ -446,14 +453,14 @@ mod native {
         (peak, (energy / samples.len().max(1) as f64).sqrt())
     }
 
-    fn exercise(deadline: Instant, report: &mut Report) -> Result<()> {
-        report.phase = "probe_owned_pair";
-        let pair = voice_wasapi::virtual_microphone_status()?;
+    fn exercise(deadline: Instant, options: &Options, report: &mut Report) -> Result<()> {
+        report.phase = "probe_exact_installed_pair";
+        let pair = voice_wasapi::virtual_microphone_status_for(options.virtual_output.as_deref())?;
         if !pair.available {
             report.outcome = "unavailable";
             report.diagnostic = pair
                 .diagnostic
-                .or_else(|| Some("No validated owned driver pair is available".into()));
+                .or_else(|| Some("No validated installed endpoint pair is available".into()));
             return Ok(());
         }
         report.pair_available = true;
@@ -463,6 +470,29 @@ mod native {
         let capture_id = pair
             .capture_device
             .context("probe omitted the owned capture endpoint")?;
+        let target = pair
+            .targets
+            .iter()
+            .find(|target| target.render_device == render_id && target.capture_device == capture_id)
+            .context("probe summary does not match a validated installed target")?;
+        report.provider = Some(target.provider.clone());
+        if options.external_cable {
+            ensure!(
+                target.provider == "vb_cable",
+                "--external-cable requires a validated VB-CABLE target; no other provider is opened"
+            );
+        } else {
+            ensure!(
+                target.provider == "voice_app",
+                "the legacy invocation accepts only the Voice App provider; VB-CABLE requires --external-cable and an explicit --virtual-output ID"
+            );
+        }
+        if let Some(selected) = &options.virtual_output {
+            ensure!(
+                render_id == *selected,
+                "probe substituted the explicitly selected render endpoint"
+            );
+        }
         ensure!(
             render_id != capture_id,
             "render/capture endpoint IDs must be distinct"
@@ -735,7 +765,7 @@ mod native {
             writeln!(file, "{{")?;
             writeln!(
                 file,
-                "  \"report_version\":1,\n  \"test\":\"windows_installed_virtual_microphone_synthetic\","
+                "  \"report_version\":2,\n  \"test\":\"windows_installed_virtual_microphone_synthetic\","
             )?;
             writeln!(
                 file,
@@ -752,16 +782,25 @@ mod native {
             )?;
             writeln!(
                 file,
-                "  \"native_windows\":true,\n  \"owned_pair_available\":{},\n  \"owned_capture_exercised\":{},",
+                "  \"native_windows_required\":true,\n  \"validated_pair_available\":{},\n  \"validated_capture_exercised\":{},",
                 self.pair_available, self.owned_capture_exercised
             )?;
             writeln!(
                 file,
-                "  \"driver_load_verified_by_this_test\":{accepted},\n  \"driver_installation_attempted\":false,\n  \"physical_devices_opened\":false,\n  \"system_audio_defaults_changed\":false,"
+                "  \"provider\":{},\n  \"explicit_render_selection\":{},\n  \"external_vb_cable_required\":{},",
+                self.provider
+                    .as_deref()
+                    .map_or_else(|| "null".into(), quoted),
+                self.explicit_render_selection,
+                self.external_cable_required
             )?;
             writeln!(
                 file,
-                "  \"production_voice_output_exercised\":{},\n  \"microphone_audio_is_synthetic\":true,\n  \"monitor_gain\":0.0,\n  \"dsp_gain_db\":-6.0,\n  \"soundboard_gain\":0.75,",
+                "  \"installed_endpoint_audio_path_exercised\":{accepted},\n  \"driver_load_verified_by_this_test\":false,\n  \"driver_installation_attempted\":false,\n  \"physical_devices_opened\":false,\n  \"system_audio_defaults_changed\":false,"
+            )?;
+            writeln!(
+                file,
+                "  \"production_voice_output_exercised\":{},\n  \"microphone_audio_is_synthetic\":true,\n  \"monitor_enabled\":true,\n  \"monitor_gain\":0.0,\n  \"monitor_control_transitions_exercised\":false,\n  \"dsp_gain_db\":-6.0,\n  \"soundboard_gain\":0.75,",
                 self.rendered_frames > 0
             )?;
             writeln!(
@@ -806,7 +845,7 @@ mod native {
             )?;
             writeln!(
                 file,
-                "  \"limitations\":[\"Alignment fits periodic tones using callback counters/software capture; near-equivalent phase matches exist and it is not a latency measurement.\",\"PCM memory bound excludes production DSP/shared state, driver and Windows audio-engine buffers; process RSS is not measured.\",\"Synchronous OS discovery and teardown must return; the deadline rejects overruns but is not an external process watchdog.\",\"Stop silence checks only 750-1000 ms after rendering stops, allowing a 750 ms grace; immediate silence is not qualified. No crash, concurrent-client, reconnect, hardware, signing or long-session qualification.\",\"The probe never changes endpoint volumes; non-unity user volume can cause a failed amplitude check.\"]"
+                "  \"limitations\":[\"Alignment fits periodic tones using callback counters/software capture; near-equivalent phase matches exist and it is not a latency measurement.\",\"PCM memory bound excludes production DSP/shared state, driver and Windows audio-engine buffers; process RSS is not measured.\",\"Synchronous OS discovery and teardown must return; the deadline rejects overruns but is not an external process watchdog.\",\"Stop silence checks only 750-1000 ms after rendering stops, allowing a 750 ms grace; immediate silence is not qualified. No crash, concurrent-client, reconnect, hardware, signing or long-session qualification.\",\"The probe never changes endpoint volumes; non-unity user volume can cause a failed amplitude check.\",\"Monitoring is enabled with zero gain throughout: published audio and preview exclusion are checked in that state. Changes to Ouvir-me enable/gain and audible headphone preview are not installed-device acceptance claims.\",\"Only the validated endpoint audio path is exercised; kernel provenance, driver signing, Discord and recorder applications are not verified.\"]"
             )?;
             writeln!(file, "}}")?;
             file.flush()?;
@@ -815,40 +854,81 @@ mod native {
         }
     }
 
-    fn report_path() -> Result<PathBuf> {
+    struct Options {
+        report: PathBuf,
+        virtual_output: Option<String>,
+        external_cable: bool,
+    }
+
+    fn options() -> Result<Options> {
         let mut arguments = std::env::args_os().skip(1);
+        let mut report = None;
+        let mut virtual_output = None;
+        let mut external_cable = false;
+        while let Some(argument) = arguments.next() {
+            match argument.to_str() {
+                Some("--report") => {
+                    ensure!(report.is_none(), "--report cannot be repeated");
+                    report = Some(PathBuf::from(
+                        arguments
+                            .next()
+                            .context("--report requires a new output path")?,
+                    ));
+                }
+                Some("--virtual-output") => {
+                    ensure!(
+                        virtual_output.is_none(),
+                        "--virtual-output cannot be repeated"
+                    );
+                    let id = arguments
+                        .next()
+                        .context("--virtual-output requires an exact render endpoint ID")?
+                        .into_string()
+                        .map_err(|_| anyhow::anyhow!("--virtual-output ID must be UTF-8"))?;
+                    ensure!(
+                        !id.is_empty() && id.len() <= 2048 && !id.contains('\0'),
+                        "--virtual-output requires a nonempty render ID of at most 2048 bytes without NUL"
+                    );
+                    virtual_output = Some(id);
+                }
+                Some("--external-cable") => {
+                    ensure!(!external_cable, "--external-cable cannot be repeated");
+                    external_cable = true;
+                }
+                _ => anyhow::bail!(
+                    "usage: virtual-microphone-smoke [--external-cable --virtual-output EXACT_ID] --report NEW_PATH.json"
+                ),
+            }
+        }
         ensure!(
-            arguments.next().as_deref() == Some(std::ffi::OsStr::new("--report")),
-            "usage: virtual-microphone-smoke --report NEW_PATH.json"
+            !external_cable || virtual_output.is_some(),
+            "--external-cable requires an explicit --virtual-output ID; no cable is selected automatically"
         );
-        let path = PathBuf::from(
-            arguments
-                .next()
-                .context("--report requires a new output path")?,
-        );
-        ensure!(
-            arguments.next().is_none(),
-            "unexpected argument; only --report NEW_PATH.json is supported"
-        );
-        Ok(path)
+        Ok(Options {
+            report: report.context("--report NEW_PATH.json is required")?,
+            virtual_output,
+            external_cable,
+        })
     }
 
     pub(super) fn run() -> i32 {
         let result = (|| -> Result<i32> {
-            let path = report_path()?;
+            let options = options()?;
             // Reserve the report before touching audio. Existing files are never overwritten.
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .open(&path)
+                .open(&options.report)
                 .context("create the requested new report file")?;
             let started = Instant::now();
             let mut report = Report {
                 outcome: "failed",
                 phase: "initialize",
+                explicit_render_selection: options.virtual_output.is_some(),
+                external_cable_required: options.external_cable,
                 ..Default::default()
             };
-            if let Err(error) = exercise(started + Duration::from_secs(10), &mut report) {
+            if let Err(error) = exercise(started + Duration::from_secs(10), &options, &mut report) {
                 report.outcome = "failed";
                 report.diagnostic = Some(format!("{error:#}"));
             }
@@ -857,7 +937,7 @@ mod native {
             eprintln!(
                 "virtual microphone acceptance: {} ({})",
                 report.outcome,
-                path.display()
+                options.report.display()
             );
             Ok(match report.outcome {
                 "passed" => 0,
