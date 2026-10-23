@@ -164,7 +164,9 @@ publicador de áudio de produção com voz sintética de 503 Hz, ganho DSP de �
 soundboard simultâneo de 997 Hz. Injeta também uma pré-escuta distinta de 1777 Hz, com
 volume de Ouvir-me zerado. Confere ganho, presença dos dois componentes, correlação com
 o sinal preparado, canais L/R, amostras finitas e ausência da pré-escuta na captura.
-Depois encerra a reprodução e mantém a captura aberta para verificar silêncio.
+Depois encerra a reprodução e mantém a captura aberta por um segundo. O critério de
+silêncio cobre apenas os últimos 250 ms, após 750 ms de tolerância; não demonstra
+silêncio imediato nem o tempo exato para esvaziar os buffers.
 
 Código de saída `0` e `accepted: true` exigem a aprovação efetiva dessas verificações.
 `unavailable` retorna `2` e não qualifica um driver ausente, ambíguo ou incompatível;
@@ -176,7 +178,9 @@ excluindo o DSP, estado compartilhado, driver e mecanismo de áudio do Windows. 
 é uma medição de RSS do processo.
 
 O alinhamento estimado pelo relatório usa contadores de callbacks e captura por software.
-Não mede latência física ponta a ponta. O teste não verifica queda abrupta do produtor,
+Como os tons são periódicos, ajustes de fase próximos podem ter correlação muito alta;
+esse alinhamento não é uma medição confiável de latência, mesmo por software.
+O teste não verifica queda abrupta do produtor,
 clientes simultâneos, suspensão, reconexão ou uma sessão longa. Não substitui a aceitação
 manual no Discord ou em Audacity/Tenacity. A execução desse percurso com kernel instalado
 continua pendente enquanto não houver um alvo Windows apropriado.

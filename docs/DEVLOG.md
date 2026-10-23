@@ -278,3 +278,23 @@ Installed-kernel execution, signing, HVCI/Verifier, real CPU/memory, producer-cr
 silence, physical latency, Discord and Audacity/Tenacity acceptance remain pending.
 The existing windows-v0.1.0-alpha.1 release predates this integration. No four-hour
 run was restarted and no beta or 80 ms physical-latency qualification is implied.
+
+
+### Compilação nativa do driver
+
+O [workflow WDK 40025943152](https://github.com/aaronmlf/voice-app/actions/runs/40025943152),
+fonte pública `3537be1`, passou a compilação x64 com SDK/WDK 10.0.28000.2526,
+verificação das assinaturas dos pacotes de ferramentas, testes C++ nativos,
+compilação isolada das declarações SetupAPI, InfVerif e Inf2Cat. O SYS gerado tem
+54.784 bytes e SHA-256 `771a52944be9f982488a2506ba923ac05f71474780d5eced8baa2be435447e10`.
+O artefato foi baixado em streaming: hashes de todos os arquivos conferidos,
+PE AMD64 e as três licenças/proveniência idênticas à fonte. SYS e CAT continuam
+`NotSigned`, sem instalação ou execução no kernel. A primeira tentativa falhou
+por mistura de cabeçalhos do CRT de usuário com o kernel; foi corrigida sem
+suprimir os avisos de compilação. Os gates nativos do aplicativo são separados;
+o exemplo de aceitação recebeu correções de inferência numérica para o MSVC.
+
+O motor agora revalida também uma rota virtual com IDs físicos fixos a cada dois
+segundos; perder o par interrompe a transmissão e agenda a recuperação sem fallback.
+O teste de aceitação deixa explícito que silêncio é avaliado em 750–1000 ms após
+Stop e que alinhamento de tons periódicos é diagnóstico de fase, sem medir latência.
