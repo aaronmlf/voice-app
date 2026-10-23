@@ -8,11 +8,19 @@ repository.workspace = true
 [dependencies]
 voice-core.workspace = true
 voice-dsp.workspace = true
-voice-pipewire.workspace = true
 voice-library.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hound.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+voice-pipewire.workspace = true
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+voice-wasapi.workspace = true
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_IO", "Win32_System_Threading", "Win32_System_SystemServices"] }
 

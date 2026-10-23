@@ -11,7 +11,14 @@ voice-engine.workspace = true
 voice-library.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
-eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "accesskit"] }
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "accesskit"] }
 rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(not(windows))'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["glow", "wayland", "x11"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["wgpu_no_default_features"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "dx12", "wgsl"] }
 

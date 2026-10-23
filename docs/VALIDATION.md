@@ -99,15 +99,36 @@ Tentativas anteriores continuam preservadas: caminho de socket longo, falta de c
 de portas Pulse sem session manager e comparação JSON de representações equivalentes de
 `f32` foram corrigidos nos validadores. Esses erros não foram promovidos a defeitos do produto.
 
-A fase básica de 60 minutos terminou aprovada em 22/10/2026 às 19:15:03 UTC: 3.600,018 s
+A fase básica de 60 minutos terminou aprovada em 22/10/2026 às 16:15:03 BRT (19:15:03 UTC): 3.600,018 s
 ativos e 716 janelas saudáveis, sem incremento nos cinco contadores após aquecimento. O baseline
 preserva um underrun de entrada inicial. RSS máximo: motor 22,78 MiB, PipeWire 11,59 MiB;
 CPU média ponderada por intervalo: motor 2,75% de um núcleo, PipeWire 0,89%. O maior trecho
 quase silencioso foi um frame (0,0208 ms) em 172.800.000 frames observados. Replay limitado a 30 s.
 Esses resultados são da cadeia básica em grafo privado, sem GUI, desktop ou denoise.
 
-A fase de quatro horas com mistura continua em andamento, sem aprovação antecipada.
-Cada fase tem relatório próprio; o lote agregado só aprova após ambas terminarem saudáveis.
+A tentativa de quatro horas com mistura **reprovou** em 22/10/2026 às 19:13:08 BRT
+(22:13:08 UTC). O serviço `voice-app-validation-20261022.service` encerrou com
+`Result=exit-code` e `ExecMainStatus=1`. Foram 10.680,100 s decorridos, dos quais
+10.675,083 s saudáveis, com 2.128 janelas saudáveis de 2.129 observadas. Um incremento de
+`monitor_overruns` após o aquecimento acionou o critério de interrupção. Os outros quatro
+contadores permaneceram sem novos erros. Isso não completa os 14.400 s ativos exigidos:
+o perfil de mistura e o lote agregado continuam sem qualificação de quatro horas.
+
+RSS máximo do motor: 23,30 MiB; PipeWire: 11,59 MiB. Pico da unidade: 51,24 MiB, dentro do
+limite de 3 GiB, com swap zero e nenhum evento de limite/OOM. CPU média ponderada dos
+intervalos: motor 12,144% de um núcleo e PipeWire 0,987%. O replay permaneceu limitado a
+30 s. O cliente externo analisou 512.643.072 frames após aquecimento; o maior trecho quase
+silencioso foi 256 frames (5,333 ms), no limite permitido, sem violação desse critério.
+Esses agregados não contam todos os trechos menores nem provam a causa do overrun.
+A memória permaneceu dentro dos critérios; a reprovação veio do contador de áudio.
+
+Evidências preservadas em `soak/basic-60m/`, `soak/blend-4h/`, `soak/systemd-final.txt` e
+`soak/aggregate-report.json`, sob a pasta de validação da data. O agregado lê os JSONL
+linha a linha e pondera CPU por duração do intervalo; não carrega horas de PCM/JSONL na
+memória. A aprovação básica de 60 minutos permanece válida para o binário testado.
+O resultado não qualifica alterações posteriores, GUI, hardware, Discord, captura desktop
+ou denoise, nem promove uma versão a beta. Não foi iniciado outro lote de cinco horas.
+A investigação/correção do incremento precisa preceder uma nova tentativa prolongada.
 
 ## Compatibilidade das ferramentas PipeWire
 
@@ -122,10 +143,37 @@ PipeWire antigas. Os sinais, volumes e critérios de aprovação continuam os me
 pull requests executa também a regressão no daemon privado; isso não certifica hardware ou
 a sessão gráfica da distribuição. Nenhuma dessas operações ocorre em callback do aplicativo.
 
-## Etapa física adiada
+## Verificações manuais e etapa física
 
-Por solicitação do usuário, ficam para outra sessão: entrada no Discord, fluxo gráfico completo
-na OBS, microfone/headset reais, perda e retorno físicos de dispositivos e medição acústica
-de latência ponta a ponta. A execução atual não abre o microfone pessoal nem toca áudio nos fones.
+Em 22/10/2026 o usuário relatou que a voz com efeito e o soundboard funcionaram no Discord desktop
+nesta máquina Linux. Evidência local: `target/validation/2026-10-22/discord-manual.json`.
+É um relato manual, sem observação direta do agente ou medição de latência. A modalidade de teste
+(retorno local ou recepção em chamada) não foi verificada pelo agente. Recepção/gravação reproduzível,
+fluxo gráfico completo na OBS, perda e retorno físicos de
+dispositivos e medição acústica de latência ponta a ponta continuam pendentes. O lote automatizado
+usa um grafo privado separado e não abre o microfone pessoal nem toca áudio nos fones.
 Hardware e sessão gráfica Ubuntu LTS, Wayland/atalhos, instalação/atualização/remoção e sessões
 longas da GUI seguem pendentes. A regressão automatizada em runner Ubuntu usa somente grafo privado.
+
+Audacity/Tenacity também fazem parte da aceitação: selecionar `Voice App Virtual Microphone`
+como entrada, gravar uma frase com efeito e um clipe curto do soundboard, salvar/reproduzir o WAV
+e verificar cortes e canais. Se o gravador oferecer apenas `pulse`/PulseAudio, selecionar a fonte
+na rota de captura desse aplicativo, preservando o microfone padrão do sistema. Essa verificação
+ainda não foi realizada. No Windows, a entrada nesses programas depende do futuro driver virtual;
+WASAPI e gravação interna do Voice App não substituem esse dispositivo.
+
+## Evidência remota Windows e Wine
+
+O commit público `3ea6f5de535ac865e9495fd363fcdbea825304be` passou na CI Linux com
+102 testes Rust e 40 Python e na CI Windows nativa com 94 Rust e 4 Python. O smoke do
+ZIP Windows extraído aprovou os 12 presets originais, DSP com sinal sintético, biblioteca,
+IPC/MCP e persistência após reinício, mantendo áudio desligado e sem abrir GUI ou dispositivos.
+Esses resultados remotos são separados do lote prolongado local e de alterações posteriores.
+
+O mesmo candidato falhou no Wine 9.0 isolado antes da GUI: `private path must have a
+protected DACL`. A recusa da permissão não foi relaxada para aprovar o teste. Portanto não
+há evidência de GUI pelo Wine nem release Windows publicada. Relatórios locais preservados
+em `target/github-windows/evidence/ci-outcome.json`, `native/windows-offline-report.json`
+e `wine/report.json`, os dois últimos relativos à mesma pasta de evidências.
+WASAPI não cria um microfone virtual; driver, GUI/hardware Windows, Discord/OBS e gravadores
+nessa plataforma continuam pendentes. Wine não substitui validação em Windows físico.

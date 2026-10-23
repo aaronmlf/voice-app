@@ -1,7 +1,9 @@
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
@@ -43,7 +45,12 @@ impl Fixture {
                 .unwrap(),
         );
         for _ in 0..250 {
-            if self.root.join("runtime/control.sock").exists() {
+            if voice_engine::client::send(
+                &self.root.join("runtime/control.sock"),
+                voice_engine::protocol::Command::Status,
+            )
+            .is_ok()
+            {
                 return;
             }
             if let Some(status) = self.server.as_mut().unwrap().try_wait().unwrap() {
@@ -55,6 +62,15 @@ impl Fixture {
     }
     fn run(&self, args: &[&str]) -> Output {
         self.command().args(args).output().unwrap()
+    }
+    fn stop_service(&mut self) {
+        self.json(&["shutdown"]);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while self.server.as_mut().unwrap().try_wait().unwrap().is_none() {
+            assert!(std::time::Instant::now() < deadline, "service did not stop");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        self.server = None;
     }
     fn json(&self, args: &[&str]) -> Value {
         let output = self.run(args);
@@ -76,6 +92,7 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn desktop_commands_forward_explicit_targets_sources_and_absolute_paths() {
     let fixture = Fixture::new();
@@ -219,6 +236,48 @@ fn service_commands_use_one_session_without_implicit_capture() {
     assert!(!fixture.run(&["gain", "NaN"]).status.success());
     assert_eq!(fixture.json(&["status"])["settings"]["gain_db"], -3.0);
     fixture.json(&["shutdown"]);
+}
+
+#[test]
+fn remove_clip_persists_keeps_audio_files_and_preserves_other_entries() {
+    let mut fixture = Fixture::new();
+    fixture.start_service();
+    let source = fixture.root.join("source.wav");
+    fixture.json(&["tone", source.to_str().unwrap(), "--seconds", "0.1"]);
+    let source_bytes = fs::read(&source).unwrap();
+    let removed = fixture.json(&["import", source.to_str().unwrap(), "--name", "Remove me"]);
+    let retained = fixture.json(&["import", source.to_str().unwrap(), "--name", "Keep me"]);
+    let removed_id = removed["id"].as_str().unwrap();
+    let retained_id = retained["id"].as_str().unwrap();
+    assert_ne!(removed_id, retained_id);
+    let managed_audio = PathBuf::from(removed["path"].as_str().unwrap());
+    let managed_bytes = fs::read(&managed_audio).unwrap();
+    assert!(
+        !fixture
+            .run(&["remove-clip", "missing-clip"])
+            .status
+            .success()
+    );
+    assert_eq!(fixture.json(&["clips"]).as_array().unwrap().len(), 2);
+    assert_eq!(
+        fixture.json(&["remove-clip", removed_id]),
+        json!({"removed":true,"id":removed_id})
+    );
+    assert!(!fixture.run(&["remove-clip", removed_id]).status.success());
+    let clips = fixture.json(&["clips"]);
+    assert_eq!(clips.as_array().unwrap().len(), 1);
+    assert_eq!(clips[0]["id"], retained_id);
+    assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(fs::read(&managed_audio).unwrap(), managed_bytes);
+    fixture.stop_service();
+    fixture.start_service();
+    let clips = fixture.json(&["clips"]);
+    assert_eq!(clips.as_array().unwrap().len(), 1);
+    assert_eq!(clips[0]["id"], retained_id);
+    assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(fs::read(&managed_audio).unwrap(), managed_bytes);
+    assert_eq!(fixture.json(&["status"])["audio_running"], false);
+    fixture.stop_service();
 }
 
 #[test]

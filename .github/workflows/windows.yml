@@ -42,8 +42,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           rustup default 1.98.1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Resolve lockfile without compiling
-        run: cargo generate-lockfile
+      - name: Resolve workspace lockfile without upgrading unrelated dependencies
+        run: cargo update --workspace
       - name: Upload proposed lockfile for human/source review
         uses: actions/upload-artifact@v4
         with:
@@ -77,6 +77,8 @@ jobs:
           python --version
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - run: cargo fetch --locked
+      - name: Test Wine validator security classification and WAV guards without Wine
+        run: python -m unittest discover -s scripts/tests -p test_wine.py -v
       - run: cargo xtask check
       - run: cargo xtask corpus
       - run: cargo xtask bench
@@ -99,7 +101,13 @@ jobs:
           }
           $expectedHash = $Matches[1]
           if ($Matches[2] -cne $archive[0].Name) { throw 'Checksum filename differs from the candidate.' }
-          $actualHash = (Get-FileHash -LiteralPath $archive[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $stream = [System.IO.File]::OpenRead($archive[0].FullName)
+          try {
+            $algorithm = [System.Security.Cryptography.SHA256]::Create()
+            try {
+              $actualHash = [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+            } finally { $algorithm.Dispose() }
+          } finally { $stream.Dispose() }
           if ($actualHash -cne $expectedHash) { throw 'Candidate SHA-256 mismatch.' }
           Expand-Archive -LiteralPath $archive[0].FullName -DestinationPath target/windows-extracted
           $root = @(Get-ChildItem -LiteralPath target/windows-extracted -Directory)
@@ -114,7 +122,17 @@ jobs:
             -CliPath (Join-Path $env:PACKAGE_ROOT 'voice-cli.exe') `
             -GuiPath (Join-Path $env:PACKAGE_ROOT 'voice-app.exe') `
             -ReportPath target/windows-offline-report.json
-      - name: Inspect PE runtime dependencies without opening the GUI
+      - name: Test extracted native GUI rendering and safe shutdown without audio hardware
+        shell: pwsh
+        env:
+          PACKAGE_ROOT: ${{ steps.candidate.outputs.root }}
+        run: |
+          & scripts/test-windows-gui.ps1 `
+            -CliPath (Join-Path $env:PACKAGE_ROOT 'voice-cli.exe') `
+            -GuiPath (Join-Path $env:PACKAGE_ROOT 'voice-app.exe') `
+            -ReportPath target/windows-gui-report.json `
+            -OutputDirectory target/windows-gui-evidence
+      - name: Inspect PE runtime dependencies
         shell: pwsh
         env:
           PACKAGE_ROOT: ${{ steps.candidate.outputs.root }}
@@ -135,9 +153,85 @@ jobs:
             dist/voice-app-*-x86_64-pc-windows-msvc.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
-      - name: Upload offline evidence
+      - name: Upload native offline and GUI evidence, including failures
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: voice-app-windows-offline-evidence
-          path: target/windows-offline-report.json
-          if-no-files-found: error
+          path: |
+            target/windows-offline-report.json
+            target/windows-gui-report.json
+            target/windows-gui-evidence/gui.png
+            target/windows-gui-evidence/adapter.json
+            target/windows-gui-evidence/logs/gui.out
+            target/windows-gui-evidence/logs/gui.err
+            target/windows-gui-evidence/logs/cli-*.out
+            target/windows-gui-evidence/logs/cli-*.err
+          if-no-files-found: warn
+
+  wine:
+    name: Wine offline and security behavior
+    if: inputs.refresh_lockfile != true
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: voice-app-windows-candidate
+          path: dist
+      - name: Install isolated Wine and software-rendering test requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wine64 wine xvfb xauth libgl1-mesa-dri mesa-utils
+      - name: Check offline commands and secure refusal under Wine without network or audio hardware
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find dist -maxdepth 1 -name 'voice-app-*-x86_64-pc-windows-msvc.zip' -type f)
+          test "${#archives[@]}" -eq 1
+          mkdir -p target/wine-runtime
+          chmod 700 target/wine-runtime
+          export XDG_RUNTIME_DIR="$PWD/target/wine-runtime"
+          host_netns=$(readlink /proc/self/ns/net)
+          sudo --preserve-env=HOME,USER,LOGNAME,PATH,XDG_RUNTIME_DIR unshare --net \
+            --setgid "$(id -g)" --setuid "$(id -u)" -- \
+            xvfb-run -a -s '-screen 0 1440x900x24 -nolisten tcp' \
+            python3 scripts/test-wine.py --archive "${archives[0]}" \
+            --checksums dist/SHA256SUMS.txt --output target/wine-validation --host-netns "$host_netns"
+      - name: Require an explicit Wine outcome with honest GUI and IPC flags
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('target/wine-validation/report.json').read_text())
+          assert report['offline_checks_passed'] is True
+          if report['result'] == 'unsupported_security_environment':
+              assert report['security_refusal_verified'] is True
+              assert report['service_exit_code'] > 0
+              assert report['service_error'] == 'voice-cli: private path must have a protected DACL'
+              assert report['gui_verified'] is False and report['ipc_verified'] is False
+              assert report['wine_compatibility_qualified'] is False
+              print('Wine environment unsupported: exact secure DACL refusal verified; GUI/IPC compatibility is not approved.')
+          else:
+              assert report['result'] == 'passed'
+              assert report['gui_verified'] is True and report['ipc_verified'] is True
+              assert report['wine_compatibility_qualified'] is True
+              print('Wine GUI/IPC regression completed; physical Windows hardware remains unqualified.')
+          PY
+      - name: Retain Wine evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-app-windows-wine-evidence
+          path: |
+            target/wine-validation/report.json
+            target/wine-validation/failure.txt
+            target/wine-validation/gui.png
+            target/wine-validation/logs/
+          if-no-files-found: warn

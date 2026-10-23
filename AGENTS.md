@@ -12,10 +12,18 @@ Release binaries must come from the reviewed public source, with no personal ass
 Before publishing commits, verify that their author identity uses GitHub noreply or an
 explicitly public address. Do not expose private contact data through Git metadata.
 
+## Public branches
+Keep only `main`, `beta` and `windows-native` as public branches on GitHub.
+Use these existing branches for further work; do not create additional remote branches
+unless the user changes this policy. The `beta` branch is an integration channel name,
+not evidence that the application has passed beta qualification. Preserve tested-capability
+and release gates independently of branch names.
+
 ## Boundaries
 - voice-core: serializable contracts, real-time atomics/queues; no OS, GUI or database dependencies.
 - voice-dsp: prepared DSP; depends only on core and DSP libraries, never the GUI or platform adapter.
 - voice-pipewire: Linux device graph and real-time callbacks; no GUI, database or filesystem I/O in callbacks.
+- voice-wasapi: Windows physical devices and explicit desktop loopback; no GUI/database or callback I/O. It does not create a virtual microphone.
 - voice-library: decoded audio, persistent library, interchange and offline mixing.
 - voice-engine: command registry, session, control socket, recording and background workers.
 - apps: clients of the engine; no duplicate command implementations.

@@ -1,13 +1,12 @@
-use crate::client::read_frame;
+use crate::client::{read_local_frame, write_local_frame};
+use crate::platform::{LocalListener, private_create_new, private_directory};
 use crate::protocol::{Command, Request, Response};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Write};
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::os::unix::net::UnixListener;
+use std::fs::{self, File};
+#[cfg(test)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -34,20 +33,7 @@ impl Paths {
     }
 
     pub fn discover() -> Result<Self> {
-        let data = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-            .ok_or_else(|| anyhow!("HOME or XDG_DATA_HOME is required"))?
-            .join("voice-app");
-        // SAFETY: geteuid has no arguments or memory safety preconditions.
-        let uid = unsafe { libc::geteuid() };
-        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir().join(format!("voice-app-{uid}")));
-        Ok(Self {
-            data,
-            socket: runtime.join("voice-app/control.sock"),
-        })
+        crate::platform::discover_paths()
     }
 }
 
@@ -120,6 +106,10 @@ enum WorkerCommand {
         reply: mpsc::Sender<Result<()>>,
     },
     StopAll,
+    StopClip {
+        id: String,
+        reply: mpsc::Sender<Result<()>>,
+    },
     /// Sent only after the previous backend has stopped producing recorded samples.
     /// The worker is the sole recording queue consumer and acknowledges the reset.
     Reset {
@@ -157,17 +147,12 @@ struct Worker {
 }
 type RecordingWriter = hound::WavWriter<std::io::BufWriter<File>>;
 fn new_recording(path: &Path, channels: u16) -> Result<RecordingWriter> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .with_context(|| {
-            format!(
-                "cannot create {} (existing files are never overwritten)",
-                path.display()
-            )
-        })?;
+    let file = private_create_new(path).with_context(|| {
+        format!(
+            "cannot create {} (existing files are never overwritten)",
+            path.display()
+        )
+    })?;
     Ok(hound::WavWriter::new(
         std::io::BufWriter::new(file),
         hound::WavSpec {
@@ -355,6 +340,18 @@ impl Worker {
                             mix.stop_all();
                             preview.stop_all();
                         }
+                        WorkerCommand::StopClip { id, reply } => {
+                            mix.stop(&id);
+                            preview.stop(&id);
+                            voices.store(
+                                mix.active_count() + preview.active_count(),
+                                Ordering::Relaxed,
+                            );
+                            // Mixed PCM already queued can contain other sounds:
+                            // retain that bounded prepared tail rather than interrupt
+                            // unrelated clips or add a second queue consumer.
+                            let _ = reply.send(Ok(()));
+                        }
                         WorkerCommand::Reset {
                             clear_replay,
                             reply,
@@ -471,6 +468,13 @@ impl Worker {
             .try_send(command)
             .map_err(|e| anyhow!("audio worker busy or disconnected: {e}"))
     }
+    fn stop_clip(&self, id: String) -> Result<()> {
+        let (reply, acknowledgement) = mpsc::channel();
+        self.send(WorkerCommand::StopClip { id, reply })?;
+        acknowledgement
+            .recv_timeout(Duration::from_secs(3))
+            .context("audio worker clip-stop acknowledgement timed out")?
+    }
     fn reset_desktop(&self, clear_replay: bool) -> Result<()> {
         let (reply, acknowledgement) = mpsc::channel();
         self.send(WorkerCommand::ResetDesktop {
@@ -513,9 +517,9 @@ struct Engine {
     session: Session,
     shared: Arc<AudioShared>,
     worker: Worker,
-    audio: Option<voice_pipewire::AudioHandle>,
+    audio: Option<crate::audio::AudioHandle>,
     desktop_shared: Arc<DesktopShared>,
-    desktop: Option<voice_pipewire::DesktopCaptureHandle>,
+    desktop: Option<crate::audio::DesktopCaptureHandle>,
     desktop_target: Option<String>,
     desktop_error: Option<String>,
     resolved_config: Option<AudioConfig>,
@@ -572,18 +576,9 @@ impl Engine {
         // the complete candidate has been validated and atomically persisted.
         candidate.validate()?;
         let path = self.paths.data.join("session.json");
-        let temp = self.paths.data.join("session.json.tmp");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&temp)?;
-        serde_json::to_writer_pretty(&mut file, &candidate)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::rename(temp, path)?;
+        let mut bytes = serde_json::to_vec_pretty(&candidate)?;
+        bytes.push(b'\n');
+        persist_private_file(&path, &bytes)?;
         self.session = candidate;
         Ok(())
     }
@@ -634,7 +629,7 @@ impl Engine {
             && now >= self.next_device_check
         {
             self.next_device_check = now + Duration::from_secs(2);
-            if let Ok(resolved) = voice_pipewire::resolve_config(&self.session.config)
+            if let Ok(resolved) = crate::audio::resolve_config(&self.session.config)
                 && self.resolved_config.as_ref() != Some(&resolved)
             {
                 if let Err(error) = self.stop_audio(false) {
@@ -645,7 +640,7 @@ impl Engine {
             }
         }
         if self.audio.is_none() && Instant::now() >= self.next_audio_retry {
-            let result = voice_pipewire::resolve_config(&self.session.config)
+            let result = crate::audio::resolve_config(&self.session.config)
                 .and_then(|resolved| self.start_resolved(resolved));
             if let Err(error) = result {
                 self.schedule_retry(&error);
@@ -653,7 +648,7 @@ impl Engine {
         }
     }
     fn start_resolved(&mut self, config: AudioConfig) -> Result<()> {
-        let handle = voice_pipewire::start(config.clone(), self.shared.clone())?;
+        let handle = crate::audio::start(config.clone(), self.shared.clone())?;
         self.audio = Some(handle);
         self.resolved_config = Some(config);
         self.last_audio_error = None;
@@ -677,12 +672,12 @@ impl Engine {
         }
         match command {
             Command::Status => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"backend":"pipewire","audio_running":self.shared.metrics.active.load(Ordering::Relaxed),"config":self.session.config,"resolved_config":self.resolved_config,"audio_requested":self.session.audio_enabled,"audio_connecting":self.session.audio_enabled && self.audio.is_none(),"settings":self.session.settings,"selected_preset":self.session.selected_preset,"bypass":self.shared.bypass.load(Ordering::Relaxed),"muted":self.shared.muted.load(Ordering::Relaxed),"monitor":self.shared.monitor_enabled.load(Ordering::Relaxed),"monitor_gain":self.session.monitor_gain,"soundboard_gain":self.session.soundboard_gain,"metrics":self.shared.metrics.snapshot(),"playing":self.worker.playing.load(Ordering::Relaxed),"recording":self.worker.recording.load(Ordering::Relaxed),"recording_source":match self.worker.recording_source.load(Ordering::Acquire) {1=>Some(RecordingSource::ProcessedVoice),2=>Some(RecordingSource::Desktop),_=>None},"replay_seconds":self.worker.replay_seconds(RecordingSource::ProcessedVoice),"desktop":{"active":self.desktop_shared.active.load(Ordering::Acquire),"output_device":self.desktop_target,"error":self.desktop_error,"replay_seconds":self.worker.replay_seconds(RecordingSource::Desktop),"metrics":{"frames":self.desktop_shared.frames.load(Ordering::Relaxed),"overruns":self.desktop_shared.overruns.load(Ordering::Relaxed),"non_finite_samples":self.desktop_shared.non_finite_samples.load(Ordering::Relaxed),"peak":f32::from_bits(self.desktop_shared.peak.load(Ordering::Relaxed))}},"recording_error":self.worker.error.lock().ok().and_then(|v|v.clone()),"last_audio_error":self.last_audio_error,"data_dir":self.paths.data,"preset_image_revision":self.preset_image_revision,"capabilities":{"dsp":true,"soundboard":true,"processed_recording":true,"replay":true,"pitch":true,"formant":true,"chorus":true,"noise_reduction":true,"reorder_effects":true,"preset_images":true,"voice_blend":true,"effect_intensity":true,"neural_voice":false,"desktop_capture":true,"global_shortcuts":false}}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"backend":crate::audio::BACKEND_NAME,"audio_running":self.shared.metrics.active.load(Ordering::Relaxed),"config":self.session.config,"resolved_config":self.resolved_config,"audio_requested":self.session.audio_enabled,"audio_connecting":self.session.audio_enabled && self.audio.is_none(),"settings":self.session.settings,"selected_preset":self.session.selected_preset,"bypass":self.shared.bypass.load(Ordering::Relaxed),"muted":self.shared.muted.load(Ordering::Relaxed),"monitor":self.shared.monitor_enabled.load(Ordering::Relaxed),"monitor_gain":self.session.monitor_gain,"soundboard_gain":self.session.soundboard_gain,"metrics":self.shared.metrics.snapshot(),"playing":self.worker.playing.load(Ordering::Relaxed),"recording":self.worker.recording.load(Ordering::Relaxed),"recording_source":match self.worker.recording_source.load(Ordering::Acquire) {1=>Some(RecordingSource::ProcessedVoice),2=>Some(RecordingSource::Desktop),_=>None},"replay_seconds":self.worker.replay_seconds(RecordingSource::ProcessedVoice),"desktop":{"active":self.desktop_shared.active.load(Ordering::Acquire),"output_device":self.desktop_target,"error":self.desktop_error,"replay_seconds":self.worker.replay_seconds(RecordingSource::Desktop),"metrics":{"frames":self.desktop_shared.frames.load(Ordering::Relaxed),"overruns":self.desktop_shared.overruns.load(Ordering::Relaxed),"non_finite_samples":self.desktop_shared.non_finite_samples.load(Ordering::Relaxed),"peak":f32::from_bits(self.desktop_shared.peak.load(Ordering::Relaxed))}},"recording_error":self.worker.error.lock().ok().and_then(|v|v.clone()),"last_audio_error":self.last_audio_error,"data_dir":self.paths.data,"preset_image_revision":self.preset_image_revision,"capabilities":{"dsp":true,"soundboard":true,"processed_recording":true,"replay":true,"pitch":true,"formant":true,"chorus":true,"noise_reduction":true,"reorder_effects":true,"preset_images":true,"voice_blend":true,"effect_intensity":true,"neural_voice":false,"desktop_capture":crate::audio::DESKTOP_CAPTURE,"virtual_microphone":crate::audio::VIRTUAL_MICROPHONE,"global_shortcuts":false}}),
             ),
-            Command::Devices => Ok(serde_json::to_value(voice_pipewire::list_devices()?)?),
+            Command::Devices => Ok(serde_json::to_value(crate::audio::list_devices()?)?),
             Command::Start { config } => {
                 config.validate().map_err(anyhow::Error::msg)?;
-                let resolved = voice_pipewire::resolve_config(&config);
+                let resolved = crate::audio::resolve_config(&config);
                 if resolved.is_err()
                     && [&config.input_device, &config.output_device]
                         .into_iter()
@@ -847,6 +842,14 @@ impl Engine {
                 end_seconds,
                 &name,
             )?)?),
+            Command::RemoveClip { id } => {
+                // Validate ID and existence using metadata before stopping any
+                // voices. Removal never loads PCM or deletes retained audio.
+                self.library.clip(&id)?;
+                self.worker.stop_clip(id.clone())?;
+                self.library.remove_clip(&id)?;
+                Ok(json!({"removed":true,"id":id}))
+            }
             Command::Play {
                 id,
                 preview,
@@ -883,7 +886,7 @@ impl Engine {
                 if output_device.is_empty() || output_device.starts_with("voice-app.") {
                     bail!("select an explicit desktop output device");
                 }
-                match voice_pipewire::start_desktop(output_device, self.desktop_shared.clone()) {
+                match crate::audio::start_desktop(output_device, self.desktop_shared.clone()) {
                     Ok(handle) => {
                         // Reset only after a successful connection so a rejected
                         // target preserves the previous replay. The worker remains
@@ -964,24 +967,10 @@ impl Drop for Engine {
     }
 }
 
-fn private_directory(path: &Path) -> Result<()> {
-    if !path.exists() {
-        fs::create_dir_all(path)?;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
-    let meta = fs::symlink_metadata(path)?;
-    // SAFETY: geteuid has no arguments or memory safety preconditions.
-    if !meta.is_dir()
-        || meta.file_type().is_symlink()
-        || meta.uid() != unsafe { libc::geteuid() }
-        || meta.mode() & 0o077 != 0
-    {
-        bail!(
-            "{} must be a directory owned by this user with permissions 0700",
-            path.display()
-        );
-    }
-    Ok(())
+/// Atomically replace an application-owned file after writing it privately.
+/// The bytes are persisted exactly as supplied. Never call this from an audio callback.
+pub fn persist_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    crate::platform::persist_private_file(path, bytes)
 }
 
 pub struct ServiceHandle {
@@ -1006,74 +995,29 @@ impl Drop for ServiceHandle {
     }
 }
 
-struct SocketGuard {
-    path: PathBuf,
-    _lock: File,
-}
-impl Drop for SocketGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
 pub fn spawn_service(paths: Paths) -> Result<ServiceHandle> {
-    let parent = paths
-        .socket
-        .parent()
-        .ok_or_else(|| anyhow!("socket must have a parent directory"))?;
-    private_directory(parent)?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(paths.socket.with_extension("lock"))?;
-    // SAFETY: lock is a live, owned file descriptor; flock does not retain a pointer.
-    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        bail!("another engine owns {}", paths.socket.display());
-    }
-    if let Ok(meta) = fs::symlink_metadata(&paths.socket) {
-        // SAFETY: geteuid has no arguments or memory safety preconditions.
-        if !meta.file_type().is_socket() || meta.uid() != unsafe { libc::geteuid() } {
-            bail!("refusing to replace non-owned socket path");
-        }
-        fs::remove_file(&paths.socket)?;
-    }
-    let listener = UnixListener::bind(&paths.socket)?;
-    fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o600))?;
-    let guard = SocketGuard {
-        path: paths.socket.clone(),
-        _lock: lock,
-    };
-    listener.set_nonblocking(true)?;
+    let mut listener = LocalListener::bind(&paths.socket)?;
     let mut engine = Engine::new(paths)?;
     let stop = Arc::new(AtomicBool::new(false));
     let done = stop.clone();
     let join = thread::spawn(move || {
-        let _guard = guard;
         while !done.load(Ordering::Acquire) {
             engine.check_audio_health();
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
-                    let response = match read_frame(BufReader::new(&stream)).and_then(|data| {
-                        serde_json::from_slice::<Request>(&data).map_err(Into::into)
-                    }) {
+            match listener.try_accept() {
+                Ok(Some(mut stream)) => {
+                    let response = match read_local_frame(&mut stream, Duration::from_secs(2))
+                        .and_then(|data| {
+                            serde_json::from_slice::<Request>(&data).map_err(Into::into)
+                        }) {
                         Ok(request) => match engine.execute(request.command, &done) {
                             Ok(value) => Response::success(request.id, value),
                             Err(e) => Response::failure(request.id, format!("{e:#}")),
                         },
                         Err(e) => Response::failure(0, e.to_string()),
                     };
-                    let _ = serde_json::to_writer(&mut stream, &response);
-                    let _ = stream.write_all(b"\n");
+                    let _ = write_local_frame(&mut stream, &response);
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10))
-                }
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
                 Err(e) => return Err(e.into()),
             }
         }
@@ -1088,6 +1032,8 @@ pub fn spawn_service(paths: Paths) -> Result<ServiceHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
     static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
     fn test_paths() -> Paths {
         let p = std::env::temp_dir().join(format!(
@@ -1104,6 +1050,7 @@ mod tests {
     fn session_socket_persistence_and_exclusive_owner() -> Result<()> {
         let paths = test_paths();
         let mut server = spawn_service(paths.clone())?;
+        #[cfg(unix)]
         assert_eq!(fs::metadata(&paths.socket)?.mode() & 0o777, 0o600);
         let status = crate::client::send(&paths.socket, Command::Status)?;
         assert_eq!(status["monitor"], false);
@@ -1115,6 +1062,8 @@ mod tests {
         };
         crate::client::send(&paths.socket, Command::Configure { settings })?;
         server.stop()?;
+        assert!(crate::client::send(&paths.socket, Command::Status).is_err());
+        #[cfg(unix)]
         assert!(!paths.socket.exists());
         let mut server = spawn_service(paths.clone())?;
         let status = crate::client::send(&paths.socket, Command::Status)?;
@@ -1131,6 +1080,147 @@ mod tests {
             .is_err()
         );
         server.stop()?;
+        fs::remove_dir_all(paths.data.parent().unwrap())?;
+        Ok(())
+    }
+    #[test]
+    fn malformed_control_frame_returns_error_and_preserves_service() -> Result<()> {
+        let paths = test_paths();
+        let mut server = spawn_service(paths.clone())?;
+        let mut stream = crate::platform::LocalConnection::connect(&paths.socket)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.write_all(b"invalid JSON\n")?;
+        let response: Response =
+            serde_json::from_slice(&read_local_frame(&mut stream, Duration::from_secs(3))?)?;
+        assert!(!response.ok);
+        assert_eq!(response.id, 0);
+        drop(stream);
+        assert_eq!(
+            crate::client::send(&paths.socket, Command::Status)?["audio_running"],
+            false
+        );
+        server.stop()?;
+        fs::remove_dir_all(paths.data.parent().unwrap())?;
+        Ok(())
+    }
+
+    #[test]
+    fn remove_clip_stops_only_its_mix_and_preview_instances_and_persists() -> Result<()> {
+        let paths = test_paths();
+        let mut engine = Engine::new(paths.clone())?;
+        let target = engine.library.save_clip(
+            &[0.1; 480],
+            voice_library::DEFAULT_BOARD_ID,
+            "Remove this sound",
+        )?;
+        let other = engine.library.save_clip(
+            &[0.2; 480],
+            voice_library::DEFAULT_BOARD_ID,
+            "Keep this sound",
+        )?;
+        let target_bytes = fs::read(&target.path)?;
+        let other_bytes = fs::read(&other.path)?;
+        let stop = AtomicBool::new(false);
+        assert_eq!(
+            serde_json::to_value(Command::RemoveClip {
+                id: target.id.clone(),
+            })?,
+            json!({"op":"remove_clip","id":target.id})
+        );
+        // Only the synthetic producer-ready flag is enabled: no device/backend
+        // is opened, and this test is the sole consumer of the prepared queues.
+        engine.shared.metrics.active.store(true, Ordering::Release);
+        for (id, preview) in [
+            (&target.id, false),
+            (&target.id, false),
+            (&target.id, true),
+            (&other.id, false),
+            (&other.id, true),
+        ] {
+            engine.execute(
+                Command::Play {
+                    id: id.clone(),
+                    preview,
+                    looped: true,
+                    overlap: true,
+                    gain: 1.0,
+                },
+                &stop,
+            )?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while engine.worker.playing.load(Ordering::Relaxed) != 5 {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not start all test voices"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        for id in ["../invalid.wav", "clip.missing"] {
+            assert!(
+                engine
+                    .execute(Command::RemoveClip { id: id.into() }, &stop)
+                    .is_err()
+            );
+            assert_eq!(engine.worker.playing.load(Ordering::Relaxed), 5);
+        }
+        let result = engine.execute(
+            Command::RemoveClip {
+                id: target.id.clone(),
+            },
+            &stop,
+        )?;
+        assert_eq!(result, json!({"removed":true,"id":target.id}));
+        // The worker acknowledgment follows both mixer stops and the count update.
+        assert_eq!(engine.worker.playing.load(Ordering::Relaxed), 2);
+        assert!(engine.library.clip(&target.id).is_err());
+        assert_eq!(
+            engine.library.clips(voice_library::DEFAULT_BOARD_ID)?,
+            vec![other.clone()]
+        );
+        // Leave the existing bounded mixed tail intact, then consume it as the
+        // synthetic callback would. Newly produced audio contains the other ID.
+        let mut tail = [0.0; 960];
+        assert_eq!(engine.shared.soundboard.pop(&mut tail), 960);
+        assert_eq!(engine.shared.preview.pop(&mut tail), 960);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while engine.shared.soundboard.len() < 480 || engine.shared.preview.len() < 480 {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not resume the remaining voices"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        let mut samples = [0.0; 480];
+        for queue in [&engine.shared.soundboard, &engine.shared.preview] {
+            assert_eq!(queue.pop(&mut samples), samples.len());
+            assert!(samples.iter().all(|sample| (*sample - 0.2).abs() < 0.00001));
+        }
+        assert_eq!(engine.shared.metrics.frames.load(Ordering::Relaxed), 0);
+        assert!(
+            engine
+                .execute(
+                    Command::RemoveClip {
+                        id: target.id.clone()
+                    },
+                    &stop
+                )
+                .is_err()
+        );
+        assert_eq!(engine.worker.playing.load(Ordering::Relaxed), 2);
+        assert_eq!(fs::read(&target.path)?, target_bytes);
+        assert_eq!(fs::read(&other.path)?, other_bytes);
+        drop(engine);
+
+        let reopened = Engine::new(paths.clone())?;
+        assert!(reopened.library.clip(&target.id).is_err());
+        assert_eq!(
+            reopened.library.clips(voice_library::DEFAULT_BOARD_ID)?,
+            vec![other.clone()]
+        );
+        assert_eq!(fs::read(&target.path)?, target_bytes);
+        assert_eq!(fs::read(&other.path)?, other_bytes);
+        drop(reopened);
         fs::remove_dir_all(paths.data.parent().unwrap())?;
         Ok(())
     }
@@ -1654,6 +1744,7 @@ mod tests {
         drop(worker);
         assert_eq!(wav_samples(&path)?.len(), samples.len());
         assert!(!recording.load(Ordering::Acquire));
+        #[cfg(unix)]
         assert_eq!(fs::metadata(&path)?.mode() & 0o777, 0o600);
         fs::remove_dir_all(paths.data.parent().unwrap())?;
         Ok(())

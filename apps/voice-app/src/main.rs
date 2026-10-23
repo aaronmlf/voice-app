@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use anyhow::{Context, Result, ensure};
 use eframe::egui::{self, Color32, RichText, Vec2};
 use serde_json::Value;
@@ -98,6 +100,7 @@ enum Tag {
     MonitorGain,
     Configure,
     DesktopCapture,
+    RemoveClip,
     PresetImage(u64),
 }
 struct Reply {
@@ -155,6 +158,8 @@ struct App {
     trim_start: f64,
     trim_end: f64,
     trim_name: String,
+    remove_clip_confirmation: Option<(String, String)>,
+    remove_clip_pending: Option<String>,
     started: Instant,
     smoke_seconds: Option<f32>,
     screenshot: Option<PathBuf>,
@@ -214,6 +219,7 @@ impl App {
                         | Command::CreateBoard { .. }
                         | Command::ImportClip { .. }
                         | Command::TrimClip { .. }
+                        | Command::RemoveClip { .. }
                 );
                 let value = client::send(&socket, command).map_err(|e| format!("{e:#}"));
                 let preset_image = requested_image.and_then(|id| {
@@ -287,6 +293,8 @@ impl App {
             trim_start: 0.,
             trim_end: 1.,
             trim_name: String::new(),
+            remove_clip_confirmation: None,
+            remove_clip_pending: None,
             started: Instant::now(),
             smoke_seconds,
             screenshot,
@@ -382,6 +390,15 @@ impl App {
     }
     fn action(&mut self, command: Command) {
         let configure = matches!(&command, Command::Configure { .. });
+        let removed_clip = match &command {
+            Command::RemoveClip { id } => {
+                if self.remove_clip_pending.is_some() {
+                    return;
+                }
+                Some(id.clone())
+            }
+            _ => None,
+        };
         let desktop = matches!(
             &command,
             Command::StartDesktopCapture { .. } | Command::StopDesktopCapture
@@ -404,6 +421,8 @@ impl App {
             Tag::AudioStart
         } else if desktop {
             Tag::DesktopCapture
+        } else if removed_clip.is_some() {
+            Tag::RemoveClip
         } else {
             Tag::Action
         };
@@ -419,7 +438,19 @@ impl App {
             self.audio_start_pending = Some(config);
         } else if desktop {
             self.desktop_capture_pending = true;
+        } else if let Some(id) = removed_clip {
+            self.remove_clip_pending = Some(id);
         }
+    }
+    fn refresh_library(&self) {
+        self.send(Tag::Presets, Command::Presets);
+        self.send(Tag::Boards, Command::Boards);
+        self.send(
+            Tag::Clips,
+            Command::Clips {
+                board_id: self.board.clone(),
+            },
+        );
     }
     fn request_status(&mut self) {
         if !self.poll_pending && self.tx.try_send((Tag::Status, Command::Status)).is_ok() {
@@ -438,6 +469,11 @@ impl App {
             .as_bool()
             .unwrap_or(self.running())
             || self.audio_start_pending.is_some()
+    }
+    fn virtual_microphone(&self) -> bool {
+        self.status["capabilities"]["virtual_microphone"]
+            .as_bool()
+            .unwrap_or(voice_engine::VIRTUAL_MICROPHONE)
     }
     fn connection_label(&self) -> &'static str {
         if self.status.is_null() {
@@ -484,7 +520,9 @@ impl App {
                         .fixed_decimals(0)
                         .suffix("%"),
                 )
-                .on_hover_text("Volume de Ouvir-me nos fones. Não altera o microfone virtual.")
+                .on_hover_text(
+                    "Volume de Ouvir-me nos fones. Não altera a gravação da voz processada.",
+                )
             })
             .inner;
         self.monitor_gain_dragging |= response.dragged();
@@ -578,6 +616,9 @@ impl App {
                     if matches!(reply.tag, Tag::DesktopCapture) {
                         self.desktop_capture_pending = false;
                         self.request_status();
+                    }
+                    if matches!(reply.tag, Tag::RemoveClip) {
+                        self.remove_clip_pending = None;
                     }
                     if matches!(reply.tag, Tag::Configure) {
                         self.settings_pending = false;
@@ -693,6 +734,31 @@ impl App {
                         self.notice = None;
                         self.request_status();
                     }
+                    Tag::RemoveClip => {
+                        let requested = self.remove_clip_pending.take();
+                        if value["removed"].as_bool() == Some(true)
+                            && value["id"].as_str() == requested.as_deref()
+                            && let Some(id) = requested
+                        {
+                            self.clips.retain(|clip| clip.id != id);
+                            if self.trim_id.as_deref() == Some(id.as_str()) {
+                                self.trim_id = None;
+                                self.trim_name.clear();
+                                self.trim_start = 0.;
+                                self.trim_end = 1.;
+                            }
+                            self.notice = None;
+                            self.request_status();
+                            if reply.refresh_library {
+                                self.refresh_library();
+                            }
+                        } else {
+                            self.notice = Some((
+                                "O serviço não confirmou a remoção do som. Atualize o painel antes de tentar novamente.".into(),
+                                true,
+                            ));
+                        }
+                    }
                     Tag::Action | Tag::AudioStart => {
                         if matches!(reply.tag, Tag::AudioStart)
                             && let Some(applied) = self.audio_start_pending.take()
@@ -703,14 +769,7 @@ impl App {
                         self.notice = None;
                         self.request_status();
                         if reply.refresh_library {
-                            self.send(Tag::Presets, Command::Presets);
-                            self.send(Tag::Boards, Command::Boards);
-                            self.send(
-                                Tag::Clips,
-                                Command::Clips {
-                                    board_id: self.board.clone(),
-                                },
-                            );
+                            self.refresh_library();
                         }
                     }
                 },
@@ -1075,11 +1134,22 @@ impl App {
                 }
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.label(
-                        RichText::new("Entrada do aplicativo de chamada:")
-                            .size(10.)
-                            .color(MUTED),
+                        RichText::new(if self.virtual_microphone() {
+                            "Entrada do aplicativo de chamada:"
+                        } else {
+                            "Saída desta versão:"
+                        })
+                        .size(10.)
+                        .color(MUTED),
                     );
-                    ui.label(RichText::new("Voice App Virtual Microphone").size(11.));
+                    ui.label(
+                        RichText::new(if self.virtual_microphone() {
+                            "Voice App Virtual Microphone"
+                        } else {
+                            "Monitoração e gravação locais"
+                        })
+                        .size(11.),
+                    );
                 });
             });
     }
@@ -1168,20 +1238,20 @@ impl App {
         }
     }
     fn toggle_favorite(&mut self, id: &str) {
-        if !self.favorites.remove(id) {
-            self.favorites.insert(id.into());
+        let mut candidate = self.favorites.clone();
+        if !candidate.remove(id) {
+            candidate.insert(id.into());
         }
-        let result = serde_json::to_vec(&self.favorites)
+        let result = serde_json::to_vec(&candidate)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| {
                 let path = self.paths.data.join("ui-favorites.json");
-                let temp = self.paths.data.join("ui-favorites.tmp");
-                std::fs::write(&temp, bytes)?;
-                std::fs::rename(temp, path)?;
-                Ok(())
+                voice_engine::persist_private_file(&path, &bytes)
             });
         if let Err(e) = result {
             self.notice = Some((format!("Não foi possível salvar favoritos: {e}"), true));
+        } else {
+            self.favorites = candidate;
         }
     }
     fn voices(&mut self, ui: &mut egui::Ui) {
@@ -1402,21 +1472,18 @@ impl App {
                             {
                                 self.play(&clip.id, false);
                             }
-                            response.context_menu(|ui| {
-                                if ui.button("Pré-escutar nos fones").clicked() {
-                                    self.play(&clip.id, true);
-                                    ui.close();
-                                }
-                                if ui.button("Cortar áudio").clicked() {
-                                    self.trim_id = Some(clip.id.clone());
-                                    self.trim_start = 0.;
-                                    self.trim_end = clip.duration_seconds;
-                                    self.trim_name = format!("{} — corte", clip.name);
-                                    ui.close();
-                                }
-                            });
+                            response.context_menu(|ui| self.clip_menu(ui, clip));
                             ui.add_space(5.);
-                            ui.label(RichText::new(&clip.name).size(13.));
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    Vec2::new((width.min(144.) - 42.).max(20.), 24.),
+                                    egui::Label::new(RichText::new(&clip.name).size(13.))
+                                        .truncate(),
+                                );
+                                ui.menu_button("⋮", |ui| self.clip_menu(ui, clip))
+                                    .response
+                                    .on_hover_text("Opções do som");
+                            });
                         },
                     );
                 }
@@ -1484,6 +1551,60 @@ impl App {
                         }
                     });
                 });
+        }
+    }
+    fn clip_menu(&mut self, ui: &mut egui::Ui, clip: &Clip) {
+        if ui.button("Pré-escutar nos fones").clicked() {
+            self.play(&clip.id, true);
+            ui.close();
+        }
+        if ui.button("Cortar áudio").clicked() {
+            self.trim_id = Some(clip.id.clone());
+            self.trim_start = 0.;
+            self.trim_end = clip.duration_seconds;
+            self.trim_name = format!("{} — corte", clip.name);
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .add_enabled(
+                self.remove_clip_pending.is_none(),
+                egui::Button::new("Remover do soundboard"),
+            )
+            .clicked()
+        {
+            self.remove_clip_confirmation = Some((clip.id.clone(), clip.name.clone()));
+            ui.close();
+        }
+    }
+    fn confirm_clip_removal(&mut self, ctx: &egui::Context) {
+        let Some((id, name)) = self.remove_clip_confirmation.clone() else {
+            return;
+        };
+        let mut cancel = false;
+        let mut confirm = false;
+        let modal = egui::Modal::new(egui::Id::unique("remove-soundboard-clip")).show(ctx, |ui| {
+            ui.set_max_width(360.);
+            ui.horizontal(|ui| {
+                ui.heading("Remover som?");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    cancel = ui.small_button("×").on_hover_text("Cancelar").clicked();
+                });
+            });
+            ui.label(RichText::new(&name).strong());
+            ui.label("O som sairá do soundboard. O arquivo de áudio original será mantido.");
+            ui.add_space(12.);
+            ui.horizontal(|ui| {
+                cancel |= ui.button("Cancelar").clicked();
+                confirm = ui.button("Remover").clicked();
+            });
+        });
+        if cancel || modal.should_close() {
+            self.remove_clip_confirmation = None;
+        } else if confirm {
+            self.action(Command::RemoveClip { id });
+            // Queue failures are reported by action in the main notification area.
+            self.remove_clip_confirmation = None;
         }
     }
     fn import_clip(&mut self, path: PathBuf) {
@@ -2076,20 +2197,36 @@ impl App {
         });
         ui.add_space(18.);
         ui.label(RichText::new("Microfone virtual").size(16.).strong());
-        ui.label(
-            RichText::new("Voice App Virtual Microphone")
-                .color(ACCENT)
-                .size(13.),
-        );
-        ui.label(
-            RichText::new("Selecione esta entrada no Discord, OBS ou jogo.")
+        if self.virtual_microphone() {
+            ui.label(
+                RichText::new("Voice App Virtual Microphone")
+                    .color(ACCENT)
+                    .size(13.),
+            );
+            ui.label(
+                RichText::new("Selecione esta entrada no Discord, OBS ou jogo.")
+                    .size(12.)
+                    .color(MUTED),
+            );
+        } else {
+            ui.label(RichText::new("Ainda não disponível no Windows").size(13.));
+            ui.label(
+                RichText::new(
+                    "Use esta versão para testar efeitos, Ouvir-me e gravação. O envio da voz para chamadas depende do driver virtual.",
+                )
                 .size(12.)
                 .color(MUTED),
-        );
+            );
+        }
         ui.add_space(22.);
         ui.collapsing("Diagnóstico", |ui| {
             ui.label(format!("Biblioteca: {}", self.paths.data.display()));
-            ui.label("PipeWire · voz mono · fones estéreo · 48 kHz");
+            ui.label(format!(
+                "{} · voz mono · fones estéreo · 48 kHz",
+                self.status["backend"]
+                    .as_str()
+                    .unwrap_or(voice_engine::BACKEND_NAME)
+            ));
             if let Some(error) = self.status["last_audio_error"].as_str() {
                 ui.colored_label(Color32::LIGHT_RED, error);
             }
@@ -2162,6 +2299,7 @@ impl eframe::App for App {
                     Page::Settings => self.settings_page(ui),
                 });
             });
+        self.confirm_clip_removal(ui.ctx());
         self.flush_monitor_volume();
         if !self.screenshot_requested
             && self.started.elapsed() > Duration::from_secs(2)
@@ -2649,11 +2787,119 @@ fn switch(ui: &mut egui::Ui, value: &mut bool, label: &str) -> bool {
     })
     .inner
 }
+#[cfg(not(windows))]
+fn native_options(qa_size: Option<[f32; 2]>, _qa_software: bool) -> eframe::NativeOptions {
+    eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("voice app")
+            .with_inner_size(qa_size.unwrap_or([1280., 820.]))
+            .with_min_inner_size([1080., 720.]),
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    }
+}
+
+#[cfg(windows)]
+fn native_options(qa_size: Option<[f32; 2]>, qa_software: bool) -> eframe::NativeOptions {
+    use eframe::{egui_wgpu, wgpu};
+
+    let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    setup.instance_descriptor.backends = wgpu::Backends::DX12;
+    // FXC is supplied by Windows; the application does not distribute DXC DLLs.
+    setup
+        .instance_descriptor
+        .backend_options
+        .dx12
+        .shader_compiler = wgpu::Dx12Compiler::Fxc;
+    if qa_software {
+        setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters, surface| {
+            adapters
+                .iter()
+                .find(|adapter| {
+                    let info = adapter.get_info();
+                    info.backend == wgpu::Backend::Dx12
+                        && info.device_type == wgpu::DeviceType::Cpu
+                        && surface.is_none_or(|surface| adapter.is_surface_supported(surface))
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    "QA requires a compatible DX12 software adapter; GPU fallback is disabled"
+                        .to_owned()
+                })
+        }));
+    }
+    eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("voice app")
+            .with_inner_size(qa_size.unwrap_or([1280., 820.]))
+            .with_min_inner_size([1080., 720.]),
+        renderer: eframe::Renderer::Wgpu,
+        wgpu_options: eframe::WgpuConfiguration {
+            wgpu_setup: setup.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[cfg(windows)]
+fn report_qa_renderer(
+    cc: &eframe::CreationContext<'_>,
+    qa_software: bool,
+    path: Option<&std::path::Path>,
+) -> Result<()> {
+    use eframe::wgpu;
+    use std::io::Write as _;
+
+    let state = cc
+        .wgpu_render_state
+        .as_ref()
+        .context("QA requires an initialized WGPU renderer")?;
+    let info = state.adapter.get_info();
+    ensure!(
+        info.backend == wgpu::Backend::Dx12,
+        "QA renderer did not initialize the DX12 backend"
+    );
+    if qa_software {
+        ensure!(
+            info.device_type == wgpu::DeviceType::Cpu,
+            "QA renderer did not initialize a software adapter"
+        );
+    }
+    if let Some(path) = path {
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .context("cannot create the requested QA renderer report")?;
+        serde_json::to_writer_pretty(
+            &mut output,
+            &serde_json::json!({
+                "report_version": 1,
+                "renderer": "wgpu",
+                "backend": format!("{:?}", info.backend),
+                "device_type": format!("{:?}", info.device_type),
+                "adapter_name": info.name,
+                "adapter_vendor": info.vendor,
+                "adapter_device": info.device,
+                "driver": info.driver,
+                "driver_info": info.driver_info,
+                "software_requested": qa_software,
+            }),
+        )?;
+        output.write_all(b"\n")?;
+        output.sync_all()?;
+    }
+    Ok(())
+}
+
 fn run() -> Result<()> {
     let mut paths = Paths::discover()?;
     let mut smoke = None;
     let mut qa_size = None;
     let mut screenshot = None;
+    let mut qa_software = false;
+    let mut qa_report = None;
     let mut page = Page::Voices;
     let mut recorder_source = RecordingSource::ProcessedVoice;
     let mut args = std::env::args().skip(1);
@@ -2693,6 +2939,12 @@ fn run() -> Result<()> {
                 }
                 qa_size = Some([width as f32, height as f32]);
             }
+            "--qa-software-renderer" => qa_software = true,
+            "--qa-report" => {
+                qa_report = Some(PathBuf::from(
+                    args.next().context("--qa-report requires a path")?,
+                ));
+            }
             "--recorder-source" => {
                 recorder_source = match args.next().as_deref() {
                     Some("processed-voice") => RecordingSource::ProcessedVoice,
@@ -2712,7 +2964,7 @@ fn run() -> Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "voice-app [--data-dir PATH] [--socket PATH] [--recorder-source processed-voice|desktop]\nQA: --smoke-seconds N --screenshot PATH --page voices|soundboard|lab|recorder|settings [--qa-size WIDTHxHEIGHT (requires --smoke-seconds)]"
+                    "voice-app [--data-dir PATH] [--socket PATH] [--recorder-source processed-voice|desktop]\nQA: --smoke-seconds N --screenshot PATH --page voices|soundboard|lab|recorder|settings [--qa-size WIDTHxHEIGHT (requires --smoke-seconds)]\nWindows QA: --qa-software-renderer --qa-report PATH (both require --smoke-seconds)"
                 );
                 return Ok(());
             }
@@ -2722,23 +2974,31 @@ fn run() -> Result<()> {
     if qa_size.is_some() && smoke.is_none() {
         anyhow::bail!("--qa-size requires --smoke-seconds");
     }
+    if qa_software || qa_report.is_some() {
+        ensure!(
+            smoke.is_some_and(|seconds| seconds.is_finite() && seconds > 0.0),
+            "Windows renderer QA requires finite positive --smoke-seconds"
+        );
+        ensure!(
+            cfg!(windows),
+            "--qa-software-renderer and --qa-report require Windows"
+        );
+    }
     let service = if client::send(&paths.socket, Command::Status).is_ok() {
         None
     } else {
         Some(voice_engine::spawn_service(paths.clone())?)
     };
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("voice app")
-            .with_inner_size(qa_size.unwrap_or([1280., 820.]))
-            .with_min_inner_size([1080., 720.]),
-        renderer: eframe::Renderer::Glow,
-        ..Default::default()
-    };
+    let options = native_options(qa_size, qa_software);
     eframe::run_native(
         "voice-app",
         options,
         Box::new(move |cc| {
+            #[cfg(windows)]
+            if qa_software || qa_report.is_some() {
+                report_qa_renderer(cc, qa_software, qa_report.as_deref())
+                    .map_err(anyhow::Error::into_boxed_dyn_error)?;
+            }
             Ok(Box::new(App::new(
                 cc,
                 paths,
@@ -2753,8 +3013,23 @@ fn run() -> Result<()> {
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
 fn main() {
+    #[cfg(windows)]
+    let automated_qa = std::env::args().any(|argument| {
+        matches!(
+            argument.as_str(),
+            "--smoke-seconds" | "--qa-software-renderer" | "--qa-report"
+        )
+    });
     if let Err(e) = run() {
         eprintln!("voice-app: {e:#}");
+        #[cfg(windows)]
+        if !automated_qa {
+            rfd::MessageDialog::new()
+                .set_title("Voice App")
+                .set_description(format!("Não foi possível abrir o aplicativo: {e:#}"))
+                .set_level(rfd::MessageLevel::Error)
+                .show();
+        }
         std::process::exit(1);
     }
 }
