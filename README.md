@@ -49,12 +49,19 @@ pré-escuta e gravação, com o mesmo motor/biblioteca. A CI compila com MSVC em
 Server 2022; uma verificação adicional pelo Wine usa um prefixo isolado e áudio sintético.
 Os resultados desses gates são registrados separadamente de testes em Windows 10/11 real.
 
-O código experimental inclui um driver próprio e uma rota explícita para enviar efeitos e
-soundboard a **Voice App Virtual Microphone**. O driver tem compilação e validação separadas;
-exige assinatura aceita pelo Windows e instalação administrativa antes do uso. O ZIP já
-publicado em `windows-v0.1.0-alpha.1` não inclui esse driver. A implementação nova ainda precisa
-de validação carregada no Windows e nos aplicativos de destino; Wine não comprova essa etapa.
-Veja o [escopo e as verificações pendentes](docs/WINDOWS.md).
+A implementação experimental mais recente permite enviar efeitos e soundboard a um
+**VB-CABLE instalado separadamente**. Em Configurações, escolha explicitamente **CABLE Input**
+como saída virtual. No Discord ou Audacity/Tenacity, escolha **CABLE Output** como entrada.
+**Ouvir-me**, seu volume e a pré-escuta continuam nos fones físicos selecionados.
+
+Baixe e instale o cabo pelo [site oficial da VB-Audio](https://vb-audio.com/Cable/), conforme
+os termos do fornecedor. O Voice App não inclui o cabo nem instala drivers; os dispositivos
+padrão do Windows são preservados. Essa rota dispensa desenvolver e assinar um driver próprio.
+Essa frente foi cancelada e o [PR #5](https://github.com/aaronmlf/voice-app/pull/5) foi fechado sem merge.
+
+Isso descreve o código experimental, sem anunciar uma nova release. O percurso com VB-CABLE
+instalado, efeitos e soundboard nos aplicativos de destino ainda precisa de validação em Windows.
+Wine e os testes offline não comprovam essa etapa. Veja o [guia e as verificações pendentes](docs/WINDOWS.md).
 
 ## Capturar áudio do desktop
 
