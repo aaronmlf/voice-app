@@ -35,7 +35,15 @@ DX12, com compilador de shaders FXC, e confere o adaptador efetivamente iniciali
 `Dx12`, tipo `Cpu`, sem fallback para GPU no modo QA. O teste observa o estado via IPC,
 exige os 12 presets originais, zero frames e nenhuma captura, monitoração, gravação,
 reprodução ou captura desktop. Mede o pico de memória observado do processo da GUI.
-Essa nova verificação ainda está pendente de execução; não há resultado gráfico aprovado.
+Na [CI do commit `8e974ba`](https://github.com/aaronmlf/voice-app/actions/runs/39882611373),
+a GUI abriu com Microsoft Basic Render Driver (`Dx12`/`Cpu`), manteve áudio desligado
+e zero frames em 11 amostras e encerrou com código 0. O pico observado foi 79.060.992 bytes
+(75,40 MiB). O PNG gerado tinha 1024×768; a fixture exigia largura mínima de 1080 e
+reprovou com `Unexpected GUI screenshot dimensions`. O gate continua reprovado; uma
+fixture agora mede a área cliente, DPI e monitor reais e exige que o PNG corresponda
+a pelo menos duas observações da janela. Aceita somente o tamanho solicitado ou a
+limitação exata por um único monitor, como faz o eframe. Essa correção aguarda nova
+execução; o smoke curto continua sem certificar interação manual ou layout em tela maior.
 
 O helper empacotado `scripts/test-windows-gui.ps1` é executado explicitamente, com
 `-CliPath`, `-GuiPath`, `-ReportPath` e `-OutputDirectory`. Ele usa biblioteca e endpoint
@@ -60,8 +68,9 @@ reprovando. Nenhuma verificação de permissões foi enfraquecida.
 Se uma versão futura do Wine preservar as permissões exigidas e iniciar o serviço,
 o script exige a regressão completa de biblioteca, IPC/MCP, reinício e GUI antes de
 registrar aprovação dessa execução. Aceitar a recusa segura no gate não significa suporte
-ao Wine. O classificador e o novo smoke gráfico nativo aguardam execução; Wine também
-não qualifica WASAPI físico, drivers ou Windows 10/11 real.
+ao Wine. O job Wine foi pulado no run `39882611373`, pois dependia do gate nativo reprovado.
+O classificador ainda precisa de execução real; a renderização nativa observada não
+qualifica Wine, WASAPI físico, drivers ou Windows 10/11 real.
 
 O ZIP nativo contém GUI e CLI, documentação, licenças, notices e fontes exigidas pelas
 dependências. O manifesto SHA-256 acompanha o arquivo. O smoke repete os comandos
@@ -69,6 +78,15 @@ usando os executáveis extraídos, com uma biblioteca temporária vazia e exatam
 os 12 presets originais. A release usa o namespace `windows-v…`, separado do Linux.
 O pacote é construído da fonte pública revisada; dados pessoais e presets de usuário
 não entram na fonte nem no ZIP. Consulte também `packaging/windows/README.md`.
+
+A mesma CI aprovou 99 testes Rust e 15 Python (11 dos guardas Wine/WAV e quatro
+portáveis), além de formatação, Clippy, limites, corpus, benchmark, licenças, pacote,
+checksum e o smoke CLI/DSP/biblioteca/IPC/MCP dos executáveis extraídos. O inventário
+SPDX declarou 275 pacotes aceitos pela allowlist; isso não é auditoria legal ou de segurança.
+O benchmark DSP básico de 10.000 blocos de 256 frames/48 kHz mediu p95 53,800 µs,
+p99 55,500 µs e máximo 165,100 µs; não é latência de áudio ponta a ponta.
+A inspeção de dependências PE e o upload do candidato foram pulados após a falha gráfica;
+nenhuma release Windows foi publicada por esse run.
 
 Dados locais usam `%LOCALAPPDATA%\voice-app`. GUI, CLI e MCP compartilham o motor por
 named pipe local restrito ao usuário, sem porta de rede. `--socket` continua aceitando

@@ -161,3 +161,45 @@ ou latência física medida. Audacity/Tenacity fazem parte da aceitação e segu
 assim como fluxo gráfico completo da OBS, recuperação física e Wayland. A meta de 80 ms
 com pitch/formante permanece aberta; o onset de software já observado não a certifica.
 Nenhum marco inteiro foi promovido a estável ou beta.
+
+## 2026-10-23 — Revisão dos resultados da CI de 22/10
+
+O snapshot público `8e974ba95bc465b313e1bf34dd96d4d660979fe3` manteve 101 arquivos
+revisados e somente os 12 presets originais. O histórico público é curado; dados e
+histórico privados não entram no repositório nem nos assets.
+
+A [CI Linux no Ubuntu 24.04](https://github.com/aaronmlf/voice-app/actions/runs/39882611274)
+aprovou seus três jobs: 111 testes Rust e 51 Python, formatação, Clippy, limites,
+corpus sintético e entradas inválidas, benchmark, allowlist SPDX de 380 pacotes,
+política de dependências e integração PipeWire/motor em daemon privado. O pacote foi
+construído e anexado como candidato. O benchmark básico, 10.000 blocos de 256 frames
+a 48 kHz, mediu p95 35,463 µs, p99 38,939 µs e máximo 91,068 µs.
+A regressão privada conferiu L/R, pré-escuta, desktop isolado, perda/retomada do daemon,
+Stop e persistência de volume. O deslocamento de impulso de software observado foi
+256 frames (5,333 ms); não é medição de latência física.
+
+A [CI MSVC no Windows Server 2022](https://github.com/aaronmlf/voice-app/actions/runs/39882611373)
+aprovou 99 testes Rust e 15 Python (11 guardas Wine/WAV e quatro portáveis), formatação,
+Clippy, limites, corpus, benchmark, allowlist SPDX de 275 pacotes, pacote/checksum e o
+smoke offline extraído. Este conferiu os 12 presets, DSP sintético com 12.000 frames
+finitos e alterados, biblioteca SQLite, IPC/MCP e reinício com áudio desligado.
+O benchmark básico mediu p95 53,800 µs, p99 55,500 µs e máximo 165,100 µs, no mesmo
+número de blocos e formato do ensaio Linux. Esses valores são CPU DSP, não transporte,
+latência ponta a ponta ou comparação de qualidade de áudio entre sistemas.
+
+A GUI do mesmo ZIP abriu com DX12/WARP, adaptador Microsoft Basic Render Driver de tipo
+Cpu, e encerrou normalmente (código 0). Houve 11 amostras de estado com áudio desligado
+e zero frames, e o pico de memória observado foi 79.060.992 bytes (75,40 MiB). Porém,
+o PNG tinha 1024×768 e a fixture exigia largura mínima de 1080: o gate reprovou com
+`Unexpected GUI screenshot dimensions`. A correção da geometria da fixture permanece
+pendente de nova execução, sem alterar a exigência de renderização real DX12/CPU,
+éxito do processo ou ausência de áudio. O job geral Windows permanece reprovado;
+a inspeção PE, o upload de candidato e o job Wine foram pulados após essa falha.
+
+A recusa de DACL protegida observada anteriormente no Wine permanece uma limitação;
+a classificação ampliada ainda não foi executada neste run. Não há passe de GUI/IPC
+Wine ou release Windows. O trabalho de quatro horas foi deixado de lado por decisão
+do usuário; a falha histórica permanece preservada sem qualificação ou novo lote.
+Windows 10/11 com hardware, driver virtual, chamadas, gravação Audacity/Tenacity,
+fluxo gráfico OBS, sessão longa de GUI e a meta física de 80 ms continuam pendentes.
+Nenhuma promoção do produto a beta foi feita.
