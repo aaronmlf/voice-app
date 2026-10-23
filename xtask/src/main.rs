@@ -67,6 +67,7 @@ fn execute() -> Result<()> {
                 if cfg!(windows) { "python" } else { "python3" },
                 &python_tests,
             )?;
+            driver_check()?;
             println!("Workspace formatting, Clippy, tests and dependency boundaries passed.");
         }
         "boundaries" => dependency_boundaries(&metadata(true)?)?,
@@ -121,9 +122,10 @@ fn execute() -> Result<()> {
         "license-check" => {
             license_report(&metadata(false)?, None)?;
         }
+        "driver-check" => driver_check()?,
         "package" => package(root)?,
         "help" | "--help" | "-h" => println!(
-            "cargo xtask <command>\n  check          fmt, Clippy, Rust/Python tests and dependency boundaries\n  boundaries     check architectural dependency allowlist\n  bench          release CPU-only DSP benchmark (not end-to-end latency)\n  audio-check    isolated PipeWire and engine integration (no hardware)\n  corpus         synthetic codec and malformed-input regressions\n  license-check  offline declared-SPDX allowlist report (not an audit)\n  package        native Linux tar.gz or Windows MSVC zip + notices + SHA256SUMS in dist/\n\nRun `cargo fetch --locked` first when using license-check offline.\nOptional fuller dependency checks: cargo deny check licenses bans sources advisories."
+            "cargo xtask <command>\n  check          fmt, Clippy, Rust/Python tests and dependency boundaries\n  boundaries     check architectural dependency allowlist\n  driver-check   portable Windows driver transport tests (no kernel/audio devices)\n  bench          release CPU-only DSP benchmark (not end-to-end latency)\n  audio-check    isolated PipeWire and engine integration (no hardware)\n  corpus         synthetic codec and malformed-input regressions\n  license-check  offline declared-SPDX allowlist report (not an audit)\n  package        native Linux tar.gz or Windows MSVC zip + notices + SHA256SUMS in dist/\n\nRun `cargo fetch --locked` first when using license-check offline.\nOptional fuller dependency checks: cargo deny check licenses bans sources advisories."
         ),
         _ => bail!("unknown command {command:?}; run cargo xtask help"),
     }
@@ -142,6 +144,13 @@ fn run(program: &str, arguments: &[&str]) -> Result<()> {
         arguments.join(" ")
     );
     Ok(())
+}
+
+fn driver_check() -> Result<()> {
+    run(
+        if cfg!(windows) { "python" } else { "python3" },
+        &["scripts/test-windows-driver.py"],
+    )
 }
 fn capture(program: &str, arguments: &[&str]) -> Result<Output> {
     let result = Command::new(program)
@@ -208,7 +217,7 @@ fn boundary_policy() -> BTreeMap<&'static str, &'static [&'static str]> {
         ),
         (
             "voice-wasapi",
-            &["voice-core", "voice-dsp", "anyhow", "cpal"][..],
+            &["voice-core", "voice-dsp", "anyhow", "cpal", "windows"][..],
         ),
         (
             "voice-engine",
