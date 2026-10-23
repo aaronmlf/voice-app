@@ -17,7 +17,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use voice_core::{
     AudioConfig, AudioShared, DesktopShared, DspSettings, FORMAT_VERSION, RecordingSource,
-    SAMPLE_RATE, SampleQueue,
+    SAMPLE_RATE, SampleQueue, VirtualMicrophoneStatus,
 };
 use voice_library::{Library, Mixer, Preset, ReplayBuffer};
 
@@ -92,6 +92,9 @@ fn stable_audio_preferences(config: &AudioConfig, resolved: &AudioConfig) -> Aud
     if saved.output_device.is_some() {
         saved.output_device = resolved.output_device.clone();
     }
+    // Virtual endpoint IDs are explicit and must never become an automatic route.
+    // Preserve the requested ID even if a backend accidentally reports another one.
+    saved.virtual_output_device = config.virtual_output_device.clone();
     saved
 }
 
@@ -527,6 +530,8 @@ struct Engine {
     retry_delay: Duration,
     next_device_check: Instant,
     last_audio_error: Option<String>,
+    virtual_microphone: VirtualMicrophoneStatus,
+    next_virtual_probe: Instant,
 }
 impl Engine {
     fn new(paths: Paths) -> Result<Self> {
@@ -569,6 +574,8 @@ impl Engine {
             retry_delay: Duration::from_secs(2),
             next_device_check: Instant::now(),
             last_audio_error: None,
+            virtual_microphone: VirtualMicrophoneStatus::default(),
+            next_virtual_probe: Instant::now(),
         })
     }
     fn commit_session(&mut self, candidate: Session) -> Result<()> {
@@ -587,7 +594,40 @@ impl Engine {
         self.audio.take();
         self.resolved_config = None;
         self.shared.metrics.active.store(false, Ordering::Release);
+        self.shared
+            .metrics
+            .virtual_microphone_active
+            .store(false, Ordering::Release);
         self.worker.reset(clear_replay)
+    }
+    fn virtual_microphone_status(&mut self) -> VirtualMicrophoneStatus {
+        let now = Instant::now();
+        if now >= self.next_virtual_probe {
+            self.virtual_microphone =
+                crate::audio::virtual_microphone_status().unwrap_or_else(|error| {
+                    VirtualMicrophoneStatus {
+                        diagnostic: Some(format!("Virtual microphone discovery failed: {error:#}")),
+                        ..Default::default()
+                    }
+                });
+            self.next_virtual_probe = now + Duration::from_secs(2);
+        }
+        let mut status = self.virtual_microphone.clone();
+        status.active = status.available
+            && self.shared.metrics.active.load(Ordering::Acquire)
+            && (crate::audio::VIRTUAL_MICROPHONE
+                || (status.render_device.as_deref().is_some()
+                    && self
+                        .resolved_config
+                        .as_ref()
+                        .and_then(|config| config.virtual_output_device.as_deref())
+                        == status.render_device.as_deref()
+                    && self
+                        .shared
+                        .metrics
+                        .virtual_microphone_active
+                        .load(Ordering::Acquire)));
+        status
     }
     fn stop_desktop(&mut self, clear_replay: bool) -> Result<()> {
         self.desktop.take();
@@ -671,11 +711,53 @@ impl Engine {
             self.check_audio_health();
         }
         match command {
-            Command::Status => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"backend":crate::audio::BACKEND_NAME,"audio_running":self.shared.metrics.active.load(Ordering::Relaxed),"config":self.session.config,"resolved_config":self.resolved_config,"audio_requested":self.session.audio_enabled,"audio_connecting":self.session.audio_enabled && self.audio.is_none(),"settings":self.session.settings,"selected_preset":self.session.selected_preset,"bypass":self.shared.bypass.load(Ordering::Relaxed),"muted":self.shared.muted.load(Ordering::Relaxed),"monitor":self.shared.monitor_enabled.load(Ordering::Relaxed),"monitor_gain":self.session.monitor_gain,"soundboard_gain":self.session.soundboard_gain,"metrics":self.shared.metrics.snapshot(),"playing":self.worker.playing.load(Ordering::Relaxed),"recording":self.worker.recording.load(Ordering::Relaxed),"recording_source":match self.worker.recording_source.load(Ordering::Acquire) {1=>Some(RecordingSource::ProcessedVoice),2=>Some(RecordingSource::Desktop),_=>None},"replay_seconds":self.worker.replay_seconds(RecordingSource::ProcessedVoice),"desktop":{"active":self.desktop_shared.active.load(Ordering::Acquire),"output_device":self.desktop_target,"error":self.desktop_error,"replay_seconds":self.worker.replay_seconds(RecordingSource::Desktop),"metrics":{"frames":self.desktop_shared.frames.load(Ordering::Relaxed),"overruns":self.desktop_shared.overruns.load(Ordering::Relaxed),"non_finite_samples":self.desktop_shared.non_finite_samples.load(Ordering::Relaxed),"peak":f32::from_bits(self.desktop_shared.peak.load(Ordering::Relaxed))}},"recording_error":self.worker.error.lock().ok().and_then(|v|v.clone()),"last_audio_error":self.last_audio_error,"data_dir":self.paths.data,"preset_image_revision":self.preset_image_revision,"capabilities":{"dsp":true,"soundboard":true,"processed_recording":true,"replay":true,"pitch":true,"formant":true,"chorus":true,"noise_reduction":true,"reorder_effects":true,"preset_images":true,"voice_blend":true,"effect_intensity":true,"neural_voice":false,"desktop_capture":crate::audio::DESKTOP_CAPTURE,"virtual_microphone":crate::audio::VIRTUAL_MICROPHONE,"global_shortcuts":false}}),
-            ),
+            Command::Status => {
+                let virtual_microphone = self.virtual_microphone_status();
+                let capabilities = json!({
+                    "dsp": true, "soundboard": true, "processed_recording": true,
+                    "replay": true, "pitch": true, "formant": true, "chorus": true,
+                    "noise_reduction": true, "reorder_effects": true, "preset_images": true,
+                    "voice_blend": true, "effect_intensity": true, "neural_voice": false,
+                    "desktop_capture": crate::audio::DESKTOP_CAPTURE,
+                    "virtual_microphone": virtual_microphone.available, "global_shortcuts": false
+                });
+                let desktop = json!({
+                    "active": self.desktop_shared.active.load(Ordering::Acquire),
+                    "output_device": self.desktop_target, "error": self.desktop_error,
+                    "replay_seconds": self.worker.replay_seconds(RecordingSource::Desktop),
+                    "metrics": {
+                        "frames": self.desktop_shared.frames.load(Ordering::Relaxed),
+                        "overruns": self.desktop_shared.overruns.load(Ordering::Relaxed),
+                        "non_finite_samples": self.desktop_shared.non_finite_samples.load(Ordering::Relaxed),
+                        "peak": f32::from_bits(self.desktop_shared.peak.load(Ordering::Relaxed))
+                    }
+                });
+                Ok(json!({
+                    "version": env!("CARGO_PKG_VERSION"), "backend": crate::audio::BACKEND_NAME,
+                    "audio_running": self.shared.metrics.active.load(Ordering::Relaxed),
+                    "config": self.session.config, "resolved_config": self.resolved_config,
+                    "audio_requested": self.session.audio_enabled,
+                    "audio_connecting": self.session.audio_enabled && self.audio.is_none(),
+                    "settings": self.session.settings, "selected_preset": self.session.selected_preset,
+                    "bypass": self.shared.bypass.load(Ordering::Relaxed),
+                    "muted": self.shared.muted.load(Ordering::Relaxed),
+                    "monitor": self.shared.monitor_enabled.load(Ordering::Relaxed),
+                    "monitor_gain": self.session.monitor_gain, "soundboard_gain": self.session.soundboard_gain,
+                    "metrics": self.shared.metrics.snapshot(), "playing": self.worker.playing.load(Ordering::Relaxed),
+                    "recording": self.worker.recording.load(Ordering::Relaxed),
+                    "recording_source": match self.worker.recording_source.load(Ordering::Acquire) {
+                        1 => Some(RecordingSource::ProcessedVoice), 2 => Some(RecordingSource::Desktop), _ => None
+                    },
+                    "replay_seconds": self.worker.replay_seconds(RecordingSource::ProcessedVoice),
+                    "desktop": desktop, "recording_error": self.worker.error.lock().ok().and_then(|v|v.clone()),
+                    "last_audio_error": self.last_audio_error, "data_dir": self.paths.data,
+                    "preset_image_revision": self.preset_image_revision,
+                    "virtual_microphone": virtual_microphone, "capabilities": capabilities
+                }))
+            }
             Command::Devices => Ok(serde_json::to_value(crate::audio::list_devices()?)?),
             Command::Start { config } => {
+                self.next_virtual_probe = Instant::now();
                 config.validate().map_err(anyhow::Error::msg)?;
                 let resolved = crate::audio::resolve_config(&config);
                 if resolved.is_err()
@@ -1598,6 +1680,90 @@ mod tests {
         assert!(saved.output_device.is_none());
     }
     #[test]
+    fn virtual_route_preferences_pin_the_explicit_id_and_preserve_legacy_defaults() -> Result<()> {
+        let legacy: Session = serde_json::from_value(json!({
+            "config":{"input_device":null,"output_device":"headphones","sample_rate":48000,"quantum":256}
+        }))?;
+        assert!(legacy.config.virtual_output_device.is_none());
+        let config = AudioConfig {
+            output_device: Some("headphones".into()),
+            virtual_output_device: Some("owned-render-id".into()),
+            ..Default::default()
+        };
+        let resolved = AudioConfig {
+            input_device: Some("physical-microphone".into()),
+            output_device: Some("headphones".into()),
+            virtual_output_device: Some("another-render-id".into()),
+            ..Default::default()
+        };
+        let saved = stable_audio_preferences(&config, &resolved);
+        assert!(saved.input_device.is_none());
+        assert_eq!(saved.output_device.as_deref(), Some("headphones"));
+        assert_eq!(
+            saved.virtual_output_device.as_deref(),
+            Some("owned-render-id")
+        );
+        let automatic = stable_audio_preferences(&legacy.config, &resolved);
+        assert!(automatic.virtual_output_device.is_none());
+        Ok(())
+    }
+    #[test]
+    fn virtual_microphone_status_distinguishes_discovery_from_transmission() -> Result<()> {
+        let paths = test_paths();
+        let mut engine = Engine::new(paths.clone())?;
+        // Inject discovery results so this contract test never opens a device or relies
+        // on the test machine having the kernel driver installed.
+        engine.virtual_microphone = VirtualMicrophoneStatus {
+            available: true,
+            render_device: Some("owned-render-id".into()),
+            capture_device: Some("owned-capture-id".into()),
+            ..Default::default()
+        };
+        engine.next_virtual_probe = Instant::now() + Duration::from_secs(60);
+        let status = engine.execute(Command::Status, &AtomicBool::new(false))?;
+        assert_eq!(status["capabilities"]["virtual_microphone"], true);
+        assert_eq!(status["virtual_microphone"]["available"], true);
+        assert_eq!(status["virtual_microphone"]["active"], false);
+        assert_eq!(
+            status["virtual_microphone"]["capture_device"],
+            "owned-capture-id"
+        );
+        engine.shared.metrics.active.store(true, Ordering::Release);
+        engine
+            .shared
+            .metrics
+            .virtual_microphone_active
+            .store(true, Ordering::Release);
+        engine.resolved_config = Some(AudioConfig {
+            virtual_output_device: Some("owned-render-id".into()),
+            ..Default::default()
+        });
+        assert!(engine.virtual_microphone_status().active);
+        engine.stop_audio(false)?;
+        assert!(!engine.virtual_microphone_status().active);
+        assert!(
+            !engine
+                .shared
+                .metrics
+                .virtual_microphone_active
+                .load(Ordering::Acquire)
+        );
+        engine.virtual_microphone = VirtualMicrophoneStatus {
+            diagnostic: Some("driver unavailable".into()),
+            ..Default::default()
+        };
+        let status = engine.execute(Command::Status, &AtomicBool::new(false))?;
+        assert_eq!(status["capabilities"]["virtual_microphone"], false);
+        assert_eq!(status["virtual_microphone"]["active"], false);
+        assert_eq!(
+            status["virtual_microphone"]["diagnostic"],
+            "driver unavailable"
+        );
+        drop(engine);
+        fs::remove_dir_all(paths.data.parent().unwrap())?;
+        Ok(())
+    }
+    #[test]
     fn stop_disables_capture_and_retries_even_when_session_cannot_be_saved() -> Result<()> {
         let paths = test_paths();
         let mut engine = Engine::new(paths.clone())?;
@@ -1628,6 +1794,7 @@ mod tests {
         candidate.audio_enabled = true;
         candidate.config.input_device = Some("saved-usb-microphone".into());
         candidate.config.output_device = Some("saved-headphones".into());
+        candidate.config.virtual_output_device = Some("saved-owned-render-id".into());
         candidate.monitor_gain = 0.35;
         engine.commit_session(candidate)?;
         drop(engine);
@@ -1652,6 +1819,10 @@ mod tests {
         assert_eq!(
             engine.session.config.output_device.as_deref(),
             Some("saved-headphones")
+        );
+        assert_eq!(
+            engine.session.config.virtual_output_device.as_deref(),
+            Some("saved-owned-render-id")
         );
         drop(engine);
         fs::remove_dir_all(paths.data.parent().unwrap())?;

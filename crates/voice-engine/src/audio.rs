@@ -13,9 +13,22 @@ pub const BACKEND_NAME: &str = "pipewire";
 #[cfg(windows)]
 pub const BACKEND_NAME: &str = "wasapi";
 
-/// WASAPI capture/render does not install or create a virtual capture endpoint.
+/// The Linux adapter publishes its own virtual source. Windows availability is probed at runtime.
 pub const VIRTUAL_MICROPHONE: bool = cfg!(target_os = "linux");
 pub const DESKTOP_CAPTURE: bool = true;
+
+#[cfg(windows)]
+pub fn virtual_microphone_status() -> anyhow::Result<voice_core::VirtualMicrophoneStatus> {
+    voice_wasapi::virtual_microphone_status()
+}
+
+#[cfg(target_os = "linux")]
+pub fn virtual_microphone_status() -> anyhow::Result<voice_core::VirtualMicrophoneStatus> {
+    Ok(voice_core::VirtualMicrophoneStatus {
+        available: true,
+        ..Default::default()
+    })
+}
 
 #[cfg(not(any(target_os = "linux", windows)))]
 compile_error!("voice-engine currently supports Linux/PipeWire and Windows/WASAPI only");
