@@ -59,7 +59,7 @@ int main() {
     assert(bridge.Pop(output, 1) == 0 && output[0] == 0);
 
     VoiceFrameClock clock;
-    clock.Reset(0, 10000000);
+    assert(clock.Reset(0, 10000000));
     bool discontinuity = false;
     uint64_t frames = 0;
     for (uint64_t time = 997; time <= 10000000; time += 997)
@@ -68,10 +68,36 @@ int main() {
     assert(!discontinuity && frames == 48000);
     assert(clock.Advance(50000000, discontinuity) == 48000 && discontinuity);
     assert(clock.Advance(1, discontinuity) == 0 && discontinuity);
-    clock.Reset(0, 7);
+    assert(clock.Reset(0, 7));
     frames = 0;
     for (uint64_t i = 1; i <= 7; ++i) frames += clock.Advance(i, discontinuity);
     assert(frames == 48000);
+
+    // Valid counter rates above 1 GHz must retain fractional frame accuracy.
+    constexpr uint64_t fastFrequency = 3200000000ULL;
+    assert(clock.Reset(0, fastFrequency));
+    frames = 0;
+    for (uint64_t time = 997001; time < fastFrequency; time += 997001) {
+        frames += clock.Advance(time, discontinuity);
+        assert(!discontinuity);
+    }
+    frames += clock.Advance(fastFrequency, discontinuity);
+    assert(!discontinuity && frames == 48000);
+
+    // Prime carry to within 48000 ticks of the largest valid denominator, then
+    // exercise the full delta plus that carry at the proven arithmetic limit.
+    constexpr auto maximumFrequency = VoiceFrameClock::MaxFrequency;
+    constexpr auto prime = maximumFrequency / 48000;
+    assert(clock.Reset(0, maximumFrequency));
+    assert(clock.Advance(prime, discontinuity) == 0 && !discontinuity);
+    assert(clock.Advance(prime + maximumFrequency, discontinuity) == 48000 && !discontinuity);
+    assert(clock.Advance(prime + maximumFrequency * 2, discontinuity) == 48000 && !discontinuity);
+    assert(!clock.Reset(0, maximumFrequency + 1));
+    assert(clock.Advance(VoiceMaxU64, discontinuity) == 0 && discontinuity);
+    assert(!clock.Reset(0, 0));
+    assert(clock.Advance(1, discontinuity) == 0 && discontinuity);
+    assert(clock.Reset(0, fastFrequency));
+    assert(clock.Advance(fastFrequency, discontinuity) == 48000 && !discontinuity);
 
     // Exercise the actual SPSC algorithm across cores, not a model of it.
     VoiceBridge concurrent;
