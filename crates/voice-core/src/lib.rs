@@ -342,7 +342,7 @@ pub struct DeviceInfo {
 pub struct AudioConfig {
     pub input_device: Option<String>,
     pub output_device: Option<String>,
-    /// Explicit owned Windows virtual render endpoint; physical output stays the headphones.
+    /// Explicit validated Windows virtual render endpoint; output stays the headphones.
     pub virtual_output_device: Option<String>,
     pub sample_rate: u32,
     pub quantum: u32,
@@ -372,6 +372,12 @@ impl AudioConfig {
                 "virtual output must be a nonempty endpoint ID of at most 2048 bytes".into(),
             );
         }
+        if let Some(id) = self.virtual_output_device.as_deref()
+            && (self.input_device.as_deref() == Some(id)
+                || self.output_device.as_deref() == Some(id))
+        {
+            return Err("virtual output must be separate from microphone and headphones".into());
+        }
         if !(64..=2048).contains(&self.quantum) || !self.quantum.is_power_of_two() {
             return Err("quantum must be a power of two from 64 to 2048".into());
         }
@@ -386,6 +392,17 @@ impl AudioConfig {
     }
 }
 
+/// An installed virtual cable pair; labels are display text, never an identity proof.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct VirtualMicrophoneTarget {
+    pub provider: String,
+    pub render_device: String,
+    pub capture_device: String,
+    pub render_description: String,
+    pub capture_description: String,
+}
+
 /// A detected endpoint pair is distinct from an actively transmitting audio route.
 /// Detection never installs a driver or changes system audio defaults.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -396,6 +413,7 @@ pub struct VirtualMicrophoneStatus {
     pub render_device: Option<String>,
     pub capture_device: Option<String>,
     pub diagnostic: Option<String>,
+    pub targets: Vec<VirtualMicrophoneTarget>,
 }
 
 /// Atomic settings are independent scalar controls, not a transactionally consistent preset snapshot.
@@ -806,6 +824,52 @@ mod tests {
                 .is_err()
             );
         }
+    }
+    #[test]
+    fn external_cable_status_preserves_exact_ids_and_legacy_defaults() {
+        let old: VirtualMicrophoneStatus = serde_json::from_str(
+            r#"{"available":true,"active":false,"render_device":"legacy-output"}"#,
+        )
+        .unwrap();
+        assert!(old.targets.is_empty());
+        let status = VirtualMicrophoneStatus {
+            targets: vec![VirtualMicrophoneTarget {
+                provider: "vb_cable".into(),
+                render_device: "wasapi-render-id".into(),
+                capture_device: "wasapi-capture-id".into(),
+                render_description: "CABLE Input".into(),
+                capture_description: "CABLE Output".into(),
+            }],
+            ..old
+        };
+        let encoded = serde_json::to_string(&status).unwrap();
+        assert_eq!(
+            serde_json::from_str::<VirtualMicrophoneStatus>(&encoded).unwrap(),
+            status
+        );
+        assert!(!status.active);
+    }
+    #[test]
+    fn publishing_cannot_reuse_the_microphone_or_headphone_endpoint() {
+        for (input, output) in [(Some("cable"), None), (None, Some("cable"))] {
+            let config = AudioConfig {
+                input_device: input.map(str::to_owned),
+                output_device: output.map(str::to_owned),
+                virtual_output_device: Some("cable".into()),
+                ..Default::default()
+            };
+            assert!(config.validate().is_err());
+        }
+        assert!(
+            AudioConfig {
+                input_device: Some("physical-mic".into()),
+                output_device: Some("headphones".into()),
+                virtual_output_device: Some("cable".into()),
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
     }
     #[test]
     fn legacy_settings_get_default_order_and_invalid_orders_are_rejected() {
