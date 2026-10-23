@@ -35,15 +35,21 @@ DX12, com compilador de shaders FXC, e confere o adaptador efetivamente iniciali
 `Dx12`, tipo `Cpu`, sem fallback para GPU no modo QA. O teste observa o estado via IPC,
 exige os 12 presets originais, zero frames e nenhuma captura, monitoração, gravação,
 reprodução ou captura desktop. Mede o pico de memória observado do processo da GUI.
-Na [CI do commit `8e974ba`](https://github.com/aaronmlf/voice-app/actions/runs/39882611373),
-a GUI abriu com Microsoft Basic Render Driver (`Dx12`/`Cpu`), manteve áudio desligado
-e zero frames em 11 amostras e encerrou com código 0. O pico observado foi 79.060.992 bytes
-(75,40 MiB). O PNG gerado tinha 1024×768; a fixture exigia largura mínima de 1080 e
-reprovou com `Unexpected GUI screenshot dimensions`. O gate continua reprovado; uma
-fixture agora mede a área cliente, DPI e monitor reais e exige que o PNG corresponda
-a pelo menos duas observações da janela. Aceita somente o tamanho solicitado ou a
-limitação exata por um único monitor, como faz o eframe. Essa correção aguarda nova
-execução; o smoke curto continua sem certificar interação manual ou layout em tela maior.
+A [CI nativa do commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538)
+aprovou o smoke gráfico do mesmo ZIP extraído em Windows Server 2022. A GUI usou WGPU,
+DX12/FXC e Microsoft Basic Render Driver de tipo `Cpu`, e encerrou com código 0. O teste
+durou 4,6434662 s e observou pico de 78.139.392 bytes (74,52 MiB) no processo da GUI.
+Onze amostras IPC mostraram áudio desligado e zero frames; a biblioteca continha
+exatamente os 12 presets originais.
+
+O PNG de 1024×768 correspondeu a dez medições nativas da área cliente. O monitor único
+também tinha 1024×768, com DPI 96, enquanto o tamanho nominal pedido era 1280×800.
+A fixture registrou `single_monitor_size_clamp`: aceita o tamanho solicitado ou o
+clamp exato demonstrado no monitor único, além de exigir PNG igual a pelo menos duas
+observações reais da janela. O candidato anterior `8e974ba` havia reprovado por usar
+um limite mínimo fixo de largura; sua falha foi preservada. A nova aprovação cobre
+inicialização, renderização e encerramento curto, sem interação manual, layout maior
+ou sessão longa de GUI.
 
 O helper empacotado `scripts/test-windows-gui.ps1` é executado explicitamente, com
 `-CliPath`, `-GuiPath`, `-ReportPath` e `-OutputDirectory`. Ele usa biblioteca e endpoint
@@ -68,9 +74,14 @@ reprovando. Nenhuma verificação de permissões foi enfraquecida.
 Se uma versão futura do Wine preservar as permissões exigidas e iniciar o serviço,
 o script exige a regressão completa de biblioteca, IPC/MCP, reinício e GUI antes de
 registrar aprovação dessa execução. Aceitar a recusa segura no gate não significa suporte
-ao Wine. O job Wine foi pulado no run `39882611373`, pois dependia do gate nativo reprovado.
-O classificador ainda precisa de execução real; a renderização nativa observada não
-qualifica Wine, WASAPI físico, drivers ou Windows 10/11 real.
+ao Wine. No mesmo run `40008350538`, o Wine 9.0 (Ubuntu 9.0~repack-4build3) verificou
+help/version e o tom offline de 220 Hz: 12.000 frames float32 finitos e limitados a 48 kHz.
+O serviço encerrou com código 1 e a mensagem exata `voice-cli: private path must have a protected DACL`.
+O relatório registrou `unsupported_security_environment`, `offline_checks_passed=true` e
+`security_refusal_verified=true`; GUI, IPC e compatibilidade Wine permaneceram `false`.
+O gate verificou a recusa segura sem alterar a proteção de acesso. A aprovação nativa
+não qualifica Wine, WASAPI físico, drivers ou Windows 10/11 real.
+
 
 O ZIP nativo contém GUI e CLI, documentação, licenças, notices e fontes exigidas pelas
 dependências. O manifesto SHA-256 acompanha o arquivo. O smoke repete os comandos
@@ -79,14 +90,12 @@ os 12 presets originais. A release usa o namespace `windows-v…`, separado do L
 O pacote é construído da fonte pública revisada; dados pessoais e presets de usuário
 não entram na fonte nem no ZIP. Consulte também `packaging/windows/README.md`.
 
-A mesma CI aprovou 99 testes Rust e 15 Python (11 dos guardas Wine/WAV e quatro
-portáveis), além de formatação, Clippy, limites, corpus, benchmark, licenças, pacote,
-checksum e o smoke CLI/DSP/biblioteca/IPC/MCP dos executáveis extraídos. O inventário
-SPDX declarou 275 pacotes aceitos pela allowlist; isso não é auditoria legal ou de segurança.
-O benchmark DSP básico de 10.000 blocos de 256 frames/48 kHz mediu p95 53,800 µs,
-p99 55,500 µs e máximo 165,100 µs; não é latência de áudio ponta a ponta.
-A inspeção de dependências PE e o upload do candidato foram pulados após a falha gráfica;
-nenhuma release Windows foi publicada por esse run.
+O job nativo `40008350538` aprovou 99 testes Rust e 15 Python (11 dos guardas Wine/WAV e
+quatro portáveis), mais quatro reexecuções de regressão no corpus. Formatação, Clippy,
+limites, corpus, benchmark, licenças, pacote/checksum, smoke CLI/DSP/biblioteca/IPC/MCP
+e inspeção PE também passaram; o candidato foi anexado como artifact. O benchmark DSP
+não mede latência de áudio ponta a ponta. A publicação exige a revisão dos gates, da fonte pública exata e dos assets
+efetivamente publicados; consulte a página de Releases para obter os arquivos distribuídos.
 
 Dados locais usam `%LOCALAPPDATA%\voice-app`. GUI, CLI e MCP compartilham o motor por
 named pipe local restrito ao usuário, sem porta de rede. `--socket` continua aceitando

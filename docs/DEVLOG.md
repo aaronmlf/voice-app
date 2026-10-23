@@ -203,3 +203,54 @@ do usuário; a falha histórica permanece preservada sem qualificação ou novo 
 Windows 10/11 com hardware, driver virtual, chamadas, gravação Audacity/Tenacity,
 fluxo gráfico OBS, sessão longa de GUI e a meta física de 80 ms continuam pendentes.
 Nenhuma promoção do produto a beta foi feita.
+
+## 2026-10-23 — Smoke gráfico Windows aprovado e gates Linux concluídos
+
+A fonte pública `bd75106d0f1022d8b45f998e36a55f899258b760` manteve os 101 arquivos
+revisados e os 12 presets originais. A mudança da fixture registra HWND do próprio
+processo, área cliente, monitor e DPI reais, preservando a exigência de renderização
+DX12 por CPU, término normal e áudio desligado. Nenhuma verificação de permissões foi
+removida para permitir execução no Wine.
+
+A [CI Linux/Ubuntu 24.04](https://github.com/aaronmlf/voice-app/actions/runs/40008350530)
+aprovou seus três jobs: 111 testes Rust e 51 Python, formatação, Clippy, limites,
+corpus sintético/entradas inválidas, benchmark, allowlist SPDX de 380 pacotes, política
+de dependências, integração PipeWire/motor em daemon privado e pacote. O benchmark
+básico, 10.000 blocos de 256 frames/48 kHz, mediu p95 56,876 µs, p99 57,788 µs e máximo
+79,108 µs. É tempo de processamento DSP, sem medição física de ponta a ponta.
+
+O [job nativo Windows Server 2022](https://github.com/aaronmlf/voice-app/actions/runs/40008350538)
+aprovou 99 testes Rust e 15 Python, com mais quatro reexecuções de regressão no corpus,
+além de formatação, Clippy, limites, corpus, benchmark, licenças, pacote/checksum,
+smoke offline dos executáveis extraídos, inspeção PE e upload do candidato.
+As quatro reexecuções do corpus reutilizam testes já incluídos entre os 99 testes Rust.
+
+O smoke gráfico do mesmo ZIP passou em 4,6434662 s: WGPU/DX12/FXC, Microsoft Basic
+Render Driver de tipo Cpu, GUI encerrada com código 0 e pico observado de 78.139.392 bytes
+(74,52 MiB). As dimensões do PNG de 1024×768 coincidiram com dez amostras nativas da área
+cliente; monitor único de 1024×768, DPI 96 e tamanho nominal pedido de 1280×800 explicaram
+o clamp registrado. Houve 11 amostras IPC com áudio desligado e zero frames, e exatamente
+os 12 presets originais na biblioteca nova. A amostra inicial de janela ainda sem área
+cliente não foi contada entre as dez correspondências. Isso não qualifica layout em
+tela maior, interação manual, sessão longa ou dispositivos de áudio.
+
+O ZIP candidato dessa fonte passou pela inspeção independente: SHA-256
+`6512049d69882e1b3a20b7452ae7ab64dbb370106c3b09a7e11b3b8738e6f05b` e 19 arquivos
+próprios do pacote iguais à fonte pública revisada. Esse hash identifica o candidato
+`bd75106` verificado; a publicação final terá seus próprios assets e conferência.
+
+O relatório oficial Wine 9.0 (Ubuntu 9.0~repack-4build3) do mesmo run registrou
+`unsupported_security_environment`: help/version e tom offline de 220 Hz aprovados,
+12.000 frames float32 finitos e limitados a 48 kHz. Em seguida o serviço encerrou com
+código 1 e a mensagem exata `voice-cli: private path must have a protected DACL`.
+`offline_checks_passed` e `security_refusal_verified` foram `true`; `ipc_verified`,
+`gui_verified` e `wine_compatibility_qualified` foram `false`. O gate verificou a recusa
+segura sem enfraquecer a proteção; não há aprovação de GUI/IPC ou suporte ao Wine.
+Nenhuma release Windows é declarada concluída por este registro.
+
+
+O trabalho de quatro horas permanece deixado de lado e sua falha histórica preservada.
+Windows 10/11 com hardware, driver virtual, uso em chamadas/gravadores, sessões longas,
+Wayland e latência física — incluindo a meta de 80 ms com pitch/formante — continuam
+pendentes nos respectivos contextos. O nome da branch `beta` é organizacional e não
+promove a aplicação a beta ou estável.

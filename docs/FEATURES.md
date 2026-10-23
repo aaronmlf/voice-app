@@ -11,13 +11,13 @@ Nenhum marco inteiro foi promovido a estável.
 | Monitoração e pré-escuta separadas | Experimental | Ganho, sinal idêntico em L/R e isolamento medidos em sink estéreo no daemon privado |
 | Detecção e reconexão automática | Experimental | Metadata de padrões, troca durante a sessão, retorno do daemon, retomada entre processos e cancelamento por Stop testados em fixture privada |
 | Volume de Ouvir-me | Experimental | Controle de 0–200% independente; valor e persistência verificados por CLI/motor |
-| Interface nativa | Experimental | Capturas Linux e compilação nativa. Windows Server 2022 inicializou DX12/CPU e encerrou com código 0, mas o gate gráfico reprovou nas dimensões do PNG; nova execução da fixture corrigida e fluxo real completo pendentes |
+| Interface nativa | Experimental; smoke nativo aprovado | [Windows Server 2022, `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538): GUI extraída abriu em WGPU/DX12/CPU, renderizou PNG 1024×768 igual a dez medições da área cliente, verificou áudio desligado e encerrou com código 0. Viewport limitado ao monitor único; interação manual, layout maior e sessão longa pendentes |
 | Filtro de vozes originais | Verificada em GUI isolada | Clique na biblioteca mostrou somente os 12 presets builtin; Minhas vozes mostrou apenas vozes de usuário, sem trocar a voz selecionada. Presets pessoais ficam fora da distribuição pública |
 | Imagens de presets próprios | Experimental | PNG/JPEG/WebP, recorte, limites, falhas e persistência verificados; imagem gerenciada após remover fonte e reiniciar, renderização circular e comandos CLI/MCP testados |
 | SQLite e presets JSON | Verificada em testes | Persistência, versão, limites e dados inválidos |
 | WAV/MP3/Ogg Vorbis/FLAC | Verificada offline | Fixtures próprias; mono48k, resampling, limites e corte |
 | Painéis, loop e sobreposição | Experimental | Mixer e comandos testados; sessão prolongada do perfil de mistura reprovada por incremento de contador, sem qualificação de quatro horas |
-| Remover som do soundboard | Experimental; testes aprovados | Menu ⋮ e botão direito, confirmação e comando único GUI/CLI/MCP. Persistência, IDs inválidos, isolamento dos outros sons e arquivos preservados cobertos pelo gate local de 111 testes Rust/51 Python. Remove o cadastro e para apenas esse som; arquivos originais e cópias normalizadas ficam em disco. CI pública do commit `8e974ba`: Linux 111 testes Rust/51 Python e Windows 99 Rust/15 Python aprovados. Interação gráfica de remoção ainda pendente |
+| Remover som do soundboard | Experimental; testes aprovados | Menu ⋮ e botão direito, confirmação e comando único GUI/CLI/MCP. Persistência, IDs inválidos, isolamento dos outros sons e arquivos preservados cobertos pelo gate local de 111 testes Rust/51 Python. Remove o cadastro e para apenas esse som; arquivos originais e cópias normalizadas ficam em disco. CI pública do commit `bd75106`: Linux 111 testes Rust/51 Python e Windows 99 Rust/15 Python aprovados. Interação gráfica de remoção ainda pendente |
 | Gravação processada e replay30s | Experimental | Worker/PCM, finalização e preservação; criar voz A/B→gravar→cortar→soundboard→reiniciar→reutilizar sem WAV externo aprovado por comandos no grafo privado |
 | CLI e MCP | Verificada em testes locais | Mesmo registro; sessão parada, biblioteca e mensagens JSON-RPC |
 | Pacote Linux `.tar.gz` | Experimental | Checksum validado; binários extraídos executados, GUI em Xvfb e CLI integrado ao PipeWire privado |
@@ -31,13 +31,14 @@ Nenhum marco inteiro foi promovido a estável.
 | Validação reprodutível de áudio | Verificada em grafo privado; quatro horas reprovadas | Básico de 60 min aprovado: 3.600,018 s ativos/716 janelas saudáveis. Mistura: 10.675,083 s saudáveis de 14.400 s exigidos, 2.128/2.129 janelas e +1 `monitor_overruns`; serviço terminou com código 1. RSS máximo do motor 23,30 MiB; pico do serviço 51,24 MiB, sem OOM. PCM descartado, replay limitado. Ver `VALIDATION.md` |
 | Atalhos globais / bandeja | Planejada | Portal Wayland e fallback CLI |
 | IA de conversão de voz | Planejada | Worker, modelos/licenças/hashes e hardware medido |
-| Windows nativo | Experimental; publicação bloqueada | [CI MSVC `8e974ba`](https://github.com/aaronmlf/voice-app/actions/runs/39882611373): 99 testes Rust, 15 Python, corpus, benchmark, licenças, pacote e smoke offline do ZIP aprovados. GUI iniciou com DX12/CPU, código 0 e pico observado de 75,40 MiB, mas o gate reprovou pelo PNG de 1024×768 abaixo do limite da fixture; correção e nova execução pendentes. Wine foi pulado nesse run. A recusa DACL no Wine 9.0 anterior continua sem qualificar GUI/IPC. Ainda sem release, microfone virtual ou validação de hardware Windows |
+| Windows nativo | Experimental; CI nativa aprovada | [Commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538): 99 testes Rust, 15 Python, quatro reexecuções de regressão do corpus, demais gates nativos e smoke offline do ZIP aprovados. Smoke gráfico aprovado em 4,643 s, pico observado 74,52 MiB, PNG 1024×768 limitado ao monitor único e áudio desligado. Wine 9.0 verificou comandos offline e recusou a DACL sem proteção (`unsupported_security_environment`); GUI/IPC e compatibilidade Wine sem qualificação. Sem microfone virtual e sem validação de hardware Windows 10/11 |
 | macOS | Planejada | Plugin virtual, assinatura e hardware próprios |
 | Comunidade/mobile | Planejada | Serviços e pareamento ainda não implementados |
 | AppImage/Flatpak | Planejada | Distribuição inicial em tar.gz |
 
 
-Em [Linux/Ubuntu 24.04, commit `8e974ba`](https://github.com/aaronmlf/voice-app/actions/runs/39882611274),
+Em [Linux/Ubuntu 24.04, commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350530),
 111 testes Rust e 51 Python, formatação, Clippy, limites, corpus, benchmark, política
 de dependências/licenças, integração PipeWire privada e pacote foram aprovados. Isso
 não acrescenta uma qualificação de quatro horas, hardware ou latência física.
+
