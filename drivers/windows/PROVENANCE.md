@@ -32,6 +32,12 @@ part of this component. `source-allowlist.json` is the explicit component source
 - Assigned unique product, interface and custom-name GUIDs, pool tags, driver/service/INF
   identity, endpoint references and product resources. Standard KS category GUIDs remain
   Microsoft's documented public interface identifiers.
+- Added `PKEY_AudioDevice_NeverSetAsDefaultEndpoint` (`{F3E80BEF-1723-4FF2-BCC4-7F83DC5E46D4},3`)
+  as a DWORD beside `PKEY_AudioEndpoint_Association` in each topology interface's `EP\0`
+  subkey. The value `0x00000307` is copied from Microsoft's published all-role/both-flow
+  example. That page's prose/table still mentions `0x00000305`; this implementation uses
+  the actual complete example without inventing an undocumented role-bit name. Endpoint
+  properties and unchanged defaults must be verified on the installed Windows target.
 - Pinned SDK and WDK packages together at `10.0.28000.2526`; no code-signing credentials,
   certificate installation or driver installation occur in the build helper.
 
@@ -54,6 +60,7 @@ relicense Microsoft's source or the Microsoft-derived driver files.
 - [ExDeleteTimer waiting requires APC_LEVEL or below](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-exdeletetimer)
 - [Pinned WDK NuGet build requirements](https://learn.microsoft.com/en-us/windows-hardware/drivers/install-the-wdk-using-nuget)
 - [Sample identity must be changed before release](https://learn.microsoft.com/en-us/windows-hardware/drivers/gettingstarted/from-sample-code-to-production-driver)
+- [Never-default endpoint property, association requirement and published mask](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/pkey-audiodevice-neversetasdefaultendpoint)
 - [Modern kernel driver signing policy](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/kernel-mode-code-signing-policy--windows-vista-and-later-)
 
 This provenance and the portable tests establish source lineage and limited algorithm

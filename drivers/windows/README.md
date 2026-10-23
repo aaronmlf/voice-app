@@ -21,6 +21,15 @@ Use the project's explicit administrative installation helper only for an approp
 signed, reviewed package. Do not use sample DevCon instructions: the required instance
 identity is created explicitly by that helper.
 
+The INF requests Windows' documented `PKEY_AudioDevice_NeverSetAsDefaultEndpoint` policy
+for both endpoints. This keeps their default-role selection separate from the deliberate
+per-application route. Select **Voice App Virtual Microphone** explicitly inside Discord,
+Audacity or Tenacity, rather than selecting the application's generic "Default" device;
+select **Voice App Virtual Input** explicitly inside Voice App. The property does not
+replace those application selections. Its installed behavior, including preservation of
+the existing system defaults, still requires native acceptance; no control over unrelated
+administrative or external policy changes is claimed.
+
 ## Build
 
 Run the following from PowerShell 7 on a Windows build host with Visual Studio 2026

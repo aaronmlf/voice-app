@@ -64,6 +64,8 @@ HKR,,CLSID,,%Proxy.CLSID%
 HKR,,FriendlyName,,%VOICEAPPVIRTUALAUDIO.TopologyVoiceAppCapture.szPname%
 
 HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+; Explicit device selection only: Microsoft's published all-role/both-flow mask.
+HKR,EP\0,%PKEY_AudioDevice_NeverSetAsDefaultEndpoint%,0x00010001,0x00000307
 
 ; The following lines opt-in to pull mode.
 HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
@@ -86,6 +88,8 @@ HKR,,CLSID,,%Proxy.CLSID%
 HKR,,FriendlyName,,%VOICEAPPVIRTUALAUDIO.TopologyVoiceAppRender.szPname%
 
 HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+; Explicit device selection only: Microsoft's published all-role/both-flow mask.
+HKR,EP\0,%PKEY_AudioDevice_NeverSetAsDefaultEndpoint%,0x00010001,0x00000307
 
 ; The following lines opt-in to pull mode.
 HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,0x1
@@ -169,6 +173,7 @@ KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
 KSNODETYPE_ANY   = "{00000000-0000-0000-0000-000000000000}"
 
 PKEY_AudioEndpoint_Association               = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+PKEY_AudioDevice_NeverSetAsDefaultEndpoint   = "{F3E80BEF-1723-4FF2-BCC4-7F83DC5E46D4},3"
 PKEY_AudioEndpoint_Supports_EventDriven_Mode = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},7"
 
 ;Localizable
