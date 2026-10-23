@@ -628,6 +628,15 @@ pub struct MetricsSnapshot {
     pub input_underruns: u64,
     pub input_overruns: u64,
     pub monitor_overruns: u64,
+    /// PipeWire diagnostic: incomplete monitor queue writes, counted as events.
+    #[serde(default)]
+    pub monitor_producer_overruns: u64,
+    /// PipeWire diagnostic: frames discarded to recover a delayed monitor consumer.
+    #[serde(default)]
+    pub monitor_trimmed_frames: u64,
+    /// PipeWire diagnostic: renders with no output frames; these are not overruns.
+    #[serde(default)]
+    pub monitor_empty_callbacks: u64,
     pub recording_overruns: u64,
     pub non_finite_samples: u64,
     pub output_peak: f32,
@@ -640,6 +649,9 @@ pub struct AudioMetrics {
     pub input_underruns: AtomicU64,
     pub input_overruns: AtomicU64,
     pub monitor_overruns: AtomicU64,
+    pub monitor_producer_overruns: AtomicU64,
+    pub monitor_trimmed_frames: AtomicU64,
+    pub monitor_empty_callbacks: AtomicU64,
     pub recording_overruns: AtomicU64,
     pub non_finite_samples: AtomicU64,
     pub output_peak: AtomicU32,
@@ -653,6 +665,9 @@ impl AudioMetrics {
             input_underruns: self.input_underruns.load(Ordering::Relaxed),
             input_overruns: self.input_overruns.load(Ordering::Relaxed),
             monitor_overruns: self.monitor_overruns.load(Ordering::Relaxed),
+            monitor_producer_overruns: self.monitor_producer_overruns.load(Ordering::Relaxed),
+            monitor_trimmed_frames: self.monitor_trimmed_frames.load(Ordering::Relaxed),
+            monitor_empty_callbacks: self.monitor_empty_callbacks.load(Ordering::Relaxed),
             recording_overruns: self.recording_overruns.load(Ordering::Relaxed),
             non_finite_samples: self.non_finite_samples.load(Ordering::Relaxed),
             output_peak: f32::from_bits(self.output_peak.load(Ordering::Relaxed)),
@@ -696,6 +711,27 @@ impl Default for AudioShared {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_metrics_preserve_health_counters_without_monitor_diagnostics() {
+        let legacy = serde_json::json!({
+            "frames": 256,
+            "input_underruns": 1,
+            "input_overruns": 2,
+            "monitor_overruns": 3,
+            "recording_overruns": 4,
+            "non_finite_samples": 5,
+            "output_peak": 0.25,
+            "active": true,
+            "algorithmic_latency_frames": 0,
+        });
+        let snapshot: MetricsSnapshot = serde_json::from_value(legacy).unwrap();
+        assert_eq!(snapshot.monitor_overruns, 3);
+        assert_eq!(snapshot.monitor_producer_overruns, 0);
+        assert_eq!(snapshot.monitor_trimmed_frames, 0);
+        assert_eq!(snapshot.monitor_empty_callbacks, 0);
+        assert_eq!(snapshot.frames, 256);
+        assert!(snapshot.active);
+    }
     #[test]
     fn legacy_settings_get_default_order_and_invalid_orders_are_rejected() {
         let legacy: DspSettings = serde_json::from_str(r#"{"gain_db":-3.0}"#).unwrap();
