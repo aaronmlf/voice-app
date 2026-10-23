@@ -84,6 +84,14 @@ namespace VoiceAppDriverSetup {
     [StructLayout(LayoutKind.Sequential)] public struct DeviceInfo {
         public uint Size; public Guid ClassGuid; public uint DevInst; public UIntPtr Reserved;
     }
+    public sealed class InstallResult {
+        public bool RebootRequired { get; private set; }
+        public bool AlreadyRanked { get; private set; }
+        public InstallResult(bool rebootRequired, bool alreadyRanked) {
+            RebootRequired = rebootRequired;
+            AlreadyRanked = alreadyRanked;
+        }
+    }
     public static class Native {
         [DllImport("setupapi.dll", SetLastError=true)]
         static extern IntPtr SetupDiCreateDeviceInfoList(ref Guid guid, IntPtr parent);
@@ -101,7 +109,7 @@ namespace VoiceAppDriverSetup {
         static extern bool UpdateDriverForPlugAndPlayDevicesW(IntPtr parent, string hardware,
             string inf, uint flags, out bool reboot);
         static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
-        public static bool Install(string inf, bool create) {
+        public static InstallResult Install(string inf, bool create) {
             Guid media = new Guid("4d36e96c-e325-11ce-bfc1-08002be10318");
             IntPtr set = SetupDiCreateDeviceInfoList(ref media, IntPtr.Zero);
             if (set == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -117,8 +125,17 @@ namespace VoiceAppDriverSetup {
                     registered = true;
                 }
                 bool reboot;
-                Check(UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, @"ROOT\VoiceAppVirtualAudio", inf, 0, out reboot));
-                return reboot;
+                if (!UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, @"ROOT\VoiceAppVirtualAudio", inf, 0, out reboot)) {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error == 259) { // ERROR_NO_MORE_ITEMS: equal/better-ranked driver retained.
+                        // PnP may already have bound the staged package after registration.
+                        // Do not force a downgrade or roll back that device. The caller
+                        // still verifies its exact ownership and healthy device status.
+                        return new InstallResult(false, true);
+                    }
+                    throw new Win32Exception(error);
+                }
+                return new InstallResult(reboot, false);
             } catch {
                 // Roll back only the devnode created by this attempt. Existing devices
                 // and the staged signed package are retained after an update failure.
@@ -130,11 +147,15 @@ namespace VoiceAppDriverSetup {
 }
 '@
 }
-$reboot = [VoiceAppDriverSetup.Native]::Install($inf, $null -eq $existing)
+$installResult = [VoiceAppDriverSetup.Native]::Install($inf, $null -eq $existing)
 $installed = Get-OwnedDevice
 if ($null -eq $installed) { throw 'Windows did not expose the expected fixed device instance.' }
-if ($installed.Status -ne 'OK' -and -not $reboot) {
+if ($installed.Status -ne 'OK' -and -not $installResult.RebootRequired) {
     throw "The virtual audio device is not ready: $($installed.Status). Check Windows driver diagnostics."
 }
-Write-Output "Voice App driver installation requested. Restart required: $reboot."
+if ($installResult.AlreadyRanked) {
+    Write-Output 'The signed package was staged. Windows retained an equal-or-better-ranked driver on the verified healthy Voice App device; no replacement or downgrade was forced.'
+} else {
+    Write-Output "Voice App driver installation requested. Restart required: $($installResult.RebootRequired)."
+}
 Write-Output 'Open Voice App, explicitly enable its virtual output, then select Voice App Virtual Microphone in the destination application.'
