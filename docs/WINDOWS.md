@@ -1,129 +1,209 @@
 # Windows
 
-O alvo inicial é Windows 10/11 x86_64 com MSVC. A compilação e os testes automatizados
-usam um runner Windows Server 2022; isso não comprova funcionamento em hardware pessoal
-nem compatibilidade com chamadas. A entrega é experimental.
+A integração do microfone virtual está em desenvolvimento. O aplicativo pode selecionar
+explicitamente o par de endpoints do driver próprio, mas ainda não há uma distribuição
+assinada e qualificada desse driver para instalação normal. Compilar o código, encontrar
+os endpoints ou passar um teste offline não comprova o percurso em um Windows instalado.
 
-## Escopo da primeira versão
+O alvo inicial do **driver é Windows 11 x64**. O adaptador de áudio e a prévia do aplicativo
+usam MSVC/WASAPI; isso não estende o suporte do driver ao Windows 10, ARM64 ou Wine.
+A [prévia `windows-v0.1.0-alpha.1`](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.1)
+é anterior a esta integração e não fornece um microfone virtual pronto para chamadas.
 
-O aplicativo compartilha a interface, os 12 presets originais, o DSP, a biblioteca,
-o soundboard, os comandos, a gravação e os formatos de intercâmbio do Linux.
-O adaptador WASAPI prepara captura física, Ouvir-me nos dois canais dos fones,
-pré-escuta e captura explícita do desktop. As filas e o replay têm capacidade fixa;
-arquivos longos são escritos incrementalmente no disco.
+## Percurso do áudio
 
-O formato inicial é float32 a 48 kHz. Dispositivos que não oferecem o formato
-necessário retornam diagnóstico; não há uma promessa de suporte a todas as taxas.
-As configurações padrão de áudio do Windows não são modificadas.
+```text
+Microfone físico → efeitos → mistura com soundboard → teto de segurança
+                                                       ↓
+                                           Voice App Virtual Input
+                                                       ↓ driver
+                                        Voice App Virtual Microphone
+                                                       ↓
+                                     Discord / Audacity / Tenacity
+```
 
-**Microfone virtual próprio ainda não implementado.** Capturar/reproduzir com WASAPI
-não cria um dispositivo de entrada para Discord, OBS, jogos ou gravadores como
-Audacity/Tenacity. A interface e o
-comando Status informam essa limitação. A versão permite preparar efeitos e testar
-monitoração/gravação; não representa a conclusão do marco de paridade Windows.
-Drivers de terceiros não são incluídos no pacote.
+**Voice App Virtual Input** é a saída de reprodução usada pelo Voice App para entregar o
+áudio ao driver. **Voice App Virtual Microphone** é a entrada de captura que o programa
+de destino deve selecionar. Os fones continuam sendo outra saída, com volume independente.
+O aplicativo não altera o microfone ou a saída padrão do Windows.
 
-## Compilação e pacote
+A pré-escuta de sons e o volume de **Ouvir-me** ficam na rota local dos fones. A captura
+explícita do desktop tem sua própria fila e não entra na rota virtual. Um trecho do desktop
+só passa a fazer parte do soundboard quando o usuário o importa. O driver não abre um
+microfone físico nem aplica DSP: transporta PCM estéreo de 48 kHz/16 bits, enquanto o
+adaptador WASAPI exige um formato de mix compartilhado estéreo float32 a 48 kHz.
 
-O workflow Windows usa Rust fixado, um job Cargo por vez, MSVC e libclang para as
-dependências C/C++. Os gates incluem formatação, Clippy, limites entre crates,
-testes Rust compatíveis com a plataforma, processamento offline e smoke de IPC/MCP.
-Os testes de CLI/DSP/biblioteca/IPC/MCP mantêm o áudio desligado. Um gate nativo separado
-foi preparado para abrir a GUI do mesmo ZIP extraído no runner Windows, renderizar uma
-captura e encerrar normalmente. Ele solicita o adaptador de software WARP pelo backend
-DX12, com compilador de shaders FXC, e confere o adaptador efetivamente inicializado:
-`Dx12`, tipo `Cpu`, sem fallback para GPU no modo QA. O teste observa o estado via IPC,
-exige os 12 presets originais, zero frames e nenhuma captura, monitoração, gravação,
-reprodução ou captura desktop. Mede o pico de memória observado do processo da GUI.
-A [CI nativa do commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538)
-aprovou o smoke gráfico do mesmo ZIP extraído em Windows Server 2022. A GUI usou WGPU,
-DX12/FXC e Microsoft Basic Render Driver de tipo `Cpu`, e encerrou com código 0. O teste
-durou 4,6434662 s e observou pico de 78.139.392 bytes (74,52 MiB) no processo da GUI.
-Onze amostras IPC mostraram áudio desligado e zero frames; a biblioteca continha
-exatamente os 12 presets originais.
+A transmissão usa uma única instância do processamento. A identificação dos endpoints
+vem da topologia e da identidade do driver, não apenas dos nomes editáveis. Eles são
+excluídos das seleções de microfone físico, fones e captura desktop. Uma seleção virtual
+salva não pode ser substituída automaticamente por outro dispositivo. Falhas de uma rota
+necessária devem interromper a transmissão e produzir silêncio; a aceitação desse
+comportamento no kernel instalado ainda está pendente.
 
-O PNG de 1024×768 correspondeu a dez medições nativas da área cliente. O monitor único
-também tinha 1024×768, com DPI 96, enquanto o tamanho nominal pedido era 1280×800.
-A fixture registrou `single_monitor_size_clamp`: aceita o tamanho solicitado ou o
-clamp exato demonstrado no monitor único, além de exigir PNG igual a pelo menos duas
-observações reais da janela. O candidato anterior `8e974ba` havia reprovado por usar
-um limite mínimo fixo de largura; sua falha foi preservada. A nova aprovação cobre
-inicialização, renderização e encerramento curto, sem interação manual, layout maior
-ou sessão longa de GUI.
+## Instalação do driver
 
-O helper empacotado `scripts/test-windows-gui.ps1` é executado explicitamente, com
-`-CliPath`, `-GuiPath`, `-ReportPath` e `-OutputDirectory`. Ele usa biblioteca e endpoint
-locais novos; não é executado ao abrir o aplicativo. Internamente passa as opções
-`--smoke-seconds 4`, `--screenshot`, `--page voices`, `--qa-size 1280x800`,
-`--qa-software-renderer` e `--qa-report`. As opções especiais de renderização exigem
-Windows e `--smoke-seconds`. Report, PNG, dados do adaptador e logs são retidos por
-allowlist; a biblioteca temporária fica fora dos artifacts. O teste não requer rede
-nem abre dispositivos de áudio. Esse smoke curto não valida interação manual ou sessão longa.
+O [componente do driver](../drivers/windows/README.md) tem compilação e licença próprias.
+Os artefatos de desenvolvimento gerados pela CI contêm SYS/CAT **sem assinatura**; não são
+um instalador público utilizável em um Windows protegido. Gerar um catálogo com Inf2Cat
+não equivale a assiná-lo nem a obter aprovação da Microsoft.
 
-O gate separado Wine usa prefixo privado, namespace sem rede e drivers de áudio desligados.
-Primeiro confere o checksum/limites do ZIP, `--help`, `--version` e geração offline de um tom
-de 220 Hz por 0,25 s: 12.000 frames float32 finitos a 48 kHz. Depois tenta o serviço com os
-mesmos controles de acesso da aplicação. Na tentativa já observada com Wine 9.0, o serviço
-recusou uma DACL sem proteção antes de abrir a GUI. O classificador preparado aceita apenas
-a mensagem exata `voice-cli: private path must have a protected DACL`, com encerramento
-normal de código não zero e os testes offline aprovados, como
-`unsupported_security_environment`. GUI, IPC e compatibilidade Wine ficam explicitamente
-não qualificados. Outros erros, falhas do loader, sinais ou logs adicionais continuam
-reprovando. Nenhuma verificação de permissões foi enfraquecida.
+Quando houver um pacote assinado e revisado para o alvo, a instalação será uma operação
+administrativa explícita. Na raiz do código-fonte, use PowerShell 7 aberto como administrador:
 
-Se uma versão futura do Wine preservar as permissões exigidas e iniciar o serviço,
-o script exige a regressão completa de biblioteca, IPC/MCP, reinício e GUI antes de
-registrar aprovação dessa execução. Aceitar a recusa segura no gate não significa suporte
-ao Wine. No mesmo run `40008350538`, o Wine 9.0 (Ubuntu 9.0~repack-4build3) verificou
-help/version e o tom offline de 220 Hz: 12.000 frames float32 finitos e limitados a 48 kHz.
-O serviço encerrou com código 1 e a mensagem exata `voice-cli: private path must have a protected DACL`.
-O relatório registrou `unsupported_security_environment`, `offline_checks_passed=true` e
-`security_refusal_verified=true`; GUI, IPC e compatibilidade Wine permaneceram `false`.
-O gate verificou a recusa segura sem alterar a proteção de acesso. A aprovação nativa
-não qualifica Wine, WASAPI físico, drivers ou Windows 10/11 real.
+```powershell
+pwsh -File .\scripts\install-windows-driver.ps1 -PackageDirectory 'C:\Pacotes\VoiceAppVirtualAudio-assinado'
+```
 
+O diretório deve conter `VoiceAppVirtualAudio.inf`, `VoiceAppVirtualAudio.sys` e
+`VoiceAppVirtualAudio.cat`. O utilitário exige catálogo com assinatura válida; o Windows
+verifica a confiança do pacote e a participação dos arquivos no catálogo durante a
+adição ao Driver Store e a instalação. O utilitário recusa o artefato não assinado da CI.
+Ele não importa
+certificados, habilita test signing, desativa proteções ou muda os padrões de áudio.
+Se informar que uma reinicialização é necessária, conclua essa etapa antes de testar.
 
-O ZIP nativo contém GUI e CLI, documentação, licenças, notices e fontes exigidas pelas
-dependências. O manifesto SHA-256 acompanha o arquivo. O smoke repete os comandos
-usando os executáveis extraídos, com uma biblioteca temporária vazia e exatamente
-os 12 presets originais. A release usa o namespace `windows-v…`, separado do Linux.
-O pacote é construído da fonte pública revisada; dados pessoais e presets de usuário
-não entram na fonte nem no ZIP. Consulte também `packaging/windows/README.md`.
+Use esse utilitário: ele cria a instância fixa `ROOT\VoiceAppVirtualAudio\0000`, com hardware ID
+`ROOT\VoiceAppVirtualAudio`, exigida pela descoberta do adaptador. As instruções genéricas
+DevCon dos exemplos podem criar outra identidade e não são o procedimento deste projeto.
+Abrir o Voice App não instala ou atualiza o driver.
 
-O job nativo `40008350538` aprovou 99 testes Rust e 15 Python (11 dos guardas Wine/WAV e
-quatro portáveis), mais quatro reexecuções de regressão no corpus. Formatação, Clippy,
-limites, corpus, benchmark, licenças, pacote/checksum, smoke CLI/DSP/biblioteca/IPC/MCP
-e inspeção PE também passaram; o candidato foi anexado como artifact. O benchmark DSP
-não mede latência de áudio ponta a ponta. A publicação exige a revisão dos gates, da fonte pública exata e dos assets
-efetivamente publicados; consulte a página de Releases para obter os arquivos distribuídos.
+Para remover explicitamente o dispositivo, no mesmo contexto administrativo:
 
-Dados locais usam `%LOCALAPPDATA%\voice-app`. GUI, CLI e MCP compartilham o motor por
-named pipe local restrito ao usuário, sem porta de rede. `--socket` continua aceitando
-um caminho lógico para criar sessões isoladas; não é um endereço de servidor remoto.
+```powershell
+pwsh -File .\scripts\install-windows-driver.ps1 -Remove
+```
 
-## Validação pendente em Windows real
+A remoção conserva o pacote no Driver Store e a biblioteca do aplicativo. Instalação,
+atualização, remoção e reinstalação continuam sujeitas a validação em uma máquina Windows
+real; a existência do utilitário não representa aprovação dessas operações.
 
-- Abrir a GUI e completar o fluxo sem terminal no Windows 10 e 11.
-- Verificar microfone, Ouvir-me L/R, ganho independente, pré-escuta e gravação.
-- Trocar/perder dispositivos, suspender e retomar; verificar recuperação e silêncio em falhas.
-- Capturar desktop estéreo e confirmar isolamento da rota de voz.
-- Medir CPU, memória, cortes e latência física; executar sessões de 60 minutos e quatro horas.
-- Validar instalação, atualização, desinstalação e acesso recusado de outra conta.
-- Desenvolver, assinar e validar o dispositivo virtual antes de anunciar envio a chamadas.
+## Configurar pela interface
 
-O teste prolongado Linux em PipeWire privado não qualifica essas capacidades Windows.
-A meta de 80 ms com pitch continua aberta. Os callbacks PCM próprios evitam alocação,
-locks e I/O; isso não certifica os caminhos internos de erro de bibliotecas do sistema.
+1. Em **Configurações**, selecione o microfone físico e os fones.
+2. Na seção **Microfone virtual**, aguarde **Driver detectado · envio desligado**.
+3. Marque **Enviar voz e soundboard ao microfone virtual**.
+4. Clique em **Conectar áudio** ou **Aplicar e reconectar**. Confirme **envio ativo**.
+5. No Discord, escolha **Voice App Virtual Microphone** como dispositivo de entrada.
+   No Audacity/Tenacity, selecione essa entrada para gravação; use o host WASAPI em
+   modo compartilhado, quando disponível, e configure 48 kHz.
 
-## Microfone virtual
+Use o nome atual da entrada se ela tiver sido renomeada no Windows. O endpoint de
+reprodução **Virtual Input** não é o dispositivo de gravação. Operação exclusiva não
+faz parte do contrato inicial. Uso simultâneo por mais de um cliente deve ser validado
+no alvo; a intenção é usar o compartilhamento do mecanismo de áudio do Windows.
 
-O driver será um subsistema separado, com protocolo de transporte PCM, recuperação,
-limites de memória e comportamento de silêncio quando o aplicativo desconectar.
-Não se deve mudar o microfone padrão do sistema nem instalar drivers automaticamente
-ao abrir a GUI. Desenvolvimento, teste e distribuição têm gates próprios:
+Escolha uma voz e dispare um som para verificar ambos no destino. **Ouvir-me** começa
+desligado e permite ajustar apenas o retorno nos fones; não é necessário ativá-lo para
+transmitir. **Pré-escutar** permite ouvir um som localmente sem enviá-lo. **Desconectar**
+cancela também a intenção de reconexão automática da sessão.
 
-- [Referência SYSVAD/WaveRT da Microsoft](https://learn.microsoft.com/en-us/samples/microsoft/windows-driver-samples/sysvad-virtual-audio-device-driver-sample/).
-- [Requisitos de assinatura de drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/dashboard/code-signing-reqs).
+**Driver detectado** significa que o par esperado e seu formato foram encontrados.
+**Envio ativo** significa que a rota solicitada está rodando. Nenhum desses estados
+substitui ouvir ou gravar o sinal no destino. Se aparecer um diagnóstico de ausência,
+ambiguidade, formato ou dispositivo salvo indisponível, preserve o diagnóstico e corrija
+a instalação/seleção; o aplicativo não deve trocar silenciosamente a rota virtual.
 
-Essas referências orientam o desenvolvimento; o sample e seus binários não são
-distribuídos como um driver pronto do Voice App.
+## Usar pela CLI ou MCP
+
+GUI, CLI e MCP compartilham o registro de comandos. `doctor` enumera e consulta o par sem
+iniciar captura; seu campo `virtual_microphone_status` contém o diagnóstico. No serviço,
+`status.virtual_microphone` informa `available`, `active`, `render_device`, `capture_device`
+e `diagnostic`. A capacidade só é anunciada no Windows quando um par válido está disponível.
+
+No primeiro terminal, inicie o serviço local:
+
+```powershell
+.\voice-cli.exe serve
+```
+
+No segundo terminal, consulte a sessão e solicite explicitamente a saída detectada:
+
+```powershell
+.\voice-cli.exe doctor
+.\voice-cli.exe devices
+$status = .\voice-cli.exe status | ConvertFrom-Json
+if (-not $status.virtual_microphone.available) { throw 'Par virtual indisponível: consulte o diagnóstico.' }
+$virtualOutput = $status.virtual_microphone.render_device
+.\voice-cli.exe start --virtual-output $virtualOutput
+.\voice-cli.exe select builtin.radio
+.\voice-cli.exe status
+# Ao terminar:
+.\voice-cli.exe stop
+```
+
+`--input` e `--output` permitem escolher o microfone físico e os fones por seus IDs
+estáveis retornados em `devices`; `--virtual-output` é um ID separado, obtido do par
+validado. `serve --virtual-output ID` exige também `--start`. Sem a opção, sessões antigas
+mantêm `virtual_output_device: null` e não habilitam essa nova rota por conta própria.
+Uma rota explicitamente escolhida é lembrada junto com a intenção de conexão da sessão.
+
+Pelo MCP ou `voice-cli ctl`, o mesmo comando `start` aceita
+`config.virtual_output_device`; `config.output_device` continua indicando os fones.
+Não há instalação de driver ou mudança de configuração global por esses comandos.
+
+Os dados locais ficam em `%LOCALAPPDATA%\voice-app`. O controle usa named pipe restrito
+ao usuário, sem porta de rede. A distribuição pública inclui apenas os 12 presets
+originais; biblioteca, presets e gravações pessoais permanecem locais.
+
+## Aceitação sintética com o driver instalado
+
+O exemplo `virtual-microphone-smoke` precisa de Windows nativo e de um par válido já
+instalado. Ele abre somente os dois endpoints próprios, sem microfone físico, fones ou
+mudança dos dispositivos padrão. Feche clientes que estejam enviando áudio ao Virtual
+Input para que a verificação inicial de silêncio seja válida.
+
+Na raiz do código-fonte, execute uma compilação/teste por vez:
+
+```powershell
+New-Item -ItemType Directory -Force .\target\acceptance | Out-Null
+cargo run --release --jobs 1 -p voice-wasapi --example virtual-microphone-smoke -- --report .\target\acceptance\virtual-microphone.json
+```
+
+O relatório exige um caminho novo e nunca sobrescreve arquivos. O programa exercita o
+publicador de áudio de produção com voz sintética de 503 Hz, ganho DSP de −6 dB e
+soundboard simultâneo de 997 Hz. Injeta também uma pré-escuta distinta de 1777 Hz, com
+volume de Ouvir-me zerado. Confere ganho, presença dos dois componentes, correlação com
+o sinal preparado, canais L/R, amostras finitas e ausência da pré-escuta na captura.
+Depois encerra a reprodução e mantém a captura aberta para verificar silêncio.
+
+Código de saída `0` e `accepted: true` exigem a aprovação efetiva dessas verificações.
+`unavailable` retorna `2` e não qualifica um driver ausente, ambíguo ou incompatível;
+outras falhas retornam `1`. O limite de duração da medição é de dez segundos, com
+armazenamento de captura limitado a cinco segundos. Chamadas síncronas do sistema e
+encerramento não têm um supervisor externo para interromper bloqueios. O limite adicional
+de buffers PCM do validador é cerca de 2,70 MiB,
+excluindo o DSP, estado compartilhado, driver e mecanismo de áudio do Windows. Isso não
+é uma medição de RSS do processo.
+
+O alinhamento estimado pelo relatório usa contadores de callbacks e captura por software.
+Não mede latência física ponta a ponta. O teste não verifica queda abrupta do produtor,
+clientes simultâneos, suspensão, reconexão ou uma sessão longa. Não substitui a aceitação
+manual no Discord ou em Audacity/Tenacity. A execução desse percurso com kernel instalado
+continua pendente enquanto não houver um alvo Windows apropriado.
+
+## Compilação, evidências e distribuição
+
+O aplicativo é compilado com MSVC, Rust fixado e um job Cargo por vez. A CI separa
+formatação, Clippy, testes, limites entre crates, corpus, benchmark, licenças e pacote.
+O smoke offline do ZIP testa CLI/DSP/biblioteca/IPC/MCP sem captura. O smoke gráfico
+nativo usa WGPU/DX12 e adaptador de software, observando estado, renderização e encerramento
+com áudio desligado. A aprovação desses gates anteriores não demonstra o driver novo.
+
+O driver tem um workflow WDK próprio: compila x64 com ferramentas fixadas, executa
+verificações INF/catálogo e retém somente artefatos de desenvolvimento não assinados.
+`cargo xtask driver-check` exercita o transporte e o relógio portáveis sem carregar o
+kernel. Veja [compilação, limites de memória e proveniência](../drivers/windows/README.md).
+O Rust original mantém MIT OR Apache-2.0; o componente derivado da Microsoft conserva
+MS-PL e seus avisos. Um novo pacote público deve ser construído da fonte pública revisada,
+com evidência separada de assinatura e instalação do driver.
+
+Wine verificou comandos offline da prévia e recusou um ambiente sem a proteção DACL
+exigida. GUI/IPC no Wine continuam sem qualificação. **Wine não carrega nem valida este
+driver de áudio do kernel Windows** e não substitui o alvo instalado de aceitação.
+
+Permanecem abertos: assinatura para distribuição, instalação/HVCI/Driver Verifier,
+captura da mistura por clientes reais, silêncio após crash, taxas e canais, isolamento
+do desktop, clientes simultâneos, troca de dispositivos, suspensão, memória residente e
+não paginada, CPU, cortes e latência física. A meta de 80 ms com pitch/formante continua
+aberta. Sessões de 60 minutos e quatro horas no Windows exigem suas próprias evidências;
+os resultados do PipeWire Linux e o nome da branch `beta` não os qualificam.

@@ -254,3 +254,27 @@ Windows 10/11 com hardware, driver virtual, uso em chamadas/gravadores, sessões
 Wayland e latência física — incluindo a meta de 80 ms com pitch/formante — continuam
 pendentes nos respectivos contextos. O nome da branch `beta` é organizacional e não
 promove a aplicação a beta ou estável.
+
+
+## Windows virtual microphone implementation — 2026-10-23
+
+Added the experimental WaveRT render/capture driver and explicit WASAPI route for
+processed voice plus soundboard. Monitoring, preview and desktop capture stay separate.
+A missing or mismatched endpoint pair fails without replacing it. The initial driver
+target is Windows 11 x64, stereo PCM16 at 48 kHz. Its Microsoft-derived component
+retains MS-PL; independently original helpers and Rust retain MIT OR Apache-2.0.
+
+Local Linux validation passed 135 Rust tests, 51 Python tests, formatting, Clippy,
+component boundaries and portable tests of the actual C++ bridge/clock. Private
+PipeWire regression also passed without hardware or user audio settings.
+These checks do not load the Windows driver or qualify its new native compilation.
+The WDK workflow builds an explicitly unsigned development artifact, never installs
+a driver/certificate or changes boot protections. The installation helper requires
+a signed package; the native synthetic acceptance example remains unexecuted.
+
+Additional prepared application PCM is bounded to 64 KiB. Driver audio-data payload
+is capped at 144 KiB, excluding objects, MDLs, OS audio and allocator overhead.
+Installed-kernel execution, signing, HVCI/Verifier, real CPU/memory, producer-crash
+silence, physical latency, Discord and Audacity/Tenacity acceptance remain pending.
+The existing windows-v0.1.0-alpha.1 release predates this integration. No four-hour
+run was restarted and no beta or 80 ms physical-latency qualification is implied.

@@ -177,3 +177,23 @@ em `target/github-windows/evidence/ci-outcome.json`, `native/windows-offline-rep
 e `wine/report.json`, os dois últimos relativos à mesma pasta de evidências.
 WASAPI não cria um microfone virtual; driver, GUI/hardware Windows, Discord/OBS e gravadores
 nessa plataforma continuam pendentes. Wine não substitui validação em Windows físico.
+
+
+## Microfone virtual Windows — implementação de 23/10/2026
+
+O código adiciona um par WaveRT próprio e uma rota WASAPI explícita de efeitos e
+soundboard, mantendo monitoração, pré-escuta e desktop separados. O gate local
+`xtask check` passou 135 testes Rust, 51 Python, formatação, Clippy, limites entre
+crates e os testes C++ portáveis da ponte/relógio reais do driver. Estes verificam
+concorrência, saturação, reinício, encerramento, silêncio e ausência de alocação no
+transporte; não carregam um driver. O exemplo `virtual-microphone-smoke` prepara a
+aceitação nativa com sinal sintético e relatório sem sobrescrita, mas sua execução
+exige um driver instalado e não foi aprovada por esse gate Linux.
+
+A rota adiciona 64 KiB de PCM preparado no aplicativo. Os dois buffers cíclicos do
+driver são limitados a 64 KiB cada, com ponte de 16 KiB (144 KiB de payload máximo);
+isso não representa consumo total nem medição de memória não paginada/RSS. O candidato
+WDK é explicitamente não assinado. Assinatura, instalação Windows 11 x64, HVCI/Verifier,
+silêncio após crash, captura por Discord/Audacity/Tenacity, clientes simultâneos,
+CPU/memória reais e latência física continuam pendentes. A meta de 80 ms não foi
+qualificada. Wine não valida o kernel. O lote de quatro horas não foi retomado.

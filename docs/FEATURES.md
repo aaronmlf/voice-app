@@ -31,7 +31,8 @@ Nenhum marco inteiro foi promovido a estável.
 | Validação reprodutível de áudio | Verificada em grafo privado; quatro horas reprovadas | Básico de 60 min aprovado: 3.600,018 s ativos/716 janelas saudáveis. Mistura: 10.675,083 s saudáveis de 14.400 s exigidos, 2.128/2.129 janelas e +1 `monitor_overruns`; serviço terminou com código 1. RSS máximo do motor 23,30 MiB; pico do serviço 51,24 MiB, sem OOM. PCM descartado, replay limitado. Ver `VALIDATION.md` |
 | Atalhos globais / bandeja | Planejada | Portal Wayland e fallback CLI |
 | IA de conversão de voz | Planejada | Worker, modelos/licenças/hashes e hardware medido |
-| Windows nativo | Experimental; CI nativa aprovada | [Commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538): 99 testes Rust, 15 Python, quatro reexecuções de regressão do corpus, demais gates nativos e smoke offline do ZIP aprovados. Smoke gráfico aprovado em 4,643 s, pico observado 74,52 MiB, PNG 1024×768 limitado ao monitor único e áudio desligado. Wine 9.0 verificou comandos offline e recusou a DACL sem proteção (`unsupported_security_environment`); GUI/IPC e compatibilidade Wine sem qualificação. Sem microfone virtual e sem validação de hardware Windows 10/11 |
+| Windows nativo | Experimental; CI nativa aprovada | [Commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538): 99 testes Rust, 15 Python, quatro reexecuções de regressão do corpus, demais gates nativos e smoke offline do ZIP aprovados. Smoke gráfico aprovado em 4,643 s, pico observado 74,52 MiB, PNG 1024×768 limitado ao monitor único e áudio desligado. Wine 9.0 verificou comandos offline e recusou a DACL sem proteção (`unsupported_security_environment`); GUI/IPC e compatibilidade Wine sem qualificação. Aquela versão não contém driver virtual; a implementação nova ainda não tem validação de kernel/hardware Windows 11 |
+| Microfone virtual Windows | Implementado em código; aceitação instalada pendente | Driver WaveRT estéreo PCM16/48 kHz, rota explícita de efeitos e soundboard, identificação nativa do par e monitoração/pré-escuta separadas. Gate Linux: 135 testes Rust, 51 Python e teste C++ real da ponte/relógio aprovados. Compilação WDK, assinatura, kernel, silêncio após crash, Discord e Audacity/Tenacity pendentes. Buffers incrementais preparados no aplicativo: 64 KiB; payload máximo dos buffers de áudio do driver: 144 KiB, sem contar objetos/MDLs/OS |
 | macOS | Planejada | Plugin virtual, assinatura e hardware próprios |
 | Comunidade/mobile | Planejada | Serviços e pareamento ainda não implementados |
 | AppImage/Flatpak | Planejada | Distribuição inicial em tar.gz |
@@ -42,3 +43,13 @@ Em [Linux/Ubuntu 24.04, commit `bd75106`](https://github.com/aaronmlf/voice-app/
 de dependências/licenças, integração PipeWire privada e pacote foram aprovados. Isso
 não acrescenta uma qualificação de quatro horas, hardware ou latência física.
 
+
+
+Registro local da publicação em 23/10: [prévia Windows windows-v0.1.0-alpha.1](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.1)
+publicada pelo workflow40015353388 a partir da fonte pública94da7b9. ZIP e checksum
+baixados em streaming e conferidos; 19 arquivos próprios/notice iguais ao snapshot
+revisado, ambos os PE AMD64 e hashes GUI/CLI correspondentes à evidência nativa.
+Smoke de GUI em Windows Server2022:5,705s, pico75,35MiB, áudio desligado. Wine
+verificou comandos offline e recusa de DACL, sem aprovação GUI/IPC. Isso não
+qualifica driver virtual, dispositivos Windows10/11 físicos, chamadas, gravadores,
+latência física ou beta. Quatro horas continuam deixadas de lado por pedido.
