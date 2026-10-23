@@ -69,7 +69,7 @@ function Get-StreamSha256([string]$Path) {
 function Complete-LogCopy([Threading.Tasks.Task]$Task) {
     if ($null -ne $Task) {
         Require ($Task.Wait(3000)) 'Process log stream did not close within three seconds after termination.'
-        $Task.GetAwaiter().GetResult()
+        [void]$Task.GetAwaiter().GetResult()
     }
 }
 function Invoke-Cli([string[]]$Arguments, [int]$TimeoutMilliseconds = 2000) {
