@@ -1142,14 +1142,29 @@ impl App {
                         .size(10.)
                         .color(MUTED),
                     );
-                    ui.label(
-                        RichText::new(if self.virtual_microphone() {
+                    let capture_label = if self.virtual_microphone() {
+                        #[cfg(windows)]
+                        {
+                            let render =
+                                self.status["virtual_microphone"]["render_device"].as_str();
+                            self.status["virtual_microphone"]["targets"]
+                                .as_array()
+                                .and_then(|targets| {
+                                    targets
+                                        .iter()
+                                        .find(|target| target["render_device"].as_str() == render)
+                                })
+                                .and_then(|target| target["capture_description"].as_str())
+                                .unwrap_or("Saída virtual selecionada")
+                        }
+                        #[cfg(not(windows))]
+                        {
                             "Voice App Virtual Microphone"
-                        } else {
-                            "Monitoração e gravação locais"
-                        })
-                        .size(11.),
-                    );
+                        }
+                    } else {
+                        "Monitoração e gravação locais"
+                    };
+                    ui.label(RichText::new(capture_label).size(11.));
                     #[cfg(windows)]
                     if self.virtual_microphone() {
                         ui.label(
@@ -2349,13 +2364,13 @@ impl App {
         .unwrap_or_default();
         ui.label(
             RichText::new(if status.active {
-                "Voice App Virtual Microphone · envio ativo"
+                "Envio ativo na conexão atual"
             } else if status.available {
-                "Driver detectado · envio desligado"
+                "Saída virtual detectada · envio desligado"
             } else if self.status.is_null() {
-                "Verificando driver…"
+                "Verificando saídas virtuais…"
             } else {
-                "Driver virtual ausente ou indisponível"
+                "Saída virtual ausente ou indisponível"
             })
             .size(13.)
             .color(if status.active { ACCENT } else { TEXT }),
@@ -2363,30 +2378,76 @@ impl App {
         if let Some(diagnostic) = status.diagnostic.as_deref() {
             ui.label(RichText::new(diagnostic).size(11.).color(MUTED));
         }
-        let mut enabled = self.audio_config.virtual_output_device.is_some();
-        let can_select = status.available && status.render_device.is_some();
-        if ui
-            .add_enabled(
-                can_select || enabled,
-                egui::Checkbox::new(&mut enabled, "Enviar voz e soundboard ao microfone virtual"),
-            )
-            .changed()
-            && set_virtual_output(
-                &mut self.audio_config,
-                enabled,
-                status.render_device.as_deref(),
-            )
-        {
+        ui.add_space(8.);
+        ui.label(
+            RichText::new("Enviar voz e soundboard para")
+                .size(12.)
+                .color(MUTED),
+        );
+        let mut selected = self.audio_config.virtual_output_device.clone();
+        egui::ComboBox::from_id_salt("windows-virtual-output")
+            .width(ui.available_width().min(570.))
+            .selected_text(virtual_output_selection_label(
+                &status.targets,
+                selected.as_deref(),
+            ))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut selected, None, "Desligado");
+                if let Some(saved) = self.audio_config.virtual_output_device.as_deref()
+                    && !status
+                        .targets
+                        .iter()
+                        .any(|target| target.render_device == saved)
+                {
+                    ui.selectable_value(
+                        &mut selected,
+                        Some(saved.to_owned()),
+                        format!("Indisponível · {saved}"),
+                    );
+                }
+                for target in &status.targets {
+                    ui.push_id(&target.render_device, |ui| {
+                        ui.selectable_value(
+                            &mut selected,
+                            Some(target.render_device.clone()),
+                            virtual_output_selection_label(
+                                &status.targets,
+                                Some(&target.render_device),
+                            ),
+                        )
+                        .on_hover_text(&target.render_device);
+                    });
+                }
+            });
+        if set_virtual_output(&mut self.audio_config, selected.as_deref(), &status.targets) {
             self.audio_config_dirty = true;
         }
-        if let Some(selected) = self.audio_config.virtual_output_device.as_deref()
-            && status.render_device.as_deref() != Some(selected)
-        {
-            ui.label(
-                RichText::new("O dispositivo salvo não foi detectado. A conexão aguardará esse dispositivo sem trocar a saída.")
-                    .size(11.)
-                    .color(Color32::LIGHT_RED),
-            );
+        if let Some(selected) = self.audio_config.virtual_output_device.as_deref() {
+            if let Some(target) = status
+                .targets
+                .iter()
+                .find(|target| target.render_device == selected)
+            {
+                ui.label(
+                    RichText::new(format!("Saída: {}", target.render_description))
+                        .size(12.)
+                        .color(MUTED),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "No Discord, escolha {} como entrada. No Audacity/Tenacity, escolha essa entrada para gravar em modo compartilhado.",
+                        target.capture_description,
+                    ))
+                    .size(12.)
+                    .color(MUTED),
+                );
+            } else {
+                ui.label(
+                    RichText::new("O dispositivo salvo não foi detectado. A conexão aguardará esse dispositivo sem trocar a saída.")
+                        .size(11.)
+                        .color(Color32::LIGHT_RED),
+                );
+            }
         }
         ui.label(
             RichText::new("Use Conectar áudio ou Aplicar e reconectar após alterar esta opção.")
@@ -2394,12 +2455,17 @@ impl App {
                 .color(MUTED),
         );
         ui.label(
-            RichText::new("No Discord, selecione Voice App Virtual Microphone como entrada. No Audacity/Tenacity, selecione essa entrada para gravação, usando um modo compartilhado.")
-                .size(12.)
+            RichText::new("Ouvir-me e a pré-escuta ficam nos fones selecionados acima, com volume independente do envio.")
+                .size(11.)
                 .color(MUTED),
         );
+        ui.add_space(8.);
+        ui.hyperlink_to(
+            "Baixar VB-CABLE (site oficial)",
+            "https://vb-audio.com/Cable/",
+        );
         ui.label(
-            RichText::new("A pré-escuta e o volume de Ouvir-me ficam nos fones. O aplicativo não instala o driver nem altera o microfone padrão. Detectar o driver não confirma os testes de chamada ou gravação no Windows.")
+            RichText::new("Instale o cabo separadamente e atualize a lista. O Voice App mantém os dispositivos padrão do Windows.")
                 .size(11.)
                 .color(MUTED),
         );
@@ -2414,11 +2480,15 @@ fn same_audio_config(left: &AudioConfig, right: &AudioConfig) -> bool {
 }
 
 #[cfg(any(windows, test))]
-fn set_virtual_output(config: &mut AudioConfig, enabled: bool, detected: Option<&str>) -> bool {
-    let desired = if enabled {
-        let Some(id) = detected.filter(|id| !id.is_empty()) else {
+fn set_virtual_output(
+    config: &mut AudioConfig,
+    selected: Option<&str>,
+    targets: &[voice_core::VirtualMicrophoneTarget],
+) -> bool {
+    let desired = if let Some(id) = selected {
+        if id.is_empty() || !targets.iter().any(|target| target.render_device == id) {
             return false;
-        };
+        }
         Some(id.to_owned())
     } else {
         None
@@ -2428,6 +2498,28 @@ fn set_virtual_output(config: &mut AudioConfig, enabled: bool, detected: Option<
     }
     config.virtual_output_device = desired;
     true
+}
+
+#[cfg(any(windows, test))]
+fn virtual_output_selection_label(
+    targets: &[voice_core::VirtualMicrophoneTarget],
+    selected: Option<&str>,
+) -> String {
+    let Some(selected) = selected else {
+        return "Desligado".into();
+    };
+    targets
+        .iter()
+        .find(|target| target.render_device == selected)
+        .map(|target| {
+            let provider = match target.provider.as_str() {
+                "vb_cable" => "VB-CABLE",
+                "voice_app" => "Voice App",
+                other => other,
+            };
+            format!("{} · {}", target.render_description, provider)
+        })
+        .unwrap_or_else(|| format!("Indisponível · {selected}"))
 }
 
 fn device_selection_label(
@@ -3133,6 +3225,16 @@ fn main() {
 mod virtual_output_tests {
     use super::*;
 
+    fn target(render: &str, capture: &str) -> voice_core::VirtualMicrophoneTarget {
+        voice_core::VirtualMicrophoneTarget {
+            provider: "vb_cable".into(),
+            render_device: render.into(),
+            capture_device: capture.into(),
+            render_description: "CABLE Input".into(),
+            capture_description: "CABLE Output".into(),
+        }
+    }
+
     #[test]
     fn changing_virtual_routing_is_a_pending_audio_configuration_change() {
         let original = AudioConfig::default();
@@ -3149,10 +3251,22 @@ mod virtual_output_tests {
             output_device: Some("headphones".into()),
             ..Default::default()
         };
-        assert!(set_virtual_output(&mut config, true, Some("owned-id")));
-        assert_eq!(config.virtual_output_device.as_deref(), Some("owned-id"));
-        assert!(!set_virtual_output(&mut config, true, Some("owned-id")));
-        assert!(set_virtual_output(&mut config, false, None));
+        let targets = [target("vb-render-id", "vb-capture-id")];
+        assert!(set_virtual_output(
+            &mut config,
+            Some("vb-render-id"),
+            &targets
+        ));
+        assert_eq!(
+            config.virtual_output_device.as_deref(),
+            Some("vb-render-id")
+        );
+        assert!(!set_virtual_output(
+            &mut config,
+            Some("vb-render-id"),
+            &targets
+        ));
+        assert!(set_virtual_output(&mut config, None, &targets));
         assert!(config.virtual_output_device.is_none());
         assert_eq!(config.input_device.as_deref(), Some("microphone"));
         assert_eq!(config.output_device.as_deref(), Some("headphones"));
@@ -3161,14 +3275,63 @@ mod virtual_output_tests {
     #[test]
     fn missing_virtual_device_never_enables_or_replaces_a_saved_route() {
         let mut config = AudioConfig::default();
-        assert!(!set_virtual_output(&mut config, true, None));
-        assert!(!set_virtual_output(&mut config, true, Some("")));
+        assert!(!set_virtual_output(&mut config, Some("missing-id"), &[]));
+        assert!(!set_virtual_output(&mut config, Some(""), &[]));
         assert!(config.virtual_output_device.is_none());
         config.virtual_output_device = Some("saved-owned-id".into());
-        assert!(!set_virtual_output(&mut config, true, None));
+        let targets = [target("different-cable", "different-capture")];
+        assert!(!set_virtual_output(
+            &mut config,
+            Some("saved-owned-id"),
+            &targets
+        ));
         assert_eq!(
             config.virtual_output_device.as_deref(),
             Some("saved-owned-id")
         );
+        assert_eq!(
+            virtual_output_selection_label(&targets, config.virtual_output_device.as_deref()),
+            "Indisponível · saved-owned-id",
+        );
+    }
+
+    #[test]
+    fn selecting_between_identically_named_cables_uses_exact_render_ids() {
+        let targets = [
+            target("render-a", "capture-a"),
+            target("render-b", "capture-b"),
+        ];
+        let mut config = AudioConfig::default();
+        assert!(set_virtual_output(&mut config, Some("render-b"), &targets));
+        assert_eq!(config.virtual_output_device.as_deref(), Some("render-b"));
+        assert_eq!(
+            virtual_output_selection_label(&targets, Some("render-b")),
+            "CABLE Input · VB-CABLE",
+        );
+        assert!(!set_virtual_output(
+            &mut config,
+            Some("capture-a"),
+            &targets
+        ));
+        assert_eq!(config.virtual_output_device.as_deref(), Some("render-b"));
+    }
+
+    #[test]
+    fn saved_and_legacy_audio_configuration_never_auto_enables_a_detected_cable() {
+        let targets = [target("render-a", "capture-a")];
+        let mut legacy: AudioConfig = serde_json::from_value(serde_json::json!({
+            "input_device": "microphone", "output_device": "headphones"
+        }))
+        .unwrap();
+        assert!(legacy.virtual_output_device.is_none());
+        assert_eq!(virtual_output_selection_label(&targets, None), "Desligado");
+        assert!(!set_virtual_output(&mut legacy, None, &targets));
+
+        assert!(set_virtual_output(&mut legacy, Some("render-a"), &targets));
+        let restored: AudioConfig =
+            serde_json::from_value(serde_json::to_value(&legacy).unwrap()).unwrap();
+        assert!(same_audio_config(&legacy, &restored));
+        assert_eq!(restored.output_device.as_deref(), Some("headphones"));
+        assert_eq!(restored.virtual_output_device.as_deref(), Some("render-a"));
     }
 }
