@@ -108,7 +108,9 @@ a instalação/seleção; o aplicativo não deve trocar silenciosamente a rota v
 GUI, CLI e MCP compartilham o registro de comandos. `doctor` enumera e consulta o par sem
 iniciar captura; seu campo `virtual_microphone_status` contém o diagnóstico. No serviço,
 `status.virtual_microphone` informa `available`, `active`, `render_device`, `capture_device`
-e `diagnostic`. A capacidade só é anunciada no Windows quando um par válido está disponível.
+e `diagnostic`. A capacidade só é anunciada no Windows quando um par válido está disponível. Mesmo
+com o áudio desligado, Status e a GUI podem consultar o inventário/topologia para
+detectar o driver; essa consulta não abre fluxos de captura ou reprodução.
 
 No primeiro terminal, inicie o serviço local:
 
