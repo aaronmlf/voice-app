@@ -28,9 +28,40 @@ Drivers de terceiros não são incluídos no pacote.
 O workflow Windows usa Rust fixado, um job Cargo por vez, MSVC e libclang para as
 dependências C/C++. Os gates incluem formatação, Clippy, limites entre crates,
 testes Rust compatíveis com a plataforma, processamento offline e smoke de IPC/MCP.
-Os testes nativos automatizados não abrem microfone, alto-falantes ou a GUI.
-Um gate separado pelo Wine usa prefixo privado, áudio sintético e abertura curta da GUI
-em display virtual. Wine não qualifica WASAPI físico, drivers ou Windows 10/11 real.
+Os testes de CLI/DSP/biblioteca/IPC/MCP mantêm o áudio desligado. Um gate nativo separado
+foi preparado para abrir a GUI do mesmo ZIP extraído no runner Windows, renderizar uma
+captura e encerrar normalmente. Ele solicita o adaptador de software WARP pelo backend
+DX12, com compilador de shaders FXC, e confere o adaptador efetivamente inicializado:
+`Dx12`, tipo `Cpu`, sem fallback para GPU no modo QA. O teste observa o estado via IPC,
+exige os 12 presets originais, zero frames e nenhuma captura, monitoração, gravação,
+reprodução ou captura desktop. Mede o pico de memória observado do processo da GUI.
+Essa nova verificação ainda está pendente de execução; não há resultado gráfico aprovado.
+
+O helper empacotado `scripts/test-windows-gui.ps1` é executado explicitamente, com
+`-CliPath`, `-GuiPath`, `-ReportPath` e `-OutputDirectory`. Ele usa biblioteca e endpoint
+locais novos; não é executado ao abrir o aplicativo. Internamente passa as opções
+`--smoke-seconds 4`, `--screenshot`, `--page voices`, `--qa-size 1280x800`,
+`--qa-software-renderer` e `--qa-report`. As opções especiais de renderização exigem
+Windows e `--smoke-seconds`. Report, PNG, dados do adaptador e logs são retidos por
+allowlist; a biblioteca temporária fica fora dos artifacts. O teste não requer rede
+nem abre dispositivos de áudio. Esse smoke curto não valida interação manual ou sessão longa.
+
+O gate separado Wine usa prefixo privado, namespace sem rede e drivers de áudio desligados.
+Primeiro confere o checksum/limites do ZIP, `--help`, `--version` e geração offline de um tom
+de 220 Hz por 0,25 s: 12.000 frames float32 finitos a 48 kHz. Depois tenta o serviço com os
+mesmos controles de acesso da aplicação. Na tentativa já observada com Wine 9.0, o serviço
+recusou uma DACL sem proteção antes de abrir a GUI. O classificador preparado aceita apenas
+a mensagem exata `voice-cli: private path must have a protected DACL`, com encerramento
+normal de código não zero e os testes offline aprovados, como
+`unsupported_security_environment`. GUI, IPC e compatibilidade Wine ficam explicitamente
+não qualificados. Outros erros, falhas do loader, sinais ou logs adicionais continuam
+reprovando. Nenhuma verificação de permissões foi enfraquecida.
+
+Se uma versão futura do Wine preservar as permissões exigidas e iniciar o serviço,
+o script exige a regressão completa de biblioteca, IPC/MCP, reinício e GUI antes de
+registrar aprovação dessa execução. Aceitar a recusa segura no gate não significa suporte
+ao Wine. O classificador e o novo smoke gráfico nativo aguardam execução; Wine também
+não qualifica WASAPI físico, drivers ou Windows 10/11 real.
 
 O ZIP nativo contém GUI e CLI, documentação, licenças, notices e fontes exigidas pelas
 dependências. O manifesto SHA-256 acompanha o arquivo. O smoke repete os comandos
