@@ -8,6 +8,11 @@
 // module from example test harnesses avoids duplicating its unit tests/allocator.
 #[cfg(all(windows, not(test)))]
 #[allow(dead_code)]
+#[path = "../src/clock.rs"]
+mod clock;
+
+#[cfg(all(windows, not(test)))]
+#[allow(dead_code)]
 #[path = "../src/rt.rs"]
 mod production_rt;
 
@@ -29,7 +34,9 @@ fn main() {
 
 #[cfg(all(windows, not(test)))]
 mod native {
-    use crate::production_rt::{INPUT_QUEUE, MAX_BLOCK, MONITOR_QUEUE, VoiceOutput};
+    use crate::production_rt::{
+        CallbackBatches, INPUT_QUEUE, MAX_BLOCK, MONITOR_QUEUE, VoiceOutput,
+    };
     use anyhow::{Context, Result, ensure};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{BufferSize, Device, DeviceId, Host, HostId, SampleFormat, Stream, StreamConfig};
@@ -537,6 +544,7 @@ mod native {
                 input.clone(),
                 monitor.clone(),
                 SAMPLE_RATE,
+                CallbackBatches::default(),
             ),
             shared: shared.clone(),
             input,
