@@ -137,9 +137,16 @@ enum WorkerCommand {
         seconds: u32,
         reply: mpsc::Sender<Result<Value>>,
     },
+    #[cfg(test)]
+    BlockCapture {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+        blocked: Arc<AtomicBool>,
+    },
 }
 struct Worker {
     tx: mpsc::SyncSender<WorkerCommand>,
+    playback: Option<PlaybackProducer>,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     playing: Arc<AtomicUsize>,
@@ -313,8 +320,152 @@ fn publish_playback_activity(shared: &AudioShared, mix: &Mixer, preview: &Mixer)
         .store(preview.active_count() > 0, Ordering::Release);
 }
 
+enum PlaybackCommand {
+    Play {
+        id: String,
+        pcm: Arc<Vec<f32>>,
+        gain: f32,
+        looped: bool,
+        overlap: bool,
+        preview: bool,
+        reply: mpsc::Sender<Result<()>>,
+    },
+    StopAll {
+        reply: mpsc::Sender<Result<()>>,
+    },
+    StopClip {
+        id: String,
+        reply: mpsc::Sender<Result<()>>,
+    },
+}
+
+/// Windows playback never waits for replay updates, recording writes or finalization.
+/// This thread alone owns both mixers and produces their prepared SPSC queues.
+struct PlaybackProducer {
+    tx: mpsc::SyncSender<PlaybackCommand>,
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+impl PlaybackProducer {
+    fn spawn(shared: Arc<AudioShared>, playing: Arc<AtomicUsize>) -> Self {
+        let (tx, rx) = mpsc::sync_channel(32);
+        let stop = Arc::new(AtomicBool::new(false));
+        let done = stop.clone();
+        let join = thread::spawn(move || {
+            let (mut mix, mut preview) = (Mixer::new(), Mixer::new());
+            let mut mixed = [0_f32; MIX_BLOCK_FRAMES];
+            while !done.load(Ordering::Acquire) {
+                // New control traffic cannot postpone a refill indefinitely.
+                for _ in 0..32 {
+                    let Ok(command) = rx.try_recv() else {
+                        break;
+                    };
+                    let (reply, result) = match command {
+                        PlaybackCommand::Play {
+                            id,
+                            pcm,
+                            gain,
+                            looped,
+                            overlap,
+                            preview: is_preview,
+                            reply,
+                        } => {
+                            let mixer = if is_preview { &mut preview } else { &mut mix };
+                            (reply, mixer.play(&id, pcm, gain, looped, overlap))
+                        }
+                        PlaybackCommand::StopAll { reply } => {
+                            mix.stop_all();
+                            preview.stop_all();
+                            (reply, Ok(()))
+                        }
+                        PlaybackCommand::StopClip { id, reply } => {
+                            mix.stop(&id);
+                            preview.stop(&id);
+                            (reply, Ok(()))
+                        }
+                    };
+                    publish_playback_activity(&shared, &mix, &preview);
+                    playing.store(
+                        mix.active_count() + preview.active_count(),
+                        Ordering::Relaxed,
+                    );
+                    // Already prepared PCM is the same bounded Stop tail as before.
+                    // Never discard a queue from its producer.
+                    let _ = reply.send(result);
+                }
+                if shared.metrics.active.load(Ordering::Relaxed) {
+                    let target = playback_queue_target(
+                        shared
+                            .metrics
+                            .render_callback_frames_max
+                            .load(Ordering::Relaxed),
+                    );
+                    fill_playback_queue(&mut mix, &shared.soundboard, target, &mut mixed);
+                    fill_playback_queue(&mut preview, &shared.preview, target, &mut mixed);
+                } else {
+                    mix.stop_all();
+                    preview.stop_all();
+                }
+                publish_playback_activity(&shared, &mix, &preview);
+                playing.store(
+                    mix.active_count() + preview.active_count(),
+                    Ordering::Relaxed,
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+            playing.store(0, Ordering::Relaxed);
+            shared.soundboard_active.store(false, Ordering::Release);
+            shared.preview_active.store(false, Ordering::Release);
+        });
+        Self {
+            tx,
+            stop,
+            join: Some(join),
+        }
+    }
+    fn send(&self, command: PlaybackCommand) -> Result<()> {
+        self.tx
+            .try_send(command)
+            .map_err(|e| anyhow!("playback producer busy or disconnected: {e}"))
+    }
+    fn stop_all(&self) -> Result<()> {
+        let (reply, acknowledgement) = mpsc::channel();
+        self.send(PlaybackCommand::StopAll { reply })?;
+        acknowledgement
+            .recv_timeout(Duration::from_secs(3))
+            .context("playback producer stop acknowledgement timed out")?
+    }
+}
+impl Drop for PlaybackProducer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+#[cfg(test)]
+struct CaptureStallGuard {
+    release: mpsc::Sender<()>,
+    blocked: Arc<AtomicBool>,
+}
+#[cfg(test)]
+impl Drop for CaptureStallGuard {
+    fn drop(&mut self) {
+        let _ = self.release.send(());
+    }
+}
+
 impl Worker {
     fn spawn(shared: Arc<AudioShared>, desktop: Arc<DesktopShared>) -> Self {
+        Self::spawn_with_playback_thread(shared, desktop, cfg!(windows))
+    }
+    fn spawn_with_playback_thread(
+        shared: Arc<AudioShared>,
+        desktop: Arc<DesktopShared>,
+        separate_playback: bool,
+    ) -> Self {
         let (tx, rx) = mpsc::sync_channel(32);
         let stop = Arc::new(AtomicBool::new(false));
         let playing = Arc::new(AtomicUsize::new(0));
@@ -330,8 +481,10 @@ impl Worker {
             recording.clone(),
             error.clone(),
         );
+        let playback =
+            separate_playback.then(|| PlaybackProducer::spawn(shared.clone(), playing.clone()));
         let join = thread::spawn(move || {
-            let (mut mix, mut preview) = (Mixer::new(), Mixer::new());
+            let mut mixers = (!separate_playback).then(|| (Mixer::new(), Mixer::new()));
             let mut captures = [
                 CaptureState::new(
                     RecordingSource::ProcessedVoice,
@@ -365,20 +518,32 @@ impl Worker {
                             preview: is_preview,
                             reply,
                         } => {
-                            let target = if is_preview { &mut preview } else { &mut mix };
-                            let result = target.play(&id, pcm, gain, looped, overlap);
-                            publish_playback_activity(&shared, &mix, &preview);
+                            let (mix, preview) = mixers.as_mut().expect(
+                                "separate playback commands never enter the capture worker",
+                            );
+                            let result = if is_preview {
+                                preview.play(&id, pcm, gain, looped, overlap)
+                            } else {
+                                mix.play(&id, pcm, gain, looped, overlap)
+                            };
+                            publish_playback_activity(&shared, mix, preview);
                             let _ = reply.send(result);
                         }
                         WorkerCommand::StopAll => {
+                            let (mix, preview) = mixers.as_mut().expect(
+                                "separate playback commands never enter the capture worker",
+                            );
                             mix.stop_all();
                             preview.stop_all();
-                            publish_playback_activity(&shared, &mix, &preview);
+                            publish_playback_activity(&shared, mix, preview);
                         }
                         WorkerCommand::StopClip { id, reply } => {
+                            let (mix, preview) = mixers.as_mut().expect(
+                                "separate playback commands never enter the capture worker",
+                            );
                             mix.stop(&id);
                             preview.stop(&id);
-                            publish_playback_activity(&shared, &mix, &preview);
+                            publish_playback_activity(&shared, mix, preview);
                             voices.store(
                                 mix.active_count() + preview.active_count(),
                                 Ordering::Relaxed,
@@ -392,10 +557,12 @@ impl Worker {
                             clear_replay,
                             reply,
                         } => {
-                            mix.stop_all();
-                            preview.stop_all();
-                            publish_playback_activity(&shared, &mix, &preview);
-                            voices.store(0, Ordering::Relaxed);
+                            if let Some((mix, preview)) = &mut mixers {
+                                mix.stop_all();
+                                preview.stop_all();
+                                publish_playback_activity(&shared, mix, preview);
+                                voices.store(0, Ordering::Relaxed);
+                            }
                             let capture = &mut captures[0];
                             let result = capture.finish(false).map(|_| ());
                             if clear_replay {
@@ -457,43 +624,44 @@ impl Worker {
                             };
                             let _ = reply.send(result);
                         }
+                        #[cfg(test)]
+                        WorkerCommand::BlockCapture {
+                            entered,
+                            release,
+                            blocked,
+                        } => {
+                            blocked.store(true, Ordering::Release);
+                            let _ = entered.send(());
+                            // The guard releases even during unwinding; a timeout also
+                            // bounds a broken fixture independently of worker Drop.
+                            let _ = release.recv_timeout(Duration::from_secs(3));
+                            blocked.store(false, Ordering::Release);
+                        }
                     }
                 }
-                // One producer per queue. The Windows reserve follows actual
-                // callback batches; other backends retain their existing 20 ms.
-                if shared.metrics.active.load(Ordering::Relaxed) {
-                    let target = if cfg!(windows) {
-                        playback_queue_target(
-                            shared
-                                .metrics
-                                .render_callback_frames_max
-                                .load(Ordering::Relaxed),
-                        )
-                    } else {
-                        960
-                    };
-                    for (mixer, queue) in [
-                        (&mut mix, &shared.soundboard),
-                        (&mut preview, &shared.preview),
-                    ] {
-                        if cfg!(windows) {
-                            fill_playback_queue(mixer, queue, target, &mut mixed);
-                        } else {
-                            while queue.len() < target {
+                // Linux keeps its original combined worker and 20-ms fill algorithm.
+                // Windows queues/activity belong exclusively to PlaybackProducer.
+                if let Some((mix, preview)) = &mut mixers {
+                    if shared.metrics.active.load(Ordering::Relaxed) {
+                        for (mixer, queue) in [
+                            (&mut *mix, &shared.soundboard),
+                            (&mut *preview, &shared.preview),
+                        ] {
+                            while queue.len() < 960 {
                                 mixer.process(&mut mixed);
                                 queue.push(&mixed);
                             }
                         }
+                    } else {
+                        mix.stop_all();
+                        preview.stop_all();
                     }
-                } else {
-                    mix.stop_all();
-                    preview.stop_all();
+                    publish_playback_activity(&shared, mix, preview);
+                    voices.store(
+                        mix.active_count() + preview.active_count(),
+                        Ordering::Relaxed,
+                    );
                 }
-                publish_playback_activity(&shared, &mix, &preview);
-                voices.store(
-                    mix.active_count() + preview.active_count(),
-                    Ordering::Relaxed,
-                );
                 captures[0].drain(&shared.recording);
                 captures[1].drain(&desktop.samples);
                 thread::sleep(Duration::from_millis(5));
@@ -503,12 +671,15 @@ impl Worker {
             for capture in &mut captures {
                 let _ = capture.finish(false);
             }
-            voices.store(0, Ordering::Relaxed);
-            shared.soundboard_active.store(false, Ordering::Release);
-            shared.preview_active.store(false, Ordering::Release);
+            if mixers.is_some() {
+                voices.store(0, Ordering::Relaxed);
+                shared.soundboard_active.store(false, Ordering::Release);
+                shared.preview_active.store(false, Ordering::Release);
+            }
         });
         Self {
             tx,
+            playback,
             stop,
             join: Some(join),
             playing,
@@ -519,9 +690,71 @@ impl Worker {
         }
     }
     fn send(&self, command: WorkerCommand) -> Result<()> {
+        if let Some(playback) = &self.playback {
+            match command {
+                WorkerCommand::Play {
+                    id,
+                    pcm,
+                    gain,
+                    looped,
+                    overlap,
+                    preview,
+                    reply,
+                } => {
+                    return playback.send(PlaybackCommand::Play {
+                        id,
+                        pcm,
+                        gain,
+                        looped,
+                        overlap,
+                        preview,
+                        reply,
+                    });
+                }
+                WorkerCommand::StopAll => return playback.stop_all(),
+                WorkerCommand::StopClip { id, reply } => {
+                    return playback.send(PlaybackCommand::StopClip { id, reply });
+                }
+                WorkerCommand::Reset {
+                    clear_replay,
+                    reply,
+                } => {
+                    // Backend stop precedes Reset. Establish the playback barrier
+                    // before capture drain/finalization can block on its own I/O.
+                    playback.stop_all()?;
+                    return self.enqueue_capture(WorkerCommand::Reset {
+                        clear_replay,
+                        reply,
+                    });
+                }
+                command => return self.enqueue_capture(command),
+            }
+        }
+        self.enqueue_capture(command)
+    }
+    fn enqueue_capture(&self, command: WorkerCommand) -> Result<()> {
         self.tx
             .try_send(command)
             .map_err(|e| anyhow!("audio worker busy or disconnected: {e}"))
+    }
+    #[cfg(test)]
+    fn stall_capture(&self) -> Result<CaptureStallGuard> {
+        let (entered, acknowledgement) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let blocked = Arc::new(AtomicBool::new(false));
+        let guard = CaptureStallGuard {
+            release,
+            blocked: blocked.clone(),
+        };
+        self.enqueue_capture(WorkerCommand::BlockCapture {
+            entered,
+            release: wait,
+            blocked,
+        })?;
+        acknowledgement
+            .recv_timeout(Duration::from_secs(1))
+            .context("capture stall fixture did not enter")?;
+        Ok(guard)
     }
     fn stop_clip(&self, id: String) -> Result<()> {
         let (reply, acknowledgement) = mpsc::channel();
@@ -558,6 +791,8 @@ impl Worker {
 }
 impl Drop for Worker {
     fn drop(&mut self) {
+        // Stop playback first; it never waits behind capture disk I/O.
+        drop(self.playback.take());
         self.stop.store(true, Ordering::Release);
         if let Some(j) = self.join.take() {
             let _ = j.join();
@@ -1275,6 +1510,78 @@ mod tests {
         worker.reset(true)?;
         assert!(!shared.soundboard_active.load(Ordering::Acquire));
         assert!(!shared.preview_active.load(Ordering::Acquire));
+        Ok(())
+    }
+    #[test]
+    fn separate_playback_refills_and_acknowledges_controls_while_capture_is_blocked() -> Result<()>
+    {
+        let shared = Arc::new(AudioShared::default());
+        let desktop = Arc::new(DesktopShared::default());
+        shared.metrics.active.store(true, Ordering::Release);
+        shared
+            .metrics
+            .render_callback_frames_max
+            .store(1056, Ordering::Relaxed);
+        // Exercise the Windows ownership path on every CI host, without a device.
+        let worker = Worker::spawn_with_playback_thread(shared.clone(), desktop, true);
+        // Declared after worker: unwinding releases capture before Worker::drop joins it.
+        let stall = worker.stall_capture()?;
+        for (id, value, preview) in [("board", 0.25, false), ("preview", 0.125, true)] {
+            let (reply, acknowledgement) = mpsc::channel();
+            worker.send(WorkerCommand::Play {
+                id: id.into(),
+                pcm: Arc::new(vec![value; 480]),
+                gain: 1.0,
+                looped: true,
+                overlap: false,
+                preview,
+                reply,
+            })?;
+            acknowledgement
+                .recv_timeout(Duration::from_secs(1))
+                .context("playback command waited behind blocked capture")??;
+        }
+        assert!(stall.blocked.load(Ordering::Acquire));
+        assert_eq!(worker.playing.load(Ordering::Relaxed), 2);
+        // This test is the sole FIFO consumer. Remove the pre-Play silence once;
+        // after initial priming no batch may wait for the producer to catch up.
+        shared.soundboard.discard();
+        shared.preview.discard();
+        let target = playback_queue_target(1056);
+        let ready_deadline = Instant::now() + Duration::from_secs(1);
+        while shared.soundboard.len() < target || shared.preview.len() < target {
+            assert!(Instant::now() < ready_deadline, "playback did not prime");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let mut board = [0.0; 1056];
+        let mut preview = [0.0; 1056];
+        let mut consumed = 0;
+        let mut batch = 0;
+        while consumed < 7200 {
+            let frames = [480, 1056][batch % 2].min(7200 - consumed);
+            assert!(stall.blocked.load(Ordering::Acquire));
+            assert_eq!(shared.soundboard.pop(&mut board[..frames]), frames);
+            assert_eq!(shared.preview.pop(&mut preview[..frames]), frames);
+            assert!(board[..frames].iter().all(|sample| *sample == 0.25));
+            assert!(preview[..frames].iter().all(|sample| *sample == 0.125));
+            consumed += frames;
+            batch += 1;
+            thread::sleep(Duration::from_secs_f64(frames as f64 / SAMPLE_RATE as f64));
+        }
+        // More than three 44-ms reserves were consumed while capture stayed blocked.
+        assert!(stall.blocked.load(Ordering::Acquire));
+        let stop_began = Instant::now();
+        worker.stop_clip("board".into())?;
+        assert!(stop_began.elapsed() < Duration::from_secs(1));
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(shared.preview_active.load(Ordering::Acquire));
+        worker.send(WorkerCommand::StopAll)?;
+        assert!(!shared.preview_active.load(Ordering::Acquire));
+        assert_eq!(worker.playing.load(Ordering::Relaxed), 0);
+        assert!(stall.blocked.load(Ordering::Acquire));
+        drop(stall);
+        shared.metrics.active.store(false, Ordering::Release);
+        worker.reset(true)?;
         Ok(())
     }
     fn test_paths() -> Paths {
