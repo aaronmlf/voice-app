@@ -1,8 +1,8 @@
 //! Enumeration, format checks, and stream lifetime run on the engine's control thread.
 use crate::identity::{
-    CableEndpoint, OwnedEndpoint, OwnedIdentity, cable_targets, is_owned_adapter_path,
-    is_vbcable_adapter, overlaps_physical_route, owned_identity, selected_status, vbcable_identity,
-    verified_pair,
+    CableEndpoint, OwnedEndpoint, OwnedIdentity, adapter_interface_path, cable_targets,
+    is_owned_adapter_path, is_vbcable_adapter, overlaps_physical_route, owned_identity,
+    selected_status, vbcable_identity, verified_pair,
 };
 use crate::rt::{
     DesktopCapture, INPUT_QUEUE, InputCapture, LocalMonitor, MONITOR_QUEUE, VoiceOutput,
@@ -129,7 +129,8 @@ fn connected_adapter_path(device: &Device) -> Result<String> {
         .immdevice()
         .context("Windows endpoint disconnected")?;
     // Microsoft documents endpoint topologies as one connector, connected to the
-    // adapter topology. Its ID contains the PnP instance and INF interface reference.
+    // adapter topology. Its MMDevice ID can wrap the native interface path; the
+    // inventory accepts only the exact observed form before querying native PnP.
     unsafe {
         let topology: IDeviceTopology = device
             .Activate(CLSCTX_ALL, None)
@@ -198,12 +199,8 @@ fn devnode_property(devnode: u32, key: &DEVPROPKEY, expected: DEVPROPTYPE) -> Re
 }
 
 fn native_adapter(adapter_path: &str) -> Result<NativeAdapter> {
-    if adapter_path.is_empty()
-        || adapter_path.len() > PNP_PROPERTY_WORDS
-        || adapter_path.contains('\0')
-    {
-        bail!("Windows connected adapter interface is invalid");
-    }
+    let adapter_path = adapter_interface_path(adapter_path)
+        .context("Windows connected adapter interface is invalid or unsupported")?;
     let path: Vec<u16> = adapter_path.encode_utf16().chain(Some(0)).collect();
     let mut words = [0_u16; PNP_PROPERTY_WORDS];
     let mut bytes = u32::try_from(std::mem::size_of_val(&words))?;
@@ -282,11 +279,14 @@ fn inventory(host: &Host) -> Result<Inventory> {
             let name = id.to_string();
             // Missing native identity fails closed before offering physical/default
             // routes: a renamed virtual capture must never leak into the voice path.
-            let Ok(adapter) = connected_adapter_path(&device) else {
+            let Ok(adapter_id) = connected_adapter_path(&device) else {
                 continue;
             };
-            if is_owned_adapter_path(&adapter) {
-                let identity = owned_identity(&adapter).unwrap_or(OwnedIdentity {
+            let Some(adapter) = adapter_interface_path(&adapter_id) else {
+                continue;
+            };
+            if is_owned_adapter_path(adapter) {
+                let identity = owned_identity(adapter).unwrap_or(OwnedIdentity {
                     instance: String::new(),
                     role: None,
                 });
@@ -297,7 +297,7 @@ fn inventory(host: &Host) -> Result<Inventory> {
                 });
                 continue;
             }
-            let Ok(native) = native_adapter(&adapter) else {
+            let Ok(native) = native_adapter(adapter) else {
                 continue;
             };
             if is_vbcable_adapter(&native.hardware_ids, &native.service) {
@@ -305,7 +305,7 @@ fn inventory(host: &Host) -> Result<Inventory> {
                 // legacy/unknown references, malformed metadata and 16-channel
                 // outputs. Only a complete profile may become a publishable target.
                 let identity = vbcable_identity(
-                    &adapter,
+                    adapter,
                     &native.instance,
                     &native.hardware_ids,
                     &native.service,

@@ -5,6 +5,19 @@ use voice_core::DeviceKind;
 const ADAPTER_ROOT: &str = r"\\?\root#voiceappvirtualaudio";
 const ADAPTER_PREFIX: &str = r"\\?\root#voiceappvirtualaudio#";
 
+/// Accept a raw adapter interface or the exact MMDevice wrapper observed on the
+/// tested Windows target. MMDevice IDs are otherwise opaque: unknown envelopes
+/// fail closed. Preserve the interface/reference verbatim for native PnP checks;
+/// this never normalizes the endpoint IDs used for selection or routing.
+pub(crate) fn adapter_interface_path(adapter_path: &str) -> Option<&str> {
+    if adapter_path.len() > 4096 || adapter_path.contains('\0') {
+        return None;
+    }
+    let path = adapter_path.strip_prefix("{2}.").unwrap_or(adapter_path);
+    let interface = path.strip_prefix(r"\\?\")?;
+    (!interface.is_empty()).then_some(path)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OwnedRole {
     Render,
@@ -45,6 +58,9 @@ pub(crate) fn verified_pair(
 /// Ownership is checked before parsing a publishable role. A damaged owned path
 /// must stay excluded from physical routes, even when its GUID/reference is invalid.
 pub(crate) fn is_owned_adapter_path(adapter_path: &str) -> bool {
+    let Some(adapter_path) = adapter_interface_path(adapter_path) else {
+        return false;
+    };
     let path = adapter_path.to_ascii_lowercase();
     path.strip_prefix(ADAPTER_ROOT)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['#', '\\', '/']))
@@ -54,6 +70,7 @@ pub(crate) fn is_owned_adapter_path(adapter_path: &str) -> bool {
 /// not from an editable endpoint label. Keep an unknown owned reference excluded
 /// from physical/default routes while refusing to publish through it.
 pub(crate) fn owned_identity(adapter_path: &str) -> Option<OwnedIdentity> {
+    let adapter_path = adapter_interface_path(adapter_path)?;
     let path = adapter_path.to_ascii_lowercase();
     let rest = path.strip_prefix(ADAPTER_PREFIX)?;
     let (instance, interface) = rest.split_once('#')?;
@@ -98,6 +115,49 @@ mod tests {
     use super::*;
     const PREFIX: &str =
         r"\\?\ROOT#VoiceAppVirtualAudio#0000#{6994AD04-93EF-11D0-A3CC-00A0C9223196}\";
+
+    #[test]
+    fn observed_adapter_wrapper_preserves_hardware_paths_and_reference_strings() {
+        for path in [
+            r"\\?\HDAUDIO#FUNC_01&VEN_1234&DEV_5678#4&synthetic&0&0001#{6994AD04-93EF-11D0-A3CC-00A0C9223196}\eSpeakerTopo",
+            r"\\?\ROOT#MEDIA#0000#{6994AD04-93EF-11D0-A3CC-00A0C9223196}\VBAudioVACWDM2022_Out1_Topo_E51A78A01FB100001",
+            r"\\?\ROOT#VoiceAppVirtualAudio#0000#{6994AD04-93EF-11D0-A3CC-00A0C9223196}\TopologyVoiceAppCapture",
+        ] {
+            assert_eq!(adapter_interface_path(path), Some(path));
+            assert_eq!(adapter_interface_path(&format!("{{2}}.{path}")), Some(path));
+        }
+        let path = format!("{PREFIX}TopologyVoiceAppCapture");
+        assert_eq!(
+            owned_identity(&format!("{{2}}.{path}")),
+            owned_identity(&path)
+        );
+    }
+
+    #[test]
+    fn unknown_adapter_envelopes_and_invalid_boundaries_fail_closed() {
+        for path in [
+            String::new(),
+            r"\\?\".into(),
+            "{2}.".into(),
+            r"{2}.\\?\".into(),
+            format!("{{2}}.{{2}}.{PREFIX}WaveVoiceAppRender"),
+            format!("{{3}}.{PREFIX}WaveVoiceAppRender"),
+            format!("{{0.0.0.00000000}}.{PREFIX}WaveVoiceAppRender"),
+            format!(" {{2}}.{PREFIX}WaveVoiceAppRender"),
+            format!("{{2}}. {PREFIX}WaveVoiceAppRender"),
+            "{2}.Voice App Virtual Microphone".into(),
+            format!("{PREFIX}WaveVoiceAppRender\0"),
+            format!("{{2}}.{PREFIX}WaveVoiceAppRender\0"),
+            format!(r"\\?\{}", "x".repeat(4093)),
+            format!(r"{{2}}.\\?\{}", "x".repeat(4089)),
+        ] {
+            assert!(adapter_interface_path(&path).is_none(), "{path:?}");
+            assert!(owned_identity(&path).is_none(), "{path:?}");
+        }
+        let longest = format!(r"\\?\{}", "x".repeat(4092));
+        assert_eq!(adapter_interface_path(&longest), Some(longest.as_str()));
+        assert!(adapter_interface_path(&format!("{{2}}.{longest}")).is_none());
+    }
 
     #[test]
     fn exact_hardware_and_reference_match_without_friendly_names() {
@@ -208,6 +268,9 @@ mod tests {
         ] {
             assert!(is_owned_adapter_path(path), "{path}");
             assert!(owned_identity(path).is_none(), "{path}");
+            let wrapped = format!("{{2}}.{path}");
+            assert!(is_owned_adapter_path(&wrapped), "{wrapped}");
+            assert!(owned_identity(&wrapped).is_none(), "{wrapped}");
         }
         let mut render = endpoint("render-id", OwnedRole::Render, "0000");
         render.identity = OwnedIdentity {
@@ -255,6 +318,7 @@ pub(crate) fn vbcable_identity(
     hardware_ids: &[String],
     service: &str,
 ) -> Option<OwnedIdentity> {
+    let adapter_path = adapter_interface_path(adapter_path)?;
     if !hardware_ids
         .iter()
         .any(|id| id.eq_ignore_ascii_case(VBCABLE_HARDWARE_ID))
@@ -264,7 +328,7 @@ pub(crate) fn vbcable_identity(
     }
     // This instance comes from ConfigManager for this interface, not from an
     // endpoint ID, friendly label, or assumptions about ROOT\\MEDIA numbering.
-    if instance.len() > 4096 || adapter_path.len() > 4096 {
+    if instance.len() > 4096 {
         return None;
     }
     let parts: Vec<_> = instance.split('\\').collect();
@@ -471,6 +535,65 @@ mod cable_tests {
     }
 
     #[test]
+    fn wrapped_cable_paths_still_require_native_metadata_and_safe_routing() {
+        let wrapped_render = format!("{{2}}.{PREFIX}{RENDER}");
+        let wrapped_capture = format!("{{2}}.{PREFIX}{CAPTURE}");
+        let render_identity =
+            vbcable_identity(&wrapped_render, INSTANCE, &hardware(), VBCABLE_SERVICE).unwrap();
+        let capture_identity =
+            vbcable_identity(&wrapped_capture, INSTANCE, &hardware(), VBCABLE_SERVICE).unwrap();
+        assert_eq!(render_identity, identity(RENDER, INSTANCE));
+        assert_eq!(capture_identity, identity(CAPTURE, INSTANCE));
+        assert!(vbcable_identity(&wrapped_render, INSTANCE, &[], VBCABLE_SERVICE).is_none());
+        assert!(vbcable_identity(&wrapped_render, INSTANCE, &hardware(), "OtherService").is_none());
+        assert!(
+            vbcable_identity(
+                &format!("{{3}}.{PREFIX}{RENDER}"),
+                INSTANCE,
+                &hardware(),
+                VBCABLE_SERVICE
+            )
+            .is_none()
+        );
+        let mut render = endpoint("unchanged-render-id", OwnedRole::Render, INSTANCE);
+        let mut capture = endpoint("unchanged-capture-id", OwnedRole::Capture, INSTANCE);
+        render.identity = render_identity;
+        capture.identity = capture_identity;
+        for reference in [
+            "Topo",
+            "FutureReference",
+            "VBAudioVACWDM2022_Out2_Topo_unknown",
+        ] {
+            let mut unsupported = render.clone();
+            unsupported.identity = vbcable_identity(
+                &format!("{{2}}.{PREFIX}{reference}"),
+                INSTANCE,
+                &hardware(),
+                VBCABLE_SERVICE,
+            )
+            .unwrap();
+            assert!(unsupported.identity.role.is_none());
+            assert!(is_vbcable_adapter(&hardware(), VBCABLE_SERVICE));
+            assert!(cable_targets(&[unsupported, capture.clone()]).is_empty());
+        }
+        let targets = cable_targets(&[render.clone(), capture.clone()]);
+        assert_eq!(targets[0].render_device, render.id);
+        assert_eq!(targets[0].capture_device, capture.id);
+        assert!(overlaps_physical_route(
+            &targets[0],
+            &capture.id,
+            "headphones"
+        ));
+        assert!(overlaps_physical_route(
+            &targets[0],
+            "microphone",
+            &render.id
+        ));
+        capture.identity.instance = r"root\media\0001".into();
+        assert!(cable_targets(&[render, capture]).is_empty());
+    }
+
+    #[test]
     fn legacy_unknown_and_malformed_cable_paths_are_not_publishable() {
         for reference in [
             "Wave",
@@ -487,6 +610,15 @@ mod cable_tests {
             "CABLE Input (VB-Audio Virtual Cable)".into(),
         ] {
             assert!(vbcable_identity(&path, INSTANCE, &hardware(), VBCABLE_SERVICE).is_none());
+            assert!(
+                vbcable_identity(
+                    &format!("{{2}}.{path}"),
+                    INSTANCE,
+                    &hardware(),
+                    VBCABLE_SERVICE
+                )
+                .is_none()
+            );
             assert!(is_vbcable_adapter(&hardware(), VBCABLE_SERVICE));
         }
         for instance in [
