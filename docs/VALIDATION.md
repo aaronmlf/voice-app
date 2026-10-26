@@ -317,3 +317,117 @@ e checksum de 109 bytes, SHA-256
 `d5ded513391d38c803b0b3a7c936d0cd9b361f5587a2d4c8995967e6f8b6953d`.
 Publicação sem recompilar, executar binários ou abrir áudio neste host. Assets
 anteriores foram preservados; continuam somente main, beta e windows-native.
+
+## 2026-10-26 — Primeira etapa: release original em VM, sem streams
+
+Executada a release experimental
+[`windows-v0.1.0-alpha.2`](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.2),
+tag `bd6f6b47c85b057c6500d8876f6f2d2670ea797d`, binários da fonte
+`bcb3f45e7eea8fddcf6596aa6ff37f1928f16da3`. ZIP de 12.972.732 bytes, SHA-256
+`47f9d97e9093e86e8fb1f0e78313e472e4184ac4802efd6a3a40106a36417717`,
+checksum publicado e hashes dos dois PE AMD64 conferidos antes da execução.
+O checkout documental `65f66e6` não representa um binário novo; não houve
+recompilação ou alteração do produto nessa primeira etapa.
+
+Convidado Windows 10 Enterprise LTSC 19044 x64, VirtualBox 7.2.16, Guest Additions
+7.2.2, 4.000 MiB de RAM e oito vCPUs. Host Linux com 17,4 GiB de RAM e sem swap.
+Áudio HDA emulado, entrada do VirtualBox desabilitada e rota física de microfone/
+fones ainda não confirmada. O Windows mostrou microfone/alto-falantes HDA ativos;
+os padrões de reprodução/captura foram observados antes de instalar qualquer cabo,
+sem verificar separadamente o papel de comunicações e sem alterar padrões.
+
+Uma biblioteca nova e endpoint IPC independente preservaram os dados existentes.
+CLI 0.1.0: help/version/doctor, serve, status/devices e shutdown terminaram com
+código 0, sem captura, reprodução, monitoração ou desktop e com zero frames.
+O coletor de diagnóstico durou 9,892 s; sondagens iniciais de prontidão com prazo
+de um segundo expiraram antes do status bem-sucedido. O resultado não comprova
+inicialização instantânea. Falhas anteriores dos coletores foram corrigidas apenas
+nos helpers locais, com suas tentativas preservadas; não foram classificadas como
+regressões do produto.
+
+O smoke gráfico passou com motor em processo separado, renderizador WGPU/DX12,
+Microsoft Basic Render Driver de tipo CPU, PNG 1280×800 e saída normal da GUI.
+As consultas IPC inicial/final registraram áudio e desktop desligados, zero frames,
+nenhuma gravação ou som em reprodução. O coletor completo durou 20,560524 s,
+incluindo preparação e encerramento; isso não é a duração exata da janela GUI.
+Foram 34 amostras por processo, com intervalo solicitado de 250 ms:
+
+| Processo | Janela entre primeira/última amostra | Maior working set amostrado | Maior private bytes amostrado | CPU no intervalo, em um núcleo |
+|---|---|---|---|---|
+| GUI | 8,654146 s | 75,70 MiB | 348,39 MiB | 79,80% |
+| Motor separado | 8,957837 s | 10,90 MiB | 20,16 MiB | 2,79% |
+
+CPU é a diferença do tempo de CPU acumulado dividida pelo tempo entre as duas
+amostras, multiplicada por 100. Working set representa memória residente observada
+no Windows; private bytes representa memória privada comprometida, não RAM residente.
+Esses máximos amostrados não são picos absolutos nem consumo total da VM, do host ou
+de áudio ativo. As janelas diferem entre processos; não se somam máximos de instantes
+distintos. A inicialização e renderização por software limitam qualquer inferência
+de CPU sustentada ou estabilidade.
+
+`doctor` e `devices` retornaram lista física vazia, embora o Windows expusesse os
+endpoints HDA ativos. Consultas adicionais confirmaram InstanceId/Service do tipo
+string, dois HardwareIds do tipo lista e interfaces AUDIO/TOPOLOGY habilitadas para
+o adaptador. O código exclui conservadoramente endpoints quando falha a identidade
+de topologia/PnP, mas não foi observada a chamada exata que motivou a exclusão.
+Não se atribuiu a lista vazia a propriedades ausentes, ao driver, à virtualização
+ou a um defeito específico do aplicativo. Também não foi demonstrado acesso aos
+dispositivos pelo Voice App.
+
+VB-CABLE ainda não instalado; gravação/recepção no Discord, Audacity ou Tenacity,
+voz/efeitos/soundboard, Ouvir-me/pré-escuta, reconexão, suspensão, CPU/RAM com áudio
+e latência física continuam sem teste nesta VM. Snapshot frio e instalação do cabo,
+incluindo licença, credenciais administrativas e eventual reinício, aguardam a
+participação humana solicitada; nenhum snapshot foi declarado concluído. Evidências
+brutas, capturas e helpers permanecem locais. O passe vale somente para estes
+diagnósticos e smoke sem áudio nesta combinação de VM, sem promoção a beta/estável,
+qualificação de Windows físico, retomada do driver próprio ou sessão prolongada.
+
+### Segunda etapa: Pack45 instalado e causa da exclusão identificada
+
+O usuário aceitou os termos do fornecedor e autorizou instalação administrativa
+e reinício. Antes de instalar, foi criado snapshot com a VM desligada, sem estado
+de RAM; a restauração não foi exercitada. O instalador Pack45 x64 informou sucesso
+e o Windows reiniciou. Inventário pós-driver confirmou VB-Audio Virtual Cable
+3.3.1.7 assinado, dois endpoints render e um capture. Não se instalou driver próprio.
+
+Depois da instalação, `GetDefaultAudioEndpoint` consultou render/capture para
+Console, Multimedia e Communications: os seis papéis apontavam aos dispositivos
+HDA anteriores, sem alteração automática feita pelo agente. As capturas prévias
+comprovavam apenas os defaults gerais de reprodução/captura; não se afirma uma
+comparação anterior/posterior dos papéis de comunicação.
+
+Com nova biblioteca, os diagnósticos da mesma release original passaram novamente
+sem streams e com encerramento normal, mas `devices`/`targets` continuaram vazios
+apesar dos endpoints HDA e VB-CABLE ativos no Windows. O primeiro probe COM/CM,
+somente leitura e sem IAudioClient, reproduziu em cinco endpoints um ID de
+adaptador iniciado por `{2}.` seguido da interface nativa. Passar esse ID integral
+a `CM_Get_Device_Interface_PropertyW` devolveu 55 (`CR_NO_SUCH_DEVICE_INTERFACE`)
+nos cinco casos. Um segundo probe preservou o ID original e comparou a remoção
+somente do envelope exato: InstanceId, localização do devnode, HardwareIds e
+Service passaram em todos os cinco, com tipos/tamanhos/terminação válidos.
+Isso identifica a incompatibilidade de representação nessa fronteira, sem atribuir
+a exclusão a ausência de propriedades do driver ou comprovar funcionamento de áudio.
+
+A correção local em `voice-wasapi` aceita interface nativa ou apenas o envelope
+observado `{2}.` imediatamente seguido de `\\?\`; rejeita outras formas, NUL,
+vazio e tamanho excessivo. Preserva reference strings, IDs de seleção/roteamento,
+checagens de hardware/serviço/mesma instância, perfil F32 estéreo/48 kHz e quarentena.
+A [documentação da Microsoft](https://learn.microsoft.com/en-us/windows/win32/coreaudio/device-properties)
+define IDs MMDevice como opacos: esta é compatibilidade com a forma observada,
+não garantia de estrutura universal; formatos desconhecidos falham fechados.
+A normalização ainda não foi executada em um candidato do Voice App.
+
+Formatação, 33 testes direcionados de `voice-wasapi` e Clippy do componente para
+todos os alvos, com avisos tratados como erros, passaram no Linux. As entradas
+foram executadas uma de cada vez pelo wrapper de 3 GiB, um job e sem swap; target
+permaneceu em disco. A primeira tentativa offline não alcançou execução porque
+`serde_json` 1.0.154 não estava no cache, que oferecia 1.0.149. A execução seguinte
+obteve as dependências fixadas, sem mudar o lockfile. Isso verifica a lógica comum
+e os testes locais, sem compilar ou executar o adaptador nativo Windows.
+Nova CI e binário corrigido continuam pendentes; resultados do probe e da release
+original não aprovam esse candidato. Audacity 4 foi somente preparado e não aberto.
+Um microfone USB foi detectado no host, mas passagem direta estava indisponível
+por permissões; a rota física permanece sem aceitação. Gravação local/Discord,
+efeitos/soundboard, monitoração/pré-escuta, reconexão, CPU/RAM ativos e latência
+continuam pendentes. Evidências completas e helpers permanecem locais.

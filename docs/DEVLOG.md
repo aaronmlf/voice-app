@@ -397,3 +397,61 @@ e checksum de 109 bytes, SHA-256
 `d5ded513391d38c803b0b3a7c936d0cd9b361f5587a2d4c8995967e6f8b6953d`.
 Publicação sem recompilar, executar binários ou abrir áudio neste host. Assets
 anteriores foram preservados; continuam somente main, beta e windows-native.
+
+## 2026-10-26 — Primeira etapa: diagnósticos e GUI em VM, sem áudio
+
+Testada a release original `windows-v0.1.0-alpha.2`, tag `bd6f6b4`, com binários
+da fonte `bcb3f45`. O ZIP de 12.972.732 bytes e os dois PE AMD64 tiveram seus
+SHA-256 conferidos; o ZIP mantém
+`47f9d97e9093e86e8fb1f0e78313e472e4184ac4802efd6a3a40106a36417717`.
+O checkout `65f66e6` contém atualizações documentais, sem recompilar o produto.
+
+Ambiente: Windows 10 Enterprise LTSC 19044 x64, VirtualBox 7.2.16, Guest Additions
+7.2.2, 4.000 MiB e oito vCPUs; host Linux com 17,4 GiB e sem swap. Em biblioteca
+nova, help/version/doctor, serviço, status/devices e shutdown passaram; áudio
+desligado e zero frames. A GUI com motor em processo separado encerrou normalmente
+e gerou PNG 1280×800 em WGPU/DX12/CPU. O coletor durou 20,561 s, com 34 amostras
+por processo. Máximos amostrados de working set/private bytes: GUI 75,70/348,39 MiB;
+motor 10,90/20,16 MiB. CPU entre primeira/última amostra: 79,80%/2,79% de um núcleo,
+respectivamente. São observações curtas com renderização por software e sem áudio;
+metodologia e janelas estão em `VALIDATION.md`.
+
+`devices=[]` apesar de microfone/alto-falantes HDA ativos no Windows. Propriedades
+PnP tipadas e interfaces habilitadas foram observadas; a etapa exata da exclusão
+não foi identificada. O filtro de topologia/PnP permanece conservador; não há
+defeito específico demonstrado. Somente coletores locais foram corrigidos, com
+tentativas preservadas, sem tratá-las como regressões do produto.
+
+VB-CABLE ainda não instalado e entrada de áudio do VirtualBox desligada. Snapshot
+frio, licença/instalação/reinício e confirmação da rota física aguardam participação
+humana solicitada. Não houve aceitação de áudio ou receptores, promoção a beta,
+retomada do driver próprio ou teste prolongado. Evidência completa permanece local.
+
+### Segunda etapa: instalação do cabo e investigação da enumeração
+
+Após o usuário aceitar os termos e autorizar instalação administrativa/reinício,
+foi criado snapshot frio com a VM desligada, sem salvar RAM; restauração não
+exercitada. O instalador Pack45 x64 informou sucesso e o reinício terminou.
+Inventário posterior confirmou VB-CABLE 3.3.1.7 assinado, dois endpoints de
+reprodução e um de captura. Os seis defaults consultados depois da instalação
+continuaram no HDA; antes, somente reprodução/captura gerais foram observadas,
+sem comprovar separadamente os papéis de comunicação.
+
+A release original passou novamente nos diagnósticos sem áudio, mas manteve
+`devices=[]` e `targets=[]`. Em cinco endpoints, o percurso COM entregou ID de
+adaptador com envelope `{2}.`; consultá-lo integralmente no ConfigManager retornou
+55 (`CR_NO_SUCH_DEVICE_INTERFACE`). Um segundo probe somente leitura removeu
+apenas esse envelope exato e as quatro etapas CM/PnP passaram nos cinco casos.
+
+Correção local restrita à identidade WASAPI reconhece essa forma observada antes
+de consultar CM, preservando referências, IDs de roteamento, identidade nativa,
+formato e quarentena. IDs MMDevice são opacos; outras formas continuam recusadas.
+Formatação, 33 testes direcionados de `voice-wasapi` e Clippy do componente com
+todos os alvos passaram no Linux, serialmente sob limite de 3 GiB e um job. A
+primeira tentativa offline parou antes de executar testes porque `serde_json`
+1.0.154 não estava no cache; a execução seguinte obteve as versões do lockfile,
+sem alterá-lo. Nova CI/candidato Windows e validação de áudio seguem pendentes;
+os passes anteriores na VM são da release original.
+Audacity 4 foi apenas preparado, sem execução. USB físico foi detectado no host,
+mas passagem direta não estava disponível por permissões; rota física não validada.
+Não houve gravação em receptor, medição de latência ou promoção de estabilidade.
