@@ -770,7 +770,9 @@ pub fn start_desktop(target: String, shared: Arc<DesktopShared>) -> Result<Deskt
     let host = host()?;
     let target = select_device(&host, &list_devices()?, Some(&target), DeviceKind::Output)?;
     let output = endpoint(&host, &target)?;
-    let config = native_config(&output, false, 256)?;
+    // Request shared-buffer capacity, not a different endpoint callback period.
+    // Give loopback reads scheduling headroom; discontinuities remain reported.
+    let config = native_config(&output, false, 1024)?;
     shared.active.store(false, Ordering::Release);
     shared.frames.store(0, Ordering::Relaxed);
     shared.overruns.store(0, Ordering::Relaxed);
