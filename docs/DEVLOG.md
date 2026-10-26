@@ -450,8 +450,90 @@ Formatação, 33 testes direcionados de `voice-wasapi` e Clippy do componente co
 todos os alvos passaram no Linux, serialmente sob limite de 3 GiB e um job. A
 primeira tentativa offline parou antes de executar testes porque `serde_json`
 1.0.154 não estava no cache; a execução seguinte obteve as versões do lockfile,
-sem alterá-lo. Nova CI/candidato Windows e validação de áudio seguem pendentes;
+sem alterá-lo. Esses testes locais precederam a CI do candidato descrita abaixo;
 os passes anteriores na VM são da release original.
 Audacity 4 foi apenas preparado, sem execução. USB físico foi detectado no host,
 mas passagem direta não estava disponível por permissões; rota física não validada.
 Não houve gravação em receptor, medição de latência ou promoção de estabilidade.
+
+### Terceira etapa: CI do candidato e limite do HDA emulado
+
+O candidato de `cbe42d5`, com a correção de código em `cca3270`, passou na
+[CI Windows 40335940556](https://github.com/aaronmlf/voice-app/actions/runs/40335940556):
+138 testes Rust, 15 Python, formatação, Clippy, limites, corpus, benchmark,
+licenças, pacote/checksum e CLI/IPC/MCP/GUI extraídos. A
+[CI Linux 40336998729](https://github.com/aaronmlf/voice-app/actions/runs/40336998729)
+passou 150 Rust e 51 Python, demais gates e integração PipeWire isolada efetivamente
+executada. Reexecuções do corpus não são somadas novamente. Wine 9.0 confirmou
+comandos offline e recusa de DACL, sem qualificar GUI, IPC ou compatibilidade Wine.
+
+ZIP Windows baixado e verificado no host: SHA-256
+`931fc1efb4064d69f7d260803c0869dad65560a8e29b2e1bea961c9f941c5265`.
+É um candidato separado da release original. O smoke nativo da CI durou
+5,483 s, com pico observado de
+75,95 MiB somente na GUI, áudio desligado e PNG 1024×768. Esse passe não demonstra
+a descoberta ou a transmissão no convidado; estas receberam os ensaios posteriores abaixo.
+
+Foi observado outro bloqueio, independente da identidade: o HDA emulado desta VM
+oferece somente 16, 22,05 e 44,1 kHz nas opções de mix, sem 48 kHz. O
+[código oficial da Oracle](https://github.com/VirtualBox/virtualbox/blob/b6bea72111fcff48f31c57c9f66365b1d3301bb9/src/VBox/Devices/Audio/DevHdaCodec.cpp#L239)
+declara essas capacidades e omite explicitamente a capacidade de 48 kHz. Essa
+rota não atende ao perfil nativo exigido; não é regressão do Voice App. A passagem
+USB foi então escolhida como percurso separado para os ensaios seguintes.
+
+### Quarta etapa: candidato, USB e recepção sintética local
+
+O candidato verificado foi executado no Windows convidado. Diagnósticos isolados
+sem streams passaram e a enumeração corrigida retornou os dispositivos físicos
+e dois alvos VB-CABLE. Após autorização e passagem direta dos dispositivos USB,
+microfone e fones foram selecionados por seus IDs completos, com formato nativo
+de 48 kHz. O HDA emulado continua fora desse perfil. O microfone abriu, mas a voz
+permaneceu mutada durante os ensaios; isso não aceita efeitos de voz física.
+
+Audacity 3.7.9 portátil, com perfil separado, gravou CABLE Output em WASAPI,
+estéreo/48 kHz, e exportou WAV local. O primeiro produtor durou 41,139 s:
+soundboard de 997 Hz recebido nos dois canais, balanceamento de 0 dB, pico
+0,059998, nenhum valor não finito ou amostra no limite de clipping. A medida de
+1777 Hz ficou muito inferior ao tom principal, com máximo de −82,98 dBFS nas
+janelas analisadas; isso não substitui análise por fase ou prova absoluta de isolamento.
+Houve 16 underruns e um overrun de entrada, dois overruns de monitor e 2.880 frames
+aparados da fila. O passe do coletor não é um passe de estabilidade.
+
+O segundo ensaio durou 61,461 s, com GUI minimizada, quantum solicitado de 1.024
+na voz/monitor e 256 no loopback nativo. Além dos tons, reproduziu no soundboard
+duas versões Clean/Robot de uma fala SAPI própria, previamente processadas offline,
+com hashes de importação conferidos. A gravação digital dos fones foi finalizada
+em PCM16 estéreo/48 kHz, com 57,31 s; o receptor externo exportou 218,55 s,
+incluindo silêncio anterior/posterior. Análise numérica encontrou as duas versões
+em ambos os percursos e a pré-escuta de 1777 Hz nos fones. Não houve escuta
+subjetiva; a avaliação se limitou às medidas numéricas dos arquivos.
+
+Na V2 foram observados sete underruns de entrada, um overrun de monitor,
+1.056 frames aparados e um overrun de desktop; nenhum overrun virtual/de gravação
+ou valor não finito nos contadores. Motor: máximos amostrados de working set/private
+bytes 33,36/25,70 MiB, CPU média de 4,14% de um núcleo em 59,698 s. GUI e quantum,
+assim como o trabalho de gravação, mudaram entre os ensaios; não há atribuição causal
+da diferença de consumo. Detalhes e limites estão em `VALIDATION.md`.
+
+As sequências encerraram áudio, desktop e gravação normalmente, preservando a
+seleção. A reabertura posterior da mesma biblioteca/IPC passou em 4,361 s: os
+cinco IDs de clips, frames e hashes foram preservados, intenção de captura
+desligada e seleções explícitas de microfone/fones USB e CABLE Input mantidas na
+GUI. Conectar áudio e disparar som foram observados manualmente. Pré-escuta e
+Stop manuais não foram qualificados, pois a expiração do prazo de captura
+interferiu nas tentativas; os resultados numéricos anteriores são da sequência CLI.
+A tentativa inicial de fechar a janela minimizada foi preservada como falha do
+coletor, sem morte forçada da GUI.
+
+O encerramento final da sessão do aplicativo passou em 1,407 s, com status parado
+confirmado, GUI/motor/keeper encerrados normalmente, intenção salva de captura
+desligada e nenhum problema de limpeza ou Kill. Discord no navegador convidado
+exigiu login; não houve configuração interna, mensagens, chamadas ou recepção.
+Reconhecimento offline opcional terminou em 4,408 s com três casos indisponíveis
+por ausência de reconhecedor en-US instalado; nada foi instalado ou transcrito.
+Isso não acrescenta prova de audição ou inteligibilidade. A VM foi desligada
+normalmente; os USBs retornaram ao áudio do host e os compartilhamentos transitórios
+foram removidos. A revogação das ACLs temporárias ainda depende de autenticação
+administrativa no host; nenhum grupo ou regra udev persistente foi alterado.
+Não se qualificaram voz física ao vivo, qualidade percebida, latência, sessão longa,
+beta/estável ou driver próprio. Áudio, transcrições e evidência bruta permanecem locais.

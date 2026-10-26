@@ -416,7 +416,7 @@ checagens de hardware/serviço/mesma instância, perfil F32 estéreo/48 kHz e qu
 A [documentação da Microsoft](https://learn.microsoft.com/en-us/windows/win32/coreaudio/device-properties)
 define IDs MMDevice como opacos: esta é compatibilidade com a forma observada,
 não garantia de estrutura universal; formatos desconhecidos falham fechados.
-A normalização ainda não foi executada em um candidato do Voice App.
+A execução dessa normalização no candidato é registrada nas etapas posteriores abaixo.
 
 Formatação, 33 testes direcionados de `voice-wasapi` e Clippy do componente para
 todos os alvos, com avisos tratados como erros, passaram no Linux. As entradas
@@ -425,9 +425,177 @@ permaneceu em disco. A primeira tentativa offline não alcançou execução porq
 `serde_json` 1.0.154 não estava no cache, que oferecia 1.0.149. A execução seguinte
 obteve as dependências fixadas, sem mudar o lockfile. Isso verifica a lógica comum
 e os testes locais, sem compilar ou executar o adaptador nativo Windows.
-Nova CI e binário corrigido continuam pendentes; resultados do probe e da release
-original não aprovam esse candidato. Audacity 4 foi somente preparado e não aberto.
+Os resultados da CI abaixo vieram depois desses testes locais; o probe e os passes
+da release original não substituem a execução do candidato na VM. Audacity 4 foi
+somente preparado e não aberto nesta etapa.
 Um microfone USB foi detectado no host, mas passagem direta estava indisponível
 por permissões; a rota física permanece sem aceitação. Gravação local/Discord,
 efeitos/soundboard, monitoração/pré-escuta, reconexão, CPU/RAM ativos e latência
 continuam pendentes. Evidências completas e helpers permanecem locais.
+
+### Terceira etapa: candidato aprovado na CI e pacote conferido
+
+As duas execuções conferidas apontam ao mesmo commit público
+`cbe42d58c738b2b8444f3ab57d2dd14d37f1922d`, com correção de código em
+`cca327022d790d6a1474f774980b94a7768ffc04`:
+
+| Execução | Resultado observado |
+|---|---|
+| [Windows 40335940556](https://github.com/aaronmlf/voice-app/actions/runs/40335940556) | Sucesso em 138 testes Rust e 15 Python, formatação, Clippy, limites, corpus, benchmark, licenças, pacote/checksum, CLI/DSP/biblioteca/IPC/MCP e GUI extraídos do pacote |
+| [Linux 40336998729](https://github.com/aaronmlf/voice-app/actions/runs/40336998729) | Sucesso em 150 Rust e 51 Python, demais gates, política de dependências e integração PipeWire isolada com motor e consumidor externo efetivamente executados |
+
+As quatro reexecuções do corpus reutilizam testes já incluídos nessas contagens.
+O job Linux verificou captura/DSP/fonte virtual, soundboard, monitoração/pré-escuta,
+gravação, desktop estéreo independente, defaults, persistência, recuperação e Stop.
+Essa integração não mede latência física nem qualifica áudio Windows.
+
+O smoke da GUI na CI Windows Server 2022 usou WGPU/DX12/CPU, terminou normalmente
+em 5,483230 s e registrou `PeakWorkingSet64` observado de 79.642.624 bytes
+(75,95 MiB), somente no processo GUI, sem filhos. PNG 1024×768 limitado ao monitor
+do runner; consultas IPC registraram zero frames e captura, monitoração, desktop,
+gravação e reprodução desligados. Isso não mede RAM/CPU com áudio ativo ou sessão
+longa, nem substitui a interação manual na VM.
+
+O job Wine 9.0 terminou com gate aprovado e resultado
+`unsupported_security_environment`: comandos offline passaram e o serviço saiu
+com código 1 e `voice-cli: private path must have a protected DACL`.
+`security_refusal_verified=true`, `gui_verified=false`, `ipc_verified=false` e
+`wine_compatibility_qualified=false`; nenhuma proteção foi reduzida.
+
+O candidato foi baixado e teve checksum e PE AMD64 conferidos no host, separado
+do ZIP da release `windows-v0.1.0-alpha.2`. Identificação do pacote da CI:
+
+| Arquivo | Bytes | SHA-256 |
+|---|---:|---|
+| ZIP Windows interno | 12.978.298 | `931fc1efb4064d69f7d260803c0869dad65560a8e29b2e1bea961c9f941c5265` |
+| `voice-app.exe` | 19.464.704 | `5b86a18580fadd2fc71c552922026387febc607d355d8648e2baa3e65a958915` |
+| `voice-cli.exe` | 7.949.824 | `a7908adf5948e50cfb10601ac6223ca12bc681d5668ce255d0f10e87b77d3c25` |
+
+O ZIP externo de transporte do artefato GitHub tem hash diferente do ZIP Windows
+interno. A aprovação da CI e o probe são evidências distintas dos ensaios na VM,
+descritos na quarta etapa. Não houve substituição de asset da release original.
+
+### Limite de formato do HDA emulado
+
+Na mesma VM, a lista de formatos de mix do HDA ofereceu somente 16, 22,05 e
+44,1 kHz, sem opção de 48 kHz. A observação é coerente com o
+[código oficial da Oracle consultado](https://github.com/VirtualBox/virtualbox/blob/b6bea72111fcff48f31c57c9f66365b1d3301bb9/src/VBox/Devices/Audio/DevHdaCodec.cpp#L239):
+os caps do codec incluem essas três taxas e 16 bits, com comentário explícito
+omitindo `CODEC_F00_0A_48KHZ`. A fonte está fixada para tornar a referência
+reprodutível; ela não substitui a observação do convidado desta sessão.
+
+Esse HDA não atende ao perfil nativo de 48 kHz exigido pelo aplicativo. É uma
+limitação do percurso emulado observado, separada do defeito de representação
+da identidade WASAPI corrigido no código. Alterar apenas a taxa de projeto de um
+receptor não demonstra que o mix nativo do endpoint mudou. Os ensaios posteriores
+usaram passagem USB direta, sem transformar esse HDA em dispositivo de 48 kHz.
+
+### Quarta etapa: USB, Audacity e loopback digital do candidato
+
+Os mesmos PE conferidos do candidato `cbe42d5` passaram nos diagnósticos sem
+áudio no convidado: inicialmente dois dispositivos físicos e dois alvos VB-CABLE;
+após passagem USB autorizada, cinco dispositivos físicos e os mesmos dois alvos.
+Microfone/fones USB e par virtual foram escolhidos explicitamente, sem fallback
+para padrões ou alteração da identidade por friendly name. As rotas ativas foram
+iguais à configuração em todas as amostras. O microfone físico abriu a 48 kHz, mas a
+voz permaneceu mutada em todas as observações ativas; não houve aceitação de seu DSP.
+
+Audacity 3.7.9 oficial portátil foi aberto em extração e perfil isolados, com
+Windows WASAPI, CABLE Output explícito, dois canais e projeto de 48 kHz. Foram exportados
+WAVs locais PCM16 estéreo/48 kHz. O primeiro registro, de 243,79 s incluindo o tempo
+ocioso do receptor, apresentou 997 Hz com pico 0,059998, L/R idênticos e 0 dB de
+balanceamento; zero amostras não finitas ou no limite de clipping. O máximo do
+ajuste de 1777 Hz em janelas de 1 s foi −82,98 dBFS, contra −24,44 dBFS do tom principal.
+É uma observação numérica dessa captura; não demonstra ausência absoluta de
+vazamento, cortes abaixo de 1 s ou qualidade percebida.
+
+O segundo produtor durou 61,461495 s. GUI minimizada e quantum solicitado de 1.024 para
+voz/monitor; desktop nativo solicitou 256. Biblioteca/IPC eram novos, com motor
+separado. Pré-escuta de 1777 Hz, monitor desligado/ganho 0/0,25/0,75, disparo e parada
+de sons foram exercitados por CLI. A gravação independente do endpoint dos fones,
+pela captura de desktop já existente, terminou normalmente: 57,31 s, PCM16 estéreo/48 kHz.
+O Audacity exportou 218,55 s, incluindo silêncio anterior/posterior. Arquivos têm
+L/R iguais, nenhuma amostra não finita e nenhum indicador de clipping; isso prova
+dois canais preenchidos, sem demonstrar imagem estéreo independente ou ouvido físico.
+O desktop pode incluir sons de outros programas; frames e eventos foram preservados
+para análise, sem assumir alinhamento automático de tempo de relógio com o WAV.
+
+Uma frase própria foi sintetizada com a voz inglesa já instalada do Windows,
+sem download, microfone ou reprodução nessa preparação. Clean/Robot originais
+foram processados offline e produziram duas fontes mono/48 kHz/F32 de 6,2895 s.
+Hashes fonte/importação coincidiram antes da reprodução em loop no soundboard.
+O ganho de reprodução foi 0,5 e o monitor 0,25. A voz física permaneceu mutada;
+reproduzir um arquivo previamente processado não equivale a aplicar o efeito ao microfone em tempo real.
+
+| Template offline | Correlação normalizada no cabo / ganho ajustado | Correlação nos fones / ganho ajustado |
+|---|---|---|
+| Clean | 0,99999993 / 0,499991 | 0,988612 / 0,123418 |
+| Robot | 0,968806 / 0,484398 | 0,968807 / 0,120848 |
+
+As medidas vêm de busca por correlação cruzada dos templates completos convertidos
+a mono/16 kHz/PCM16, com remoção da média e normalização pela variância da janela;
+o ajuste direto foi recalculado após a busca. São correspondência e ganho de
+arquivos, não reconhecimento, inteligibilidade ou avaliação auditiva. Para o
+template de pré-escuta, a correlação absoluta máxima foi 0,995333 nos fones e 0,024914
+no cabo. Essa comparação, sozinha, não decide isolamento; tons periódicos,
+janelas de borda e conteúdo da fala exigem cautela. Deslocamentos nos arquivos
+não são latência física. Nenhuma escuta subjetiva ou audição física foi qualificada.
+
+| Ensaio curto | Duração do coletor | Contadores incrementados |
+|---|---:|---|
+| Tons, quantum 256, GUI visível | 41,138762 s | 16 input_underruns, 1 input_overrun, 2 monitor_overruns, 2.880 monitor_trimmed_frames |
+| Tons+fala offline, quantum 1.024, GUI minimizada | 61,461495 s | 7 input_underruns, 1 monitor_overrun, 1.056 monitor_trimmed_frames; 1 overrun de desktop |
+
+Nos dois ensaios, contadores de overrun virtual/de gravação e valores não finitos
+permaneceram em zero. A V2 publicou 2.822.976 frames virtuais; seu desktop contou
+2.772.000 frames e o arquivo final contém 2.750.880 frames gravados. Esses números
+têm fronteiras distintas de início/finalização e não foram tratados como relógios
+sincronizados. Os contadores não nulos impedem declarar estabilidade sem perdas;
+as amostras não isolam a causa nem determinam seu impacto audível.
+
+| V2, processo separado | Maior working set amostrado | Maior private bytes amostrado | CPU média, um núcleo = 100% |
+|---|---:|---:|---:|
+| Motor | 33,36 MiB | 25,70 MiB | 4,14% |
+| GUI minimizada | 68,48 MiB | 284,21 MiB | 0,00% na resolução do contador |
+| Controlador PowerShell | 98,89 MiB | 88,53 MiB | 15,47% |
+
+Foram 218 amostras por processo em 59,698012 s entre primeira/última amostra;
+intervalo nominal de 250 ms, mediana de 265,95 ms e máximo de 607,14 ms. São máximos observados,
+sem `PeakWorkingSet` do sistema e sem somar processos. Private bytes não são RAM
+residente. Não incluem o receptor, keeper, CLI transitória, SO ou VM inteira e
+terminam antes da limpeza. Na V1, o motor teve 22,03/25,19 MiB e 5,15% de CPU;
+a GUI visível, 70,78/286,48 MiB e 193,07%, em 40,367492 s. GUI, quantum, gravação e
+conteúdo mudaram juntos; essa comparação não identifica qual fator causou a diferença.
+
+As sequências pararam gravação, desktop, sons, monitor e captura, com intenção de
+áudio desligada, sem encerramento forçado do motor e com IDs salvos preservados.
+A reabertura posterior da mesma biblioteca/IPC passou em 4,360842 s, com intenção
+salva de captura desligada e os cinco IDs de clips, frames e hashes preservados.
+A GUI manteve microfone/fones USB e CABLE Input explícitos. Conectar e disparar
+som foram observados manualmente na interface; não se atribui esse resultado aos
+cliques de pré-escuta ou Stop, cujas tentativas foram afetadas pela expiração do
+prazo independente de captura. A evidência numérica anterior de pré-escuta/parada
+pertence à sequência CLI. A primeira tentativa do coletor de fechar a janela
+minimizada falhou antes da reabertura; foi preservada, sem Kill da GUI ou promoção
+a regressão do produto.
+
+O encerramento final do aplicativo passou em 1,407446 s: status parado verificado,
+GUI, motor e keeper encerrados normalmente, intenção salva de captura desligada,
+sem problemas de limpeza e sem encerramento forçado. Esse resultado é da sessão
+do aplicativo, sem afirmar desligamento da VM ou restauração de permissões do host.
+
+Discord no navegador do convidado mostrou login obrigatório. Não houve
+autenticação, teste de configurações internas, mensagens, chamadas ou recepção.
+O reconhecimento offline opcional durou 4,407845 s: os três casos ficaram
+indisponíveis por não existir reconhecedor en-US instalado. Não houve instalação
+de ativos ou transcrição, nem se inferiu inteligibilidade a partir dessa tentativa.
+Ela não substitui avaliação auditiva.
+
+A VM terminou o desligamento normal, sem Force; nenhum processo de VM permaneceu.
+Microfone e fones USB voltaram a aparecer no PipeWire do host e os compartilhamentos
+transitórios desapareceram. A revogação das ACLs temporárias ainda requer
+autenticação administrativa no host, indisponível nesta etapa; não foi declarada
+concluída. Não houve mudança persistente de grupos ou udev. Não houve
+qualificação de voz física, audição, latência, estabilidade prolongada, Windows
+físico, beta/estável ou retomada do driver próprio. Evidências, WAVs, transcrições,
+caminhos, IDs e números de série permanecem locais.
