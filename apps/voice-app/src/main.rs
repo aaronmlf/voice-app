@@ -27,6 +27,50 @@ const TEXT: Color32 = Color32::from_rgb(237, 242, 242);
 const MUTED: Color32 = Color32::from_rgb(139, 151, 153);
 const PRESET_IMAGE_CACHE_SIZE: usize = 64;
 const MAX_PENDING_PRESET_IMAGES: usize = 4;
+const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(400);
+const DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const FAST_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(any(windows, test))]
+const WINDOWS_ACTIVE_REPAINT_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Software DX12 rendering is costly even when the displayed state is unchanged.
+/// Native input still wakes egui immediately. Pending edits already schedule a
+/// 100 ms frame; other background replies can share the 200 ms active cadence.
+fn repaint_after_background_reply(ctx: &egui::Context) {
+    #[cfg(windows)]
+    ctx.request_repaint_after(WINDOWS_ACTIVE_REPAINT_INTERVAL);
+    #[cfg(not(windows))]
+    ctx.request_repaint();
+}
+
+#[cfg(any(windows, test))]
+fn windows_repaint_delay(
+    status: &Value,
+    pending_controls: bool,
+    timed_qa: bool,
+    next_status_poll: Option<Duration>,
+    next_devices_poll: Option<Duration>,
+) -> Duration {
+    let live = ["audio_running", "audio_connecting", "recording"]
+        .into_iter()
+        .any(|key| status[key].as_bool().unwrap_or(false))
+        || status["desktop"]["active"].as_bool().unwrap_or(false)
+        || status["playing"].as_u64().unwrap_or(0) > 0;
+    let cadence = if pending_controls || timed_qa {
+        FAST_REPAINT_INTERVAL
+    } else if live {
+        WINDOWS_ACTIVE_REPAINT_INTERVAL
+    } else {
+        STATUS_POLL_INTERVAL
+    };
+    [next_status_poll, next_devices_poll]
+        .into_iter()
+        .flatten()
+        .fold(cadence, Duration::min)
+        // A pending/full IPC queue can leave a deadline overdue. Retry at the
+        // existing fast cadence instead of creating a zero-delay repaint loop.
+        .max(FAST_REPAINT_INTERVAL)
+}
 
 struct CachedPresetImage {
     id: String,
@@ -243,7 +287,7 @@ impl App {
                 {
                     break;
                 }
-                ctx.request_repaint();
+                repaint_after_background_reply(&ctx);
             }
         });
         let mut app = Self {
@@ -2277,10 +2321,10 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.update_replies(ui.ctx());
-        if self.last_poll.elapsed() > Duration::from_millis(400) && !self.poll_pending {
+        if self.last_poll.elapsed() > STATUS_POLL_INTERVAL && !self.poll_pending {
             self.request_status();
         }
-        if self.last_devices_poll.elapsed() > Duration::from_secs(2) {
+        if self.last_devices_poll.elapsed() > DEVICE_POLL_INTERVAL {
             self.request_devices();
         }
         if self.settings_dirty
@@ -2351,7 +2395,32 @@ impl eframe::App for App {
         {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        ui.ctx().request_repaint_after(Duration::from_millis(100));
+        #[cfg(windows)]
+        {
+            let pending_controls = self.settings_dirty
+                || self.settings_pending
+                || self.monitor_gain_dirty
+                || self.monitor_gain_pending
+                || self.monitor_gain_dragging
+                || self.audio_start_pending.is_some()
+                || self.desktop_capture_pending
+                || self.remove_clip_pending.is_some()
+                || !self.pending_preset_images.is_empty();
+            let next_status_poll = (!self.poll_pending)
+                .then(|| STATUS_POLL_INTERVAL.saturating_sub(self.last_poll.elapsed()));
+            let next_devices_poll = (!self.devices_pending)
+                .then(|| DEVICE_POLL_INTERVAL.saturating_sub(self.last_devices_poll.elapsed()));
+            ui.ctx().request_repaint_after(windows_repaint_delay(
+                &self.status,
+                pending_controls,
+                self.smoke_seconds.is_some()
+                    || (self.screenshot.is_some() && !self.screenshot_requested),
+                next_status_poll,
+                next_devices_poll,
+            ));
+        }
+        #[cfg(not(windows))]
+        ui.ctx().request_repaint_after(FAST_REPAINT_INTERVAL);
     }
 }
 
@@ -3218,6 +3287,83 @@ fn main() {
                 .show();
         }
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod windows_repaint_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn idle_window_waits_for_poll_deadlines_without_a_ten_hz_timer() {
+        let idle = json!({"audio_running": false, "playing": 0});
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, None, None),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            windows_repaint_delay(
+                &idle,
+                false,
+                false,
+                Some(Duration::from_millis(300)),
+                Some(Duration::from_secs(1)),
+            ),
+            Duration::from_millis(300)
+        );
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, None, Some(Duration::from_millis(200))),
+            Duration::from_millis(200)
+        );
+    }
+
+    #[test]
+    fn every_live_audio_source_keeps_meter_updates_within_two_hundred_ms() {
+        for active in [
+            json!({"audio_running": true, "muted": true}),
+            json!({"audio_connecting": true}),
+            json!({"recording": true}),
+            json!({"desktop": {"active": true}}),
+            json!({"playing": 1}),
+        ] {
+            assert_eq!(
+                windows_repaint_delay(&active, false, false, None, None),
+                Duration::from_millis(200),
+                "{active}"
+            );
+        }
+    }
+
+    #[test]
+    fn edits_and_timed_qa_keep_the_existing_fast_deadline() {
+        let idle = json!({"audio_running": false});
+        let active = json!({"audio_running": true});
+        for status in [&idle, &active] {
+            assert_eq!(
+                windows_repaint_delay(status, true, false, None, None),
+                Duration::from_millis(100)
+            );
+            assert_eq!(
+                windows_repaint_delay(status, false, true, None, None),
+                Duration::from_millis(100)
+            );
+        }
+    }
+
+    #[test]
+    fn overdue_or_pending_poll_cannot_create_a_zero_delay_repaint_loop() {
+        let idle = Value::Null;
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, Some(Duration::ZERO), None),
+            Duration::from_millis(100)
+        );
+        // In-flight requests have no next-poll deadline. Their replies wake egui;
+        // merely waiting for IPC must not keep the old fast idle repaint timer.
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, None, None),
+            Duration::from_millis(400)
+        );
     }
 }
 

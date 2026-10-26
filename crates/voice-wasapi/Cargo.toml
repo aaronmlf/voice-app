@@ -12,5 +12,5 @@ voice-dsp.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 anyhow.workspace = true
-cpal = { version = "=0.18.2", default-features = false }
+cpal = { version = "=0.18.2", default-features = false, features = ["realtime"] }
 windows = { version = "=0.62.2", features = ["Win32_Media_Audio", "Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Properties", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }

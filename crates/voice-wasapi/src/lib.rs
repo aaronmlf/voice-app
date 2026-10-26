@@ -5,6 +5,10 @@
 
 #[cfg(any(target_os = "windows", test))]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod clock;
+
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod rt;
 
 #[cfg(any(target_os = "windows", test))]

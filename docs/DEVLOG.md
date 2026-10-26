@@ -537,3 +537,39 @@ foram removidos. A revogação das ACLs temporárias ainda depende de autentica�
 administrativa no host; nenhum grupo ou regra udev persistente foi alterado.
 Não se qualificaram voz física ao vivo, qualidade percebida, latência, sessão longa,
 beta/estável ou driver próprio. Áudio, transcrições e evidência bruta permanecem locais.
+
+### Quinta etapa: candidato de estabilidade em preparação, ainda sem ensaio nativo
+
+Os contadores dos ensaios curtos motivaram alterações locais que ainda não têm
+CI nem resultado de estabilidade no convidado. O backend Windows passa a habilitar
+`realtime` no CPAL; o aviso de fontes MPL-2.0 do empacotador passa a incluir
+`audio_thread_priority`, cujas fontes correspondentes seguem o fluxo de inclusão
+de dependências MPL. A habilitação não comprova que a promoção de prioridade
+ocorreu em uma execução concreta.
+
+As fronteiras entrada física→render do motor e saída virtual→monitor local ganham
+priming, reserva para jitter e correção de deriva limitada a ±1.000 ppm. O limiar
+de recuperação considera os lotes reais; um produtor de 1.536 frames e consumidor
+de 240 não devem provocar descarte apenas por terem tamanhos diferentes. Pedidos
+incompatíveis com a capacidade da fila falham visivelmente. O perfil nativo de
+48 kHz/F32 e as verificações de identidade/rota permanecem exigidos.
+
+O worker Windows prepara somente os frames faltantes até uma reserva limitada
+a 30–100 ms, calculada a partir de duas vezes o maior callback observado. O Linux
+mantém o preenchimento anterior em blocos de 480 frames. A GUI Windows passa a
+solicitar repintura a cada 200 ms com áudio ativo, 400 ms ociosa e 100 ms durante
+edição/trabalho pendente; eventos nativos continuam despertando a interface.
+Redução efetiva de CPU ainda precisa ser medida. Novos contadores distinguem
+filas, descontinuidades, backend e priming; os agregados antigos são preservados,
+com desserialização compatível, e máximos de callback são medidas separadas.
+
+A rodada local final passou em 15 testes de core, 25 do motor e 42 de WASAPI,
+com formatação e Clippy dos componentes para todos os alvos sem avisos. A revisão
+de recuperação foi corrigida e repetida: o controle usa o último lote de cada
+stream, separado dos máximos cumulativos de diagnóstico, e recupera após lotes
+grandes e reconexão. Isso não é um passe completo de release ou de áudio nativo. O usuário autorizou ensaio nativo contínuo de
+30 minutos com voz física mutada, ainda pendente. O coletor local preparado usa
+MCP persistente, conserva eventos de startup e exige prontidão após pelo menos
+cinco segundos, 21 contadores sem mudanças durante o período medido e análise
+contínua do WAV. Critérios e limites estão em `VALIDATION.md`. Não há novo passe
+de estabilidade, audição ou latência, publicação de binários ou retomada do driver próprio.

@@ -599,3 +599,68 @@ concluída. Não houve mudança persistente de grupos ou udev. Não houve
 qualificação de voz física, audição, latência, estabilidade prolongada, Windows
 físico, beta/estável ou retomada do driver próprio. Evidências, WAVs, transcrições,
 caminhos, IDs e números de série permanecem locais.
+
+### Quinta etapa: preparação do candidato de estabilidade e critérios ainda pendentes
+
+As alterações seguintes respondem aos underruns/overruns observados acima;
+não alteram os resultados dos candidatos anteriores. Ainda não há nova CI,
+pacote qualificado nem execução deste candidato no Windows convidado. A primeira
+rodada foi seguida pela correção de recuperação e repetição dos testes: 15 testes
+de core, 25 do motor e 42 de WASAPI passaram no Linux, sob limite de 3 GiB e um job.
+Formatação e Clippy dos componentes para todos os alvos passaram sem avisos;
+validação integral da GUI/pacote e execução nativa continuam abertas.
+
+No Windows, CPAL passa a habilitar a promoção de prioridade de suas threads por
+`realtime`. O empacotador passa a citar também `audio_thread_priority` no aviso
+MPL-2.0, usando o fluxo já existente de fontes correspondentes. Isso ainda não
+é prova de promoção real; snapshots de prioridade/estado das threads, quando
+coletados, não identificam sozinhos cada stream nem comprovam registro MMCSS.
+
+As duas fronteiras de relógio, entrada física→render do motor e saída
+virtual→monitor local, usam priming, reserva para jitter e interpolação com
+correção limitada a ±1.000 ppm. Os testes dirigidos cobrem deriva de relógio,
+lotes diferentes, cache fracionário, falta de dados, reprime, limites de capacidade,
+Stop e ausência de alocação no callback. A simulação de 30 minutos de deriva
+±250 ppm usa relógio de 1 kHz com durações/ppm preservados; há também cobertura
+numérica a 48 kHz com lotes 480/96/240. Essa simulação não substitui o ensaio
+contínuo nativo de 30 minutos. O limiar de descarte tem orçamento de
+128 ms, ampliado conforme os lotes reais e limitado pela fila; a regressão
+produtor de 1.536/consumidor de 240 frames impede tratar essa diferença normal
+como backlog a descartar. Pedidos sem espaço para reserva e lote do produtor
+registram falta de dados, em vez de priming silencioso indefinido. Nenhum desses
+ajustes aceita formato nativo diferente de 48 kHz/F32 ou reduz as verificações de rota.
+
+O worker Windows preenche somente a diferença até a reserva de reprodução:
+duas vezes o maior callback observado, limitada a 30–100 ms. O Linux conserva
+o preenchimento anterior em blocos inteiros de 480 frames. Flags de atividade
+acompanham Play/Stop/reset antes das confirmações e após o preenchimento, para
+separar fila vazia esperada de falta durante reprodução. A GUI Windows usa
+repintura de 200 ms com atividade, 400 ms ociosa e 100 ms em edição/trabalho
+pendente, com despertar por entrada nativa. Comparar CPU exigirá novas amostras;
+as medições anteriores não são resultado dessas mudanças.
+
+As métricas adicionadas preservam os agregados anteriores e recebem defaults
+na leitura de mensagens antigas. Contadores de falta/excesso de fila, backend,
+descontinuidade e frames de priming são distintos dos máximos de tamanho de
+callback. Quantum solicitado continua separado do tamanho efetivamente observado.
+Zero em um campo novo não demonstra instrumentação equivalente em outro backend. O controle
+usa o lote mais recente em estado próprio de cada stream; os máximos cumulativos
+não controlam a fila. A regressão de lote grande seguido de lote normal e reconexão
+preserva os diagnósticos sem deixar o transporte preso em falta de dados.
+
+O ensaio nativo de 30 minutos foi autorizado com voz física mutada e permanece
+pendente. O coletor preparado usa sessão nova, rotas e hashes explícitos, MCP
+persistente, status nominal de 1 s e recursos por processo a cada 2 s. O aquecimento
+exige ao menos 5 s, dois intervalos de avanço de frames de voz/virtual/desktop,
+priming estável e máximos positivos de callbacks. Os valores de startup são
+retidos, sem zerar ou apagar falhas antes de definir a baseline.
+
+O critério preparado para o período sustentado é nenhuma mudança nos 21
+contadores de saúde de voz/desktop, avanço contínuo de frames e observações de
+status sem lacunas superiores a 3 s. O WAV digital dos fones deve finalizar
+corretamente e passar análise contínua de sinal/lacunas; somente frames ou janelas
+de 1 s não bastam. Um watchdog independente limita a sessão a 35 minutos e exige
+heartbeat do controlador em até 15 s; falha encerra a fonte de áudio e arquivos
+parciais/forçados não são aceitos. Esse loopback não substitui receptor CABLE
+independente, avaliação no ouvido, voz física com efeitos ou latência ponta a ponta.
+Não há novo passe de estabilidade nem promoção a beta/estável nesta preparação.

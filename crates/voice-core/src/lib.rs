@@ -29,6 +29,8 @@ pub struct DesktopShared {
     pub active: AtomicBool,
     pub frames: AtomicU64,
     pub overruns: AtomicU64,
+    pub queue_overruns: AtomicU64,
+    pub backend_xruns: AtomicU64,
     pub non_finite_samples: AtomicU64,
     pub peak: AtomicU32,
 }
@@ -41,6 +43,8 @@ impl Default for DesktopShared {
             active: AtomicBool::new(false),
             frames: AtomicU64::new(0),
             overruns: AtomicU64::new(0),
+            queue_overruns: AtomicU64::new(0),
+            backend_xruns: AtomicU64::new(0),
             non_finite_samples: AtomicU64::new(0),
             peak: AtomicU32::new(0.0_f32.to_bits()),
         }
@@ -670,6 +674,33 @@ pub struct MetricsSnapshot {
     pub input_underruns: u64,
     pub input_overruns: u64,
     pub monitor_overruns: u64,
+    /// WASAPI diagnostics distinguish FIFO starvation/overflow from native discontinuities.
+    #[serde(default)]
+    pub input_queue_underruns: u64,
+    #[serde(default)]
+    pub input_queue_overruns: u64,
+    #[serde(default)]
+    pub input_capture_discontinuities: u64,
+    #[serde(default)]
+    pub monitor_queue_underruns: u64,
+    #[serde(default)]
+    pub monitor_backend_xruns: u64,
+    /// Initial/recovery jitter-buffer silence; exposed separately, never erased.
+    #[serde(default)]
+    pub input_priming_frames: u64,
+    #[serde(default)]
+    pub monitor_priming_frames: u64,
+    #[serde(default)]
+    pub soundboard_underruns: u64,
+    #[serde(default)]
+    pub preview_underruns: u64,
+    /// Actual callback maxima, not the requested endpoint buffer duration.
+    #[serde(default)]
+    pub input_callback_frames_max: u64,
+    #[serde(default)]
+    pub render_callback_frames_max: u64,
+    #[serde(default)]
+    pub monitor_callback_frames_max: u64,
     /// PipeWire diagnostic: incomplete monitor queue writes, counted as events.
     #[serde(default)]
     pub monitor_producer_overruns: u64,
@@ -697,6 +728,18 @@ pub struct AudioMetrics {
     pub input_underruns: AtomicU64,
     pub input_overruns: AtomicU64,
     pub monitor_overruns: AtomicU64,
+    pub input_queue_underruns: AtomicU64,
+    pub input_queue_overruns: AtomicU64,
+    pub input_capture_discontinuities: AtomicU64,
+    pub monitor_queue_underruns: AtomicU64,
+    pub monitor_backend_xruns: AtomicU64,
+    pub input_priming_frames: AtomicU64,
+    pub monitor_priming_frames: AtomicU64,
+    pub soundboard_underruns: AtomicU64,
+    pub preview_underruns: AtomicU64,
+    pub input_callback_frames_max: AtomicU64,
+    pub render_callback_frames_max: AtomicU64,
+    pub monitor_callback_frames_max: AtomicU64,
     pub monitor_producer_overruns: AtomicU64,
     pub monitor_trimmed_frames: AtomicU64,
     pub monitor_empty_callbacks: AtomicU64,
@@ -716,6 +759,20 @@ impl AudioMetrics {
             input_underruns: self.input_underruns.load(Ordering::Relaxed),
             input_overruns: self.input_overruns.load(Ordering::Relaxed),
             monitor_overruns: self.monitor_overruns.load(Ordering::Relaxed),
+            input_queue_underruns: self.input_queue_underruns.load(Ordering::Relaxed),
+            input_queue_overruns: self.input_queue_overruns.load(Ordering::Relaxed),
+            input_capture_discontinuities: self
+                .input_capture_discontinuities
+                .load(Ordering::Relaxed),
+            monitor_queue_underruns: self.monitor_queue_underruns.load(Ordering::Relaxed),
+            monitor_backend_xruns: self.monitor_backend_xruns.load(Ordering::Relaxed),
+            input_priming_frames: self.input_priming_frames.load(Ordering::Relaxed),
+            monitor_priming_frames: self.monitor_priming_frames.load(Ordering::Relaxed),
+            soundboard_underruns: self.soundboard_underruns.load(Ordering::Relaxed),
+            preview_underruns: self.preview_underruns.load(Ordering::Relaxed),
+            input_callback_frames_max: self.input_callback_frames_max.load(Ordering::Relaxed),
+            render_callback_frames_max: self.render_callback_frames_max.load(Ordering::Relaxed),
+            monitor_callback_frames_max: self.monitor_callback_frames_max.load(Ordering::Relaxed),
             monitor_producer_overruns: self.monitor_producer_overruns.load(Ordering::Relaxed),
             monitor_trimmed_frames: self.monitor_trimmed_frames.load(Ordering::Relaxed),
             monitor_empty_callbacks: self.monitor_empty_callbacks.load(Ordering::Relaxed),
@@ -740,6 +797,8 @@ pub struct AudioShared {
     pub monitor_enabled: AtomicBool,
     pub monitor_gain: AtomicU32,
     pub soundboard_gain: AtomicU32,
+    pub soundboard_active: AtomicBool,
+    pub preview_active: AtomicBool,
     pub soundboard: SampleQueue,
     pub preview: SampleQueue,
     pub recording: SampleQueue,
@@ -754,6 +813,8 @@ impl Default for AudioShared {
             monitor_enabled: AtomicBool::new(false),
             monitor_gain: AtomicU32::new(0.5_f32.to_bits()),
             soundboard_gain: AtomicU32::new(1.0_f32.to_bits()),
+            soundboard_active: AtomicBool::new(false),
+            preview_active: AtomicBool::new(false),
             soundboard: SampleQueue::new(SAMPLE_RATE as usize / 2),
             preview: SampleQueue::new(SAMPLE_RATE as usize / 2),
             recording: SampleQueue::new(SAMPLE_RATE as usize * 2),

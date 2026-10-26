@@ -284,6 +284,35 @@ fn source_index(source: RecordingSource) -> usize {
         RecordingSource::Desktop => 1,
     }
 }
+
+const MIX_BLOCK_FRAMES: usize = 480;
+
+fn playback_queue_target(render_callback_frames: u64) -> usize {
+    // WASAPI can deliver a batch larger than its requested buffer quantum. Keep
+    // two observed batches (at least 30 ms) prepared so a normal Windows worker
+    // wakeup cannot exhaust a 20-ms producer queue. The 100-ms ceiling remains
+    // bounded and Stop retains only this prepared tail, never an entire clip.
+    (render_callback_frames.min(2400) as usize * 2).clamp(1440, 4800)
+}
+
+fn fill_playback_queue(mixer: &mut Mixer, queue: &SampleQueue, target: usize, block: &mut [f32]) {
+    let target = target.min(queue.capacity().saturating_sub(block.len()));
+    while queue.len() < target {
+        let frames = (target - queue.len()).min(block.len());
+        mixer.process(&mut block[..frames]);
+        queue.push(&block[..frames]);
+    }
+}
+
+fn publish_playback_activity(shared: &AudioShared, mix: &Mixer, preview: &Mixer) {
+    shared
+        .soundboard_active
+        .store(mix.active_count() > 0, Ordering::Release);
+    shared
+        .preview_active
+        .store(preview.active_count() > 0, Ordering::Release);
+}
+
 impl Worker {
     fn spawn(shared: Arc<AudioShared>, desktop: Arc<DesktopShared>) -> Self {
         let (tx, rx) = mpsc::sync_channel(32);
@@ -319,7 +348,7 @@ impl Worker {
                     err,
                 ),
             ];
-            let mut mixed = [0_f32; 480];
+            let mut mixed = [0_f32; MIX_BLOCK_FRAMES];
             while !done.load(Ordering::Acquire) {
                 while let Ok(command) = rx.try_recv() {
                     // Drain before command boundaries so Finish/Replay include queued tails,
@@ -337,15 +366,19 @@ impl Worker {
                             reply,
                         } => {
                             let target = if is_preview { &mut preview } else { &mut mix };
-                            let _ = reply.send(target.play(&id, pcm, gain, looped, overlap));
+                            let result = target.play(&id, pcm, gain, looped, overlap);
+                            publish_playback_activity(&shared, &mix, &preview);
+                            let _ = reply.send(result);
                         }
                         WorkerCommand::StopAll => {
                             mix.stop_all();
                             preview.stop_all();
+                            publish_playback_activity(&shared, &mix, &preview);
                         }
                         WorkerCommand::StopClip { id, reply } => {
                             mix.stop(&id);
                             preview.stop(&id);
+                            publish_playback_activity(&shared, &mix, &preview);
                             voices.store(
                                 mix.active_count() + preview.active_count(),
                                 Ordering::Relaxed,
@@ -361,6 +394,7 @@ impl Worker {
                         } => {
                             mix.stop_all();
                             preview.stop_all();
+                            publish_playback_activity(&shared, &mix, &preview);
                             voices.store(0, Ordering::Relaxed);
                             let capture = &mut captures[0];
                             let result = capture.finish(false).map(|_| ());
@@ -425,21 +459,37 @@ impl Worker {
                         }
                     }
                 }
-                // One producer per queue; keep at most 20 ms queued instead of accumulating latency.
+                // One producer per queue. The Windows reserve follows actual
+                // callback batches; other backends retain their existing 20 ms.
                 if shared.metrics.active.load(Ordering::Relaxed) {
+                    let target = if cfg!(windows) {
+                        playback_queue_target(
+                            shared
+                                .metrics
+                                .render_callback_frames_max
+                                .load(Ordering::Relaxed),
+                        )
+                    } else {
+                        960
+                    };
                     for (mixer, queue) in [
                         (&mut mix, &shared.soundboard),
                         (&mut preview, &shared.preview),
                     ] {
-                        while queue.len() < 960 {
-                            mixer.process(&mut mixed);
-                            queue.push(&mixed);
+                        if cfg!(windows) {
+                            fill_playback_queue(mixer, queue, target, &mut mixed);
+                        } else {
+                            while queue.len() < target {
+                                mixer.process(&mut mixed);
+                                queue.push(&mixed);
+                            }
                         }
                     }
                 } else {
                     mix.stop_all();
                     preview.stop_all();
                 }
+                publish_playback_activity(&shared, &mix, &preview);
                 voices.store(
                     mix.active_count() + preview.active_count(),
                     Ordering::Relaxed,
@@ -454,6 +504,8 @@ impl Worker {
                 let _ = capture.finish(false);
             }
             voices.store(0, Ordering::Relaxed);
+            shared.soundboard_active.store(false, Ordering::Release);
+            shared.preview_active.store(false, Ordering::Release);
         });
         Self {
             tx,
@@ -743,6 +795,8 @@ impl Engine {
                     "metrics": {
                         "frames": self.desktop_shared.frames.load(Ordering::Relaxed),
                         "overruns": self.desktop_shared.overruns.load(Ordering::Relaxed),
+                        "queue_overruns": self.desktop_shared.queue_overruns.load(Ordering::Relaxed),
+                        "backend_xruns": self.desktop_shared.backend_xruns.load(Ordering::Relaxed),
                         "non_finite_samples": self.desktop_shared.non_finite_samples.load(Ordering::Relaxed),
                         "peak": f32::from_bits(self.desktop_shared.peak.load(Ordering::Relaxed))
                     }
@@ -1132,6 +1186,97 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
     static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn playback_reserve_covers_real_batches_and_keeps_stop_tail_bounded() -> Result<()> {
+        let queue = SampleQueue::new(SAMPLE_RATE as usize / 2);
+        let mut mixer = Mixer::new();
+        mixer.play("loop", Arc::new(vec![0.25; 480]), 1.0, true, false)?;
+        let target = playback_queue_target(1024);
+        let mut block = [0.0; MIX_BLOCK_FRAMES];
+        fill_playback_queue(&mut mixer, &queue, target, &mut block);
+        // The old 960-frame reserve could not even supply one 1024-frame read.
+        let mut callback = [0.0; 1024];
+        for _ in 0..2 {
+            assert_eq!(queue.pop(&mut callback), callback.len());
+            assert!(callback.iter().all(|sample| *sample == 0.25));
+        }
+        fill_playback_queue(&mut mixer, &queue, target, &mut block);
+        mixer.stop_all();
+        let mut tail = vec![0.0; target];
+        assert_eq!(queue.pop(&mut tail), target);
+        fill_playback_queue(&mut mixer, &queue, target, &mut block);
+        assert_eq!(queue.pop(&mut tail), target);
+        assert!(tail.iter().all(|sample| *sample == 0.0));
+        for callback_frames in [0, 240, 480, 1024, 1536, 8192, u64::MAX] {
+            let target = playback_queue_target(callback_frames);
+            assert!((1440..=4800).contains(&target));
+            queue.discard();
+            queue.push(&[0.0; 239]);
+            fill_playback_queue(&mut mixer, &queue, target, &mut block);
+            assert_eq!(
+                queue.len(),
+                target,
+                "no extra block beyond the reserve budget"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn playback_activity_is_published_at_command_boundaries_and_natural_end() -> Result<()> {
+        let shared = Arc::new(AudioShared::default());
+        let desktop = Arc::new(DesktopShared::default());
+        shared.metrics.active.store(true, Ordering::Release);
+        let worker = Worker::spawn(shared.clone(), desktop);
+        let play = |id: &str, preview: bool, looped: bool| -> Result<()> {
+            let (reply, received) = mpsc::channel();
+            worker.send(WorkerCommand::Play {
+                id: id.into(),
+                pcm: Arc::new(vec![0.1; 480]),
+                gain: 1.0,
+                looped,
+                overlap: false,
+                preview,
+                reply,
+            })?;
+            received.recv_timeout(Duration::from_secs(3))??;
+            Ok(())
+        };
+        play("board", false, true)?;
+        play("preview", true, true)?;
+        assert!(shared.soundboard_active.load(Ordering::Acquire));
+        assert!(shared.preview_active.load(Ordering::Acquire));
+        let (reply, received) = mpsc::channel();
+        worker.send(WorkerCommand::StopClip {
+            id: "board".into(),
+            reply,
+        })?;
+        received.recv_timeout(Duration::from_secs(3))??;
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(shared.preview_active.load(Ordering::Acquire));
+        worker.send(WorkerCommand::StopAll)?;
+        worker.reset_desktop(false)?; // A command barrier, without waiting for a worker tick.
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(!shared.preview_active.load(Ordering::Acquire));
+        shared.soundboard.discard(); // This test is the sole prepared-queue consumer.
+        play("finite", false, false)?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut consumed = [0.0; 480];
+        while shared.soundboard_active.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < deadline,
+                "finite clip remained marked active"
+            );
+            shared.soundboard.pop(&mut consumed);
+            thread::sleep(Duration::from_millis(1));
+        }
+        shared.metrics.active.store(false, Ordering::Release);
+        worker.reset(true)?;
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(!shared.preview_active.load(Ordering::Acquire));
+        Ok(())
+    }
     fn test_paths() -> Paths {
         let p = std::env::temp_dir().join(format!(
             "voice-engine-test-{}-{}",

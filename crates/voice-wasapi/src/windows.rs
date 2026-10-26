@@ -5,7 +5,8 @@ use crate::identity::{
     selected_status, vbcable_identity, verified_pair,
 };
 use crate::rt::{
-    DesktopCapture, INPUT_QUEUE, InputCapture, LocalMonitor, MONITOR_QUEUE, VoiceOutput,
+    CallbackBatches, DesktopCapture, INPUT_QUEUE, InputCapture, LocalMonitor, MONITOR_QUEUE,
+    VoiceOutput,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -565,8 +566,16 @@ fn handle_audio_error(kind: ErrorKind, monitor: bool, running: &AtomicBool, shar
         // CPAL reports capture discontinuities as Xrun and keeps the stream alive.
         // Report the gap without finalizing a recording or replacing the device.
         let counter = if monitor {
+            shared
+                .metrics
+                .monitor_backend_xruns
+                .fetch_add(1, Ordering::Relaxed);
             &shared.metrics.monitor_overruns
         } else {
+            shared
+                .metrics
+                .input_capture_discontinuities
+                .fetch_add(1, Ordering::Relaxed);
             &shared.metrics.input_underruns
         };
         counter.fetch_add(1, Ordering::Relaxed);
@@ -589,6 +598,7 @@ fn handle_virtual_error(kind: ErrorKind, running: &AtomicBool, shared: &AudioSha
 fn handle_desktop_error(kind: ErrorKind, running: &AtomicBool, shared: &DesktopShared) {
     if kind == ErrorKind::Xrun {
         shared.overruns.fetch_add(1, Ordering::Relaxed);
+        shared.backend_xruns.fetch_add(1, Ordering::Relaxed);
     } else {
         running.store(false, Ordering::Release);
         shared.active.store(false, Ordering::Release);
@@ -599,6 +609,8 @@ fn handle_desktop_error(kind: ErrorKind, running: &AtomicBool, shared: &DesktopS
 /// Capture, process, record, and optionally monitor the physical microphone.
 /// The explicitly selected virtual render endpoint clocks the final mix.
 /// Monitoring and previews stay on a separate prepared queue and physical output.
+/// Both native 48 kHz boundaries use prepared, bounded fractional clock bridges;
+/// this corrects small device-clock differences, not unsupported mix formats.
 pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandle> {
     let config = resolve_config(&config)?;
     let host = host()?;
@@ -637,7 +649,8 @@ pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandl
     shared.preview.discard();
     let queue = Arc::new(SampleQueue::new(INPUT_QUEUE));
     let running = Arc::new(AtomicBool::new(true));
-    let mut capture = InputCapture::new(shared.clone(), queue.clone());
+    let batches = CallbackBatches::default();
+    let mut capture = InputCapture::new(shared.clone(), queue.clone(), batches.clone());
     let capture_gate = running.clone();
     let capture_error_gate = running.clone();
     let capture_error_shared = shared.clone();
@@ -665,9 +678,14 @@ pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandl
     let output_error_shared = shared.clone();
     let (output, virtual_output) = if let Some(virtual_device) = virtual_device {
         let monitor_queue = Arc::new(SampleQueue::new(MONITOR_QUEUE));
-        let mut processor =
-            VoiceOutput::publishing(shared.clone(), queue, monitor_queue.clone(), SAMPLE_RATE);
-        let mut monitor = LocalMonitor::new(shared.clone(), monitor_queue);
+        let mut processor = VoiceOutput::publishing(
+            shared.clone(),
+            queue,
+            monitor_queue.clone(),
+            SAMPLE_RATE,
+            batches.clone(),
+        );
+        let mut monitor = LocalMonitor::new(shared.clone(), monitor_queue, batches);
         let virtual_gate = running.clone();
         let virtual_error_gate = running.clone();
         let virtual_error_shared = shared.clone();
@@ -693,7 +711,7 @@ pub fn start(config: AudioConfig, shared: Arc<AudioShared>) -> Result<AudioHandl
             .context("open native 48 kHz stereo local monitor")?;
         (output, Some(virtual_output))
     } else {
-        let mut processor = VoiceOutput::new(shared.clone(), queue, SAMPLE_RATE);
+        let mut processor = VoiceOutput::new(shared.clone(), queue, SAMPLE_RATE, batches);
         let output = output
             .build_output_stream::<f32, _, _>(
                 output_config,
@@ -836,6 +854,28 @@ mod tests {
         assert!(shared.metrics.active.load(Ordering::Acquire));
         assert_eq!(shared.metrics.input_underruns.load(Ordering::Relaxed), 1);
         assert_eq!(shared.metrics.monitor_overruns.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            shared
+                .metrics
+                .input_capture_discontinuities
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            shared.metrics.monitor_backend_xruns.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            shared.metrics.input_queue_underruns.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            shared
+                .metrics
+                .monitor_queue_underruns
+                .load(Ordering::Relaxed),
+            0
+        );
     }
 
     #[test]
@@ -873,6 +913,8 @@ mod tests {
         assert!(running.load(Ordering::Acquire));
         assert!(shared.active.load(Ordering::Acquire));
         assert_eq!(shared.overruns.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.backend_xruns.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.queue_overruns.load(Ordering::Relaxed), 0);
         handle_desktop_error(ErrorKind::StreamInvalidated, &running, &shared);
         assert!(!running.load(Ordering::Acquire));
         assert!(!shared.active.load(Ordering::Acquire));

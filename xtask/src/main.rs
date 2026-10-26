@@ -723,7 +723,7 @@ fn package(root: &Path) -> Result<()> {
     fs::copy(report, staging.join("THIRD_PARTY_LICENSES.json"))?;
     fs::write(
         staging.join("SOURCE-NOTICE.txt"),
-        "This package includes unmodified Symphonia decoder source under MPL-2.0 in THIRD_PARTY_SOURCES/. Those source files remain under their original licenses and notices, included in each source directory and THIRD_PARTY_LICENSES/. The project's MIT OR Apache-2.0 grant applies to our original code; it does not replace third-party code or font licenses. Fonts include OFL-1.1 and Ubuntu-font-1.0 notices. Declared package licenses are listed in THIRD_PARTY_LICENSES.json.\n",
+        "This package includes unmodified MPL-2.0 dependency source in THIRD_PARTY_SOURCES/, including Symphonia decoders and, when enabled, audio_thread_priority. Those source files remain under their original licenses and notices, included in each source directory and THIRD_PARTY_LICENSES/. The project's MIT OR Apache-2.0 grant applies to our original code; it does not replace third-party code or font licenses. Fonts include OFL-1.1 and Ubuntu-font-1.0 notices. Declared package licenses are listed in THIRD_PARTY_LICENSES.json.\n",
     )?;
     if !cfg!(windows) {
         fs::write(
