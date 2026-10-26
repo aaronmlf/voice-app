@@ -1422,9 +1422,15 @@ mod tests {
         );
         // Leave the existing bounded mixed tail intact, then consume it as the
         // synthetic callback would. Newly produced audio contains the other ID.
-        let mut tail = [0.0; 960];
-        assert_eq!(engine.shared.soundboard.pop(&mut tail), 960);
-        assert_eq!(engine.shared.preview.pop(&mut tail), 960);
+        let maximum_tail = if cfg!(windows) { 4800 } else { 960 };
+        let mut tail = vec![0.0; maximum_tail];
+        for queue in [&engine.shared.soundboard, &engine.shared.preview] {
+            // Snapshot once: the producer may already refill with the remaining
+            // ID while this synthetic callback drains the prepared mixed tail.
+            let prepared = queue.len();
+            assert!((1..=maximum_tail).contains(&prepared));
+            assert_eq!(queue.pop(&mut tail[..prepared]), prepared);
+        }
         let deadline = Instant::now() + Duration::from_secs(3);
         while engine.shared.soundboard.len() < 480 || engine.shared.preview.len() < 480 {
             assert!(
