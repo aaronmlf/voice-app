@@ -67,21 +67,40 @@ fn execute() -> Result<()> {
                 if cfg!(windows) { "python" } else { "python3" },
                 &python_tests,
             )?;
+            // The retained driver prototype is optional source on windows-native.
+            // Application-only branches validate the shared engine without it.
+            if Path::new("drivers/windows").is_dir() {
+                driver_check()?;
+            }
             println!("Workspace formatting, Clippy, tests and dependency boundaries passed.");
         }
         "boundaries" => dependency_boundaries(&metadata(true)?)?,
-        "bench" => run(
-            "cargo",
-            &[
-                "run",
-                "--locked",
-                "--release",
-                "-p",
-                "voice-dsp",
-                "--example",
-                "bench",
-            ],
-        )?,
+        "bench" => {
+            for profile in [
+                &[][..],
+                &["--vocoder"][..],
+                &["--vocoder", "--blend"][..],
+                &["--granular"][..],
+                &["--granular-clear"][..],
+                &["--granular-natural"][..],
+                &["--granular-natural", "--blend"][..],
+            ] {
+                let mut args = vec![
+                    "run",
+                    "--locked",
+                    "--release",
+                    "-p",
+                    "voice-dsp",
+                    "--example",
+                    "bench",
+                ];
+                if !profile.is_empty() {
+                    args.push("--");
+                    args.extend_from_slice(profile);
+                }
+                run("cargo", &args)?;
+            }
+        }
         "audio-check" => {
             ensure!(
                 cfg!(target_os = "linux"),
@@ -121,9 +140,10 @@ fn execute() -> Result<()> {
         "license-check" => {
             license_report(&metadata(false)?, None)?;
         }
+        "driver-check" => driver_check()?,
         "package" => package(root)?,
         "help" | "--help" | "-h" => println!(
-            "cargo xtask <command>\n  check          fmt, Clippy, Rust/Python tests and dependency boundaries\n  boundaries     check architectural dependency allowlist\n  bench          release CPU-only DSP benchmark (not end-to-end latency)\n  audio-check    isolated PipeWire and engine integration (no hardware)\n  corpus         synthetic codec and malformed-input regressions\n  license-check  offline declared-SPDX allowlist report (not an audit)\n  package        native Linux tar.gz or Windows MSVC zip + notices + SHA256SUMS in dist/\n\nRun `cargo fetch --locked` first when using license-check offline.\nOptional fuller dependency checks: cargo deny check licenses bans sources advisories."
+            "cargo xtask <command>\n  check          fmt, Clippy, Rust/Python tests and dependency boundaries\n  boundaries     check architectural dependency allowlist\n  driver-check   portable Windows driver transport tests (no kernel/audio devices)\n  bench          release CPU-only DSP benchmark (not end-to-end latency)\n  audio-check    isolated PipeWire and engine integration (no hardware)\n  corpus         synthetic codec and malformed-input regressions\n  license-check  offline declared-SPDX allowlist report (not an audit)\n  package        native Linux tar.gz or Windows MSVC zip + notices + SHA256SUMS in dist/\n\nRun `cargo fetch --locked` first when using license-check offline.\nOptional fuller dependency checks: cargo deny check licenses bans sources advisories."
         ),
         _ => bail!("unknown command {command:?}; run cargo xtask help"),
     }
@@ -142,6 +162,13 @@ fn run(program: &str, arguments: &[&str]) -> Result<()> {
         arguments.join(" ")
     );
     Ok(())
+}
+
+fn driver_check() -> Result<()> {
+    run(
+        if cfg!(windows) { "python" } else { "python3" },
+        &["scripts/test-windows-driver.py"],
+    )
 }
 fn capture(program: &str, arguments: &[&str]) -> Result<Output> {
     let result = Command::new(program)
@@ -208,7 +235,7 @@ fn boundary_policy() -> BTreeMap<&'static str, &'static [&'static str]> {
         ),
         (
             "voice-wasapi",
-            &["voice-core", "voice-dsp", "anyhow", "cpal"][..],
+            &["voice-core", "voice-dsp", "anyhow", "cpal", "windows"][..],
         ),
         (
             "voice-engine",
@@ -670,6 +697,8 @@ fn package(root: &Path) -> Result<()> {
             "ROADMAP.md",
             "VALIDATION.md",
             "VOICE-LAB.md",
+            "VOCODER.md",
+            "GRANULAR.md",
             "WINDOWS.md",
             "images/desktop-capture.png",
             "images/lab.png",
@@ -714,7 +743,7 @@ fn package(root: &Path) -> Result<()> {
     fs::copy(report, staging.join("THIRD_PARTY_LICENSES.json"))?;
     fs::write(
         staging.join("SOURCE-NOTICE.txt"),
-        "This package includes unmodified Symphonia decoder source under MPL-2.0 in THIRD_PARTY_SOURCES/. Those source files remain under their original licenses and notices, included in each source directory and THIRD_PARTY_LICENSES/. The project's MIT OR Apache-2.0 grant applies to our original code; it does not replace third-party code or font licenses. Fonts include OFL-1.1 and Ubuntu-font-1.0 notices. Declared package licenses are listed in THIRD_PARTY_LICENSES.json.\n",
+        "This package includes unmodified MPL-2.0 dependency source in THIRD_PARTY_SOURCES/, including Symphonia decoders and, when enabled, audio_thread_priority. Those source files remain under their original licenses and notices, included in each source directory and THIRD_PARTY_LICENSES/. The project's MIT OR Apache-2.0 grant applies to our original code; it does not replace third-party code or font licenses. Fonts include OFL-1.1 and Ubuntu-font-1.0 notices. Declared package licenses are listed in THIRD_PARTY_LICENSES.json.\n",
     )?;
     if !cfg!(windows) {
         fs::write(
