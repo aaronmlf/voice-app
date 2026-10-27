@@ -119,7 +119,7 @@ oferece `voice_status` e `voice_command` por MCP/stdio usando o mesmo registro d
 - Microfone virtual, captura e monitoração independentes; pré-escuta apenas nos fones.
 - Gate, ganho, filtros, compressor, saturação, robô, eco, reverb e chorus.
 - Pitch e formantes via Signalsmith, redução de ruído RNNoise e 12 presets próprios.
-- Cadeia de 11 blocos reordenáveis no Laboratório, salva com o preset e com a sessão.
+- Cadeia de 13 blocos reordenáveis no Laboratório, incluindo vocoder e granular nos modos Estilizado e Natural experimental; presets antigos preservados pela migração.
 - Intensidade por efeito e mistura de duas vozes, com níveis independentes e atrasos alinhados.
 - Filtros para vozes originais e próprias; imagens locais personalizadas nos presets próprios.
 - Favoritos e biblioteca visual com avatares originais.
