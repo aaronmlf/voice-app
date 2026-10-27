@@ -1,142 +1,85 @@
-# Voice App — Windows experimental preview
+# Voice App windows-v0.1.0-alpha.3 — Windows experimental
 
-Native x86_64 Windows/MSVC build. Extract the ZIP into a writable directory and
-run `voice-app.exe`. Use `voice-cli.exe --help` for offline processing and engine
-commands. Windows 10/11 x64 are the intended desktop targets; a GitHub-hosted
-Windows Server 2022 build and offline tests do not establish physical desktop or
-audio compatibility.
+Native Windows x86_64/MSVC preview with a traditional 20-band vocoder and granular
+Stylized/experimental Natural modes. The Laboratory has 13 reorderable blocks,
+per-effect intensity and both voices of a blend through the same GUI/CLI/MCP API.
+Legacy 11/12-position order/intensity arrays migrate preserving relative order.
+The new effects start disabled in existing voices.
 
-This application ZIP does not bundle or install a virtual microphone driver.
-The latest experimental source adds an explicit route for processed voice and
-soundboard through an externally installed VB-CABLE. Obtain the base Windows x64
-cable from the [official VB-Audio site](https://vb-audio.com/Cable/) and follow the
-vendor's installation instructions and license. Its installer and driver are not
-included or licensed under the application's MIT/Apache-2.0 terms.
+Only the **12 original built-in voice recipes**, unchanged, are distributed.
+No personal presets, artwork, recordings, comparisons, models or library are
+bundled. Licensed default denoising weights remain a documented dependency.
+The core works offline without login. Back up the local library/presets before
+updating: new effect fields/positions are not qualified for downgrade.
 
-1. In Voice App Settings, choose the physical microphone and headphones.
-2. Under the virtual microphone section, explicitly select **CABLE Input** and
-   apply/reconnect. This playback endpoint receives the effects and soundboard.
-3. In Discord or Audacity/Tenacity, select **CABLE Output** as the capture input.
-   Keep destination playback on the physical headphones.
+## Install and route through VB-CABLE
 
-**Ouvir-me**, its volume and preview playback remain on the physical headphones.
-They do not enable or control the cable transmission. A saved missing cable is
-not replaced automatically. No system audio default is changed by this route.
-The installed VB-CABLE path and destination applications remain unvalidated on
-Windows; offline CI and Wine cannot establish that acceptance. This describes
-the experimental implementation, not a new release announcement or qualification
-of previously published ZIPs. See docs/WINDOWS.md for setup and outstanding checks.
+Check the ZIP against `SHA256SUMS.txt`, extract it into a writable folder and
+run `voice-app.exe`. Windows 10/11 x64 are intended targets; the executables
+are unsigned. The ZIP does not bundle/install a virtual microphone driver.
 
-The first-party driver and signing effort was cancelled; PR #5 was closed without
-merging. Its old unsigned CI artifacts are historical development outputs, not
-user installers. This external-cable route does not require a Voice App driver
-or its signing process.
+Obtain base Windows x64 VB-CABLE from the
+[official VB-Audio site](https://vb-audio.com/Cable/), following the vendor's
+installation instructions and license. It is separate from the application's
+MIT/Apache-2.0 terms. The first-party driver/signing project remains cancelled.
 
-The WASAPI adapter can also process microphone audio for local monitoring/recording
-and capture an explicitly selected desktop output, subject to physical validation.
-Monitoring is off by default. No driver, service or system audio default is
-installed or changed by extracting or launching this package.
+1. In Voice App Settings, select the physical microphone and headphones.
+2. Explicitly select **CABLE Input** as the virtual-microphone playback
+   destination and apply/reconnect. It receives processed voice and soundboard.
+3. In Discord or Audacity/Tenacity, select **CABLE Output** as the recording input.
+   Keep destination playback on physical headphones.
 
-The package contains the application's 12 original built-in voices only. Its
-library and custom presets remain local. No login or network service is required.
+Ouvir-me, its volume and preview stay on the physical headphones; they do not
+enable/control cable transmission. A saved missing cable is not automatically
+replaced. No system audio default is changed. Monitoring starts off in a fresh
+library. Desktop capture is a separate explicit route and may include call audio.
+The application does not create endpoints or install a driver/service.
 
-If Windows reports a missing `VCRUNTIME`/`MSVCP` DLL, install the current Microsoft
-Visual C++ v14 x64 Redistributable from Microsoft's official page:
-https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
-Do not download individual DLLs from third-party sites. The archive does not
-redistribute the Microsoft runtime, bundle an unsigned audio driver or include a
-code-signing certificate. The executables are currently unsigned.
-
-Verify the ZIP's SHA-256 using PowerShell:
+If VCRUNTIME/MSVCP is missing, use the
+[Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist).
+It is not bundled. For checksum verification in PowerShell:
 
 ```powershell
-$stream = [System.IO.File]::OpenRead((Join-Path $PWD 'voice-app-0.1.0-x86_64-pc-windows-msvc.zip'))
-try {
-    $algorithm = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
-    } finally { $algorithm.Dispose() }
-} finally { $stream.Dispose() }
-[System.IO.File]::ReadAllText((Join-Path $PWD 'SHA256SUMS.txt'))
+Get-FileHash .\voice-app-0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-Content .\SHA256SUMS.txt
 ```
 
-Compare all 64 hexadecimal digits. The optional developer smoke script requires
-PowerShell 7:
+Compare all 64 hexadecimal digits. Use `voice-cli.exe --help` for offline
+processing/engine commands. Optional developer smoke helpers are included under
+`scripts/`; they use temporary synthetic libraries and do not qualify real audio.
 
-```powershell
-pwsh -File .\scripts\test-windows-offline.ps1
-```
+## Evidence and limitations
 
-It uses a temporary synthetic library, starts only the local command service,
-tests CLI/MCP/persistence/DSP files, and shuts it down. It never starts capture/playback or opens the GUI. Status can query the Windows
-endpoint inventory/topology to discover installed virtual cables, without opening an audio stream. Those tests do not qualify real-time
-audio stability, latency, device reconnection, desktop capture or permissions.
+The [prior integrated CI](https://github.com/aaronmlf/voice-app/actions/runs/40526366912)
+passed 186 Rust tests in the native Windows Server 2022 check, formatting, Clippy,
+boundaries, corpus, seven benchmarks, license policy, package/checksum/PE checks,
+extracted-package vocoder and both granular modes, migration 11/12 to 13,
+CLI/IPC/MCP/persistence and a short software-rendered GUI smoke. The release
+workflow repeats gates on its exact source commit.
 
-The [native Windows Server 2022 check for public commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538)
-passed on the same extracted candidate: 99 Rust tests, 15 Python tests, four
-additional corpus regression reruns, formatting, Clippy, dependency boundaries,
-corpus, benchmark, licenses, packaging/checksum, offline CLI/DSP/library/IPC/MCP,
-PE inspection and a short GUI smoke. Corpus reruns reuse four tests from the 99.
+Wine passed CLI/offline processing, then verified the exact secure refusal
+`voice-cli: private path must have a protected DACL`. The result was
+`unsupported_security_environment`: **Wine GUI, IPC and compatibility remain
+unqualified.** No access-control check was weakened.
 
-The GUI smoke passed in 4.6434662 seconds using WGPU with Windows WARP software
-rendering through DX12/FXC (Microsoft Basic Render Driver, device type CPU).
-It exited normally with code 0 and an observed process memory peak of
-78,139,392 bytes (74.52 MiB). Eleven local IPC snapshots showed audio off and
-zero frames, and the fresh library exposed exactly the 12 original voices.
-The 1024×768 PNG matched ten native client-surface measurements. A single
-1024×768 monitor at DPI 96 explained the viewport clamp from the requested
-1280×800. The helper accepts only the requested size or this independently
-measured single-monitor clamp; it does not qualify full-size layout or manual
-interaction. Audio capture, monitoring, desktop capture, recording and sound
-playback must remain off throughout this smoke.
+Historical synthetic VM reception is documented separately; it does not qualify
+this version's live microphone/new effects. Installed VB-CABLE, Windows 10/11
+hardware, Discord/Audacity/Tenacity, reconnection, perceived clarity and prolonged
+active audio remain separate acceptance gates.
 
-To invoke the packaged helper explicitly with PowerShell 7:
+Natural limits effective pitch to ±4 semitones and grains to 40 ms. Its default
+48 kHz buffering is 962 frames/20.04 ms, before devices/driver/application buffers.
+Pitch/formant adds 88 ms and denoise 20 ms. Combinations can exceed the open 80 ms
+physical-latency target. No end-to-end Windows latency is claimed.
 
-```powershell
-pwsh -File .\scripts\test-windows-gui.ps1 `
-  -CliPath .\voice-cli.exe -GuiPath .\voice-app.exe `
-  -ReportPath .\windows-gui-report.json -OutputDirectory .\windows-gui-evidence
-```
+Four grains and history/alignment buffers are prepared outside callbacks with
+bounded work. This is not a new long-session memory/stability pass. The previous
+four-hour attempt failed and was abandoned. This release remains experimental,
+without beta qualification. Soundboard stays after DSP with clip removal;
+monitoring/preview remain separate.
 
-The output directory must be new. The helper creates a temporary synthetic
-library and endpoint; it requires no network or audio hardware. It is never
-run automatically by the application. It passes `--smoke-seconds 4`,
-`--screenshot`, `--page voices`, `--qa-size 1280x800`,
-`--qa-software-renderer` and `--qa-report` to the GUI. The renderer QA options
-require Windows and `--smoke-seconds`. CI retains only the report, screenshot,
-adapter JSON and explicit process logs, not the test library. This is a short
-startup/render/shutdown smoke, not a manual workflow or long-session pass.
-
-The Wine job runs separately on Linux in an isolated network namespace with
-a private prefix and audio drivers disabled. It first validates the candidate
-checksum and bounded ZIP extraction, CLI help/version, and an offline 220 Hz
-quarter-second WAV containing exactly 12,000 finite float32 frames at 48 kHz.
-It then attempts the real service with ownership/ACL checks unchanged.
-Wine 9.0 previously failed before the GUI because it did not preserve the
-required protected DACL. The classifier accepts only
-the exact application error `voice-cli: private path must have a protected DACL`
-and a normal nonzero service exit after the offline checks as
-`unsupported_security_environment`. The report explicitly marks GUI, IPC and
-Wine compatibility as unqualified. Other errors still fail the job.
-
-The official Wine 9.0 report (Ubuntu 9.0~repack-4build3) for `bd75106` in
-run `40008350538` recorded `unsupported_security_environment`. CLI help/version
-and the offline 220 Hz tone passed: exactly 12,000 finite bounded float32 frames
-at 48 kHz. The service then exited with code 1 and the exact protected-DACL
-error above. `offline_checks_passed` and `security_refusal_verified` were true;
-`ipc_verified`, `gui_verified` and `wine_compatibility_qualified` were false.
-The gate verified this secure refusal while preserving access controls.
-The program's GUI and IPC are not qualified under this Wine environment.
-
-
-Checking this secure refusal does not mean the program works under Wine. No
-application permission check is weakened or bypassed. If Wine later preserves
-the required security properties and the service starts, the complete
-IPC/MCP/library/restart and timed GUI regression remains mandatory. Neither
-a native CI smoke nor Wine results establish physical Windows audio, installed VB-CABLE,
-Discord/OBS/Audacity/Tenacity or end-to-end latency support.
-
-Retain `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD_PARTY_LICENSES*`,
-`THIRD_PARTY_SOURCES/` and `SOURCE-NOTICE.txt` when redistributing. Third-party
-fonts, DSP code, default denoising weights and MPL decoder sources retain their
-own licenses. This preview is experimental and has not been promoted to beta.
+See `docs/WINDOWS.md`, `docs/VALIDATION.md`, `docs/VOCODER.md` and
+`docs/GRANULAR.md`. Retain `LICENSE-MIT`, `LICENSE-APACHE`,
+`THIRD_PARTY_LICENSES*`, `THIRD_PARTY_SOURCES/` and `SOURCE-NOTICE.txt`.
+Third-party fonts, DSP, default denoising weights and decoder sources retain
+their own licenses.
