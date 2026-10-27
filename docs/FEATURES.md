@@ -12,7 +12,7 @@ Nenhum marco inteiro foi promovido a estável.
 | Detecção e reconexão automática | Experimental | Metadata de padrões, troca durante a sessão, retorno do daemon, retomada entre processos e cancelamento por Stop testados em fixture privada |
 | Volume de Ouvir-me | Experimental | Controle de 0–200% independente; valor e persistência verificados por CLI/motor |
 | Interface nativa | Experimental; smoke nativo aprovado | [Windows Server 2022, `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538): GUI extraída abriu em WGPU/DX12/CPU, renderizou PNG 1024×768 igual a dez medições da área cliente, verificou áudio desligado e encerrou com código 0. Viewport limitado ao monitor único; interação manual, layout maior e sessão longa pendentes |
-| Filtro de vozes originais | Verificada em GUI isolada | Clique na biblioteca mostrou somente os 12 presets builtin; Minhas vozes mostrou apenas vozes de usuário, sem trocar a voz selecionada. Presets pessoais ficam fora da distribuição pública |
+| Coleções locais de vozes originais e próprias | Experimental; testes locais anteriores à integração | As 12 vozes builtin continuam originais; uma voz própria pode ser classificada explicitamente na biblioteca local sem mudar ID, DSP ou imagem. Salvar/importar preserva a curadoria existente e intercâmbio não transfere a classificação. Isso não autoriza publicação; a distribuição contém somente as 12 vozes builtin. CI integrada e interação manual pendentes |
 | Imagens de presets próprios | Experimental | PNG/JPEG/WebP, recorte, limites, falhas e persistência verificados; imagem gerenciada após remover fonte e reiniciar, renderização circular e comandos CLI/MCP testados |
 | SQLite e presets JSON | Verificada em testes | Persistência, versão, limites e dados inválidos |
 | WAV/MP3/Ogg Vorbis/FLAC | Verificada offline | Fixtures próprias; mono48k, resampling, limites e corte |
@@ -23,9 +23,11 @@ Nenhum marco inteiro foi promovido a estável.
 | Pacote Linux `.tar.gz` | Experimental | Checksum validado; binários extraídos executados, GUI em Xvfb e CLI integrado ao PipeWire privado |
 | Código público e releases GitHub | Experimental | `v0.1.0-alpha.1`, commit `046ae02`, publicada pelo Actions após 90 testes Rust, 40 Python, integração privada, corpus, benchmark e política de dependências. Dois assets reais com SHA-256 conferido e 23 arquivos documentais/scripts iguais ao snapshot público; binários desta release inspecionados por ELF, sem execução local durante o soak. Somente os 12 presets originais |
 | Pitch/formante, chorus, denoise | Verificada offline; ao vivo experimental | Backend real, testes espectrais/ruído/zero alloc Rust; pitch88ms, denoise20ms, ambos108ms de buffering algorítmico |
-| Reordenação de efeitos | Experimental | 11 blocos no Laboratório; validação de permutação, atualização atômica, diferença no áudio offline/PipeWire, persistência e importação de presets antigos testadas |
+| Reordenação de efeitos | Experimental | 13 blocos no Laboratório, incluindo vocoder e granular. Migração das ordens legadas de 11/12 posições preserva os índices históricos e a ordem relativa; validação, atualização atômica e persistência cobertas por testes locais anteriores à integração. CI integrada pendente |
 | Mistura de duas vozes | Experimental | Ramos alinhados, transições e persistência; áudio externo por 30 s sem novos erros; atraso de onset p95 101 ms no grafo privado, 24 eventos, perfil sem denoise; latência física pendente; tentativa de quatro horas interrompida por +1 `monitor_overruns` após 10.675,083 s saudáveis |
-| Intensidade por efeito | Experimental | 11 intensidades em A e B; bypass, wet e interpolação, alinhamento dry/wet de pitch, presets antigos e ausência de alloc/free Rust em processamento verificados |
+| Intensidade por efeito | Experimental | 13 intensidades em A e B; arrays legados recebem valor 1 nos novos índices sem ligar vocoder/granular. Bypass, interpolação e alinhamento cobertos por testes locais anteriores à integração; CI integrada pendente |
+| Vocoder tradicional | Experimental; DSP local e grafo privado testados antes da integração | Banco de 20 bandas, portadora interna, proteção de consoantes e controles GUI/CLI/MCP. Estado preparado, bypass e ausência de buffering de fluxo próprios; resposta temporal dos filtros permanece. Soundboard pós-DSP e pré-escuta separada exercitados em PipeWire privado. CI integrada, audição e testes dos novos efeitos nos aplicativos de destino pendentes; ver VOCODER.md |
+| Granular Estilizado / Natural | Experimental; Natural requer avaliação perceptual | Quatro grãos e buffers fixos; limites, migração, transições, reset e processamento sem alloc/free Rust cobertos por testes locais anteriores à integração. Natural efetivo ±4 semitons/grão até 40 ms, sem dispersão/retorno. A 48 kHz, perfil Natural padrão anuncia 20,04 ms de buffering; não é latência física. CI integrada, áudio nativo e qualidade percebida pendentes; ver GRANULAR.md |
 | Atalho no menu Linux/KDE | Verificado nesta sessão | Entrada desktop e ícone instalados; abertura do binário pronto por gio, identidade voice-app, limite de 3 GiB e segundo clique sem duplicação verificados; pinagem manual pelo menu do KDE |
 | Captura do desktop | Experimental | Sink explícito, estéreo L/R, WAV/replay independentes, isolamento do virtual e recuperação verificados em PipeWire privado. No Windows, loopback digital dos fones gerou WAV estéreo/48 kHz/16 bits de 57,31 s; +1 overrun observado. Isso não comprova audição física ou sessão longa |
 | Validação reprodutível de áudio | Verificada em grafo privado; quatro horas reprovadas | Básico de 60 min aprovado: 3.600,018 s ativos/716 janelas saudáveis. Mistura: 10.675,083 s saudáveis de 14.400 s exigidos, 2.128/2.129 janelas e +1 `monitor_overruns`; serviço terminou com código 1. RSS máximo do motor 23,30 MiB; pico do serviço 51,24 MiB, sem OOM. PCM descartado, replay limitado. Ver `VALIDATION.md` |
@@ -75,3 +77,30 @@ Ouvir-me/pré-escuta, recursos ativos e latência permaneciam pendentes. Os ensa
 posteriores de 26/10 são do candidato `cbe42d5`, separados desta release.
 O pico nativo de 75,12 MiB é apenas da GUI curta com áudio desligado. A meta de
 80 ms continua aberta; não há promoção a beta nem retomada do driver próprio.
+
+
+Atualização de integração DSP de 27/10/2026: vocoder, granular e classificação local de
+coleções estão sendo integrados à base pública com as correções de estabilidade WASAPI.
+Os gates locais anteriores dessa frente DSP passaram 179 testes Rust e 52 Python,
+formatação, Clippy, limites, benchmarks e regressão PipeWire privada. Esses números
+não são os testes da integração nem substituem os resultados Windows existentes.
+Até registrar novos gates, o candidato integrado permanece sem aprovação de CI/release.
+Apenas as 12 vozes builtin e suas artes acompanham a fonte; receitas, imagens e áudios
+pessoais ficam fora do GitHub. Nenhuma qualificação de quatro horas, beta, fala física,
+Discord/Audacity/Tenacity com os novos efeitos ou meta física de 80 ms foi acrescentada.
+
+## Integração pública Linux — 27/10/2026
+
+Fonte pública integrada às correções Windows atuais: formatação, Clippy com
+avisos negados, limites entre componentes, **198 testes Rust e 52 Python**
+aprovados em Linux. Sete perfis de benchmark DSP e a regressão PipeWire privada
+passaram, incluindo vocoder/ambos os modos granular no consumidor virtual,
+soundboard após DSP e pré-escuta privada. Pacote Linux desta fonte pública
+gerado e inspecionado por checksum, binários e documentação; nenhum arquivo
+de biblioteca pessoal ou preset customizado foi incluído. Operações locais
+seriais sob limite de 3 GiB/sem swap, sem hardware ou GUI pessoal.
+
+A CI integrada Ubuntu/Windows MSVC, o smoke nativo estendido dos três efeitos e
+a inspeção dos candidatos remotos ainda são gates próprios. Estes resultados
+locais não qualificam fala percebida, Windows 10/11 físico, VB-CABLE instalado,
+Discord/Audacity, latência física ou sessões longas, nem promovem a versão a beta.

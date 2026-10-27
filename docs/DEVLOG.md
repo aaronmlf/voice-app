@@ -595,3 +595,49 @@ operacional permanece sem comprovação.
 A sessão foi encerrada com a VM desligada normalmente e o indexador do host retomado. A
 revogação das permissões USB temporárias continua dependendo de autenticação
 administrativa do Linux. Áudio e evidência bruta permanecem locais.
+
+
+## 2026-10-27 — Integração dos efeitos vocoder e granular
+
+Integração da frente DSP compartilhada à base pública que contém as correções de
+identidade, filas e playback WASAPI. O Laboratório passa a ter 13 blocos: vocoder
+tradicional de 20 bandas, com portadora interna e passagem de consoantes, e granular
+Estilizado/Natural experimental. Os controles usam o mesmo contrato GUI/CLI/MCP,
+incluindo voz B. Ordens/intensidades legadas de 11/12 posições preservam índices e
+ordem relativa; ambos os efeitos começam desligados nas definições antigas.
+
+O granular prepara quatro grãos, histórico e alinhadores fora do callback, com
+reset por invalidação e trabalho limitado. Natural restringe pitch efetivo a ±4
+semitons e grãos a 40 ms, ignorando dispersão e retorno; sua proposta de naturalidade
+permanece sujeita à audição. Atraso nominal padrão Natural a 48 kHz é 962 frames/
+20,04 ms. O valor não é latência física e somar pitch/denoise acrescenta seus atrasos.
+O soundboard continua pós-DSP; Ouvir-me e pré-escuta mantêm as rotas separadas.
+
+A biblioteca passa a permitir classificar vozes próprias como originais localmente,
+sem alterar ID, receita, imagem ou propriedade builtin. Salvar/importar preserva a
+classificação existente e exportar não a transfere. Esta integração publica somente
+as 12 vozes builtin e código genérico; nenhum preset, mídia ou histórico pessoal.
+
+Antes desta integração, os gates locais DSP passaram 179 Rust/52 Python, formatação,
+Clippy, limites, sete benchmarks e regressão PipeWire privada, serialmente sob limite
+de 3 GiB/sem swap. Isso é evidência histórica, anterior à união com as correções Windows,
+não aprovação de CI ou release do candidato integrado. As novas validações devem ser
+registradas separadamente. Qualidade percebida, áudio nativo dos novos efeitos,
+Discord/Audacity/Tenacity, estabilidade prolongada e meta física de 80 ms continuam
+pendentes. Não há promoção a beta, retomada de driver próprio ou do lote de quatro horas.
+
+## Integração pública Linux — 27/10/2026
+
+Fonte pública integrada às correções Windows atuais: formatação, Clippy com
+avisos negados, limites entre componentes, **198 testes Rust e 52 Python**
+aprovados em Linux. Sete perfis de benchmark DSP e a regressão PipeWire privada
+passaram, incluindo vocoder/ambos os modos granular no consumidor virtual,
+soundboard após DSP e pré-escuta privada. Pacote Linux desta fonte pública
+gerado e inspecionado por checksum, binários e documentação; nenhum arquivo
+de biblioteca pessoal ou preset customizado foi incluído. Operações locais
+seriais sob limite de 3 GiB/sem swap, sem hardware ou GUI pessoal.
+
+A CI integrada Ubuntu/Windows MSVC, o smoke nativo estendido dos três efeitos e
+a inspeção dos candidatos remotos ainda são gates próprios. Estes resultados
+locais não qualificam fala percebida, Windows 10/11 físico, VB-CABLE instalado,
+Discord/Audacity, latência física ou sessões longas, nem promovem a versão a beta.

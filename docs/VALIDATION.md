@@ -50,13 +50,15 @@ registra o pico do cgroup e eventos de memória. Os relatórios podem conter cam
 ## Políticas de aceitação
 
 O atraso é de início de rajada no grafo isolado. FL recebe a referência e FR recebe o
-microfone virtual, sob o mesmo relógio de aquisição. O detector usa RMS de 1 ms, histerese
-relativa e confirmação de 3 ms. Silêncio, eventos extras/ausentes, ambiguidade ou novos
+microfone virtual, sob o mesmo relógio de aquisição. O detector atual usa energia RMS causal em janela de 10 ms, passos de 1 ms,
+histerese relativa e confirmação de 3 ms. A mesma janela é aplicada aos dois canais;
+relatórios históricos que usaram apenas bins de 1 ms não são reescritos. Silêncio, eventos extras/ausentes, ambiguidade ou novos
 contadores de erro invalidam a medição. O atraso algorítmico anunciado pelo motor aparece
 separado dos valores observados. Nenhum offset esperado é usado para fabricar a medição.
 Essa técnica não mede qualidade perceptual, atraso de conversores ou transporte da chamada.
 
-Os perfis básico, pitch e mistura são registrados integralmente no JSON. A mistura exercita
+Os perfis básico, pitch, mistura, vocoder, granular Estilizado e granular Natural
+são registrados integralmente no JSON. A mistura exercita
 dois ramos de pitch/formante e robô, com pesos 65%/35%. Esses perfis não ligam denoise,
 captura do desktop nem monitoração; resultados não se estendem a essas combinações.
 
@@ -707,3 +709,61 @@ O artefato está disponível na execução de CI vinculada acima; não foi criad
 nem promovido um marco a estável. As gravações reprovadas foram preservadas localmente.
 VM encerrada normalmente e indexador do host retomado; revogação das ACLs USB
 temporárias pendente de autenticação administrativa.
+
+
+## 27/10/2026 — Integração de vocoder e granular: evidências separadas
+
+O código compartilhado passa a incluir vocoder tradicional de 20 bandas e granular
+Estilizado/Natural experimental, com controles GUI/CLI/MCP e migração de arrays de
+11 ou 12 efeitos para 13. A classificação local de coleções não altera a propriedade
+builtin nem concede publicação. A fonte distribuída continua limitada às 12 vozes
+builtin; receitas, miniaturas e comparações pessoais não integram esta evidência pública.
+
+A validação DSP local anterior à integração com as correções posteriores do Windows
+passou 179 testes Rust e 52 Python, formatação, Clippy e limites entre componentes.
+Incluiu contratos/atômicos, arrays legados, saída finita, pitch sintético, reset,
+transições e ausência de alloc/free Rust no processamento. Os sete perfis de benchmark
+foram executados serialmente, assim como a regressão PipeWire privada: vocoder e
+ambos os modos granular chegaram ao consumidor virtual; soundboard permaneceu
+pós-DSP e pré-escuta permaneceu separada. Detalhes e números por perfil estão em
+[VOCODER.md](VOCODER.md) e [GRANULAR.md](GRANULAR.md).
+
+No grafo privado, 24 eventos por perfil com o mesmo detector causal: básico p95
+12 ms, granular Estilizado p95 29 ms e Natural p95 34 ms; nenhum incremento dos
+contadores de falha. São onsets de software, sujeitos às respostas de envelope e
+caminhos de clareza; não isolam a componente de pitch nem medem ADC/DAC, fones,
+Windows/VB-CABLE, Discord, Audacity/Tenacity ou rede. O Natural padrão anuncia
+962 frames/20,04 ms de buffering a 48 kHz; combiná-lo com pitch/denoise acumula
+buffering e pode exceder a meta física de 80 ms antes dos dispositivos.
+
+Os testes gráficos locais anteriores renderizaram os dois modos no Laboratório em
+Xvfb/llvmpipe privado, com áudio desligado e encerramento normal. O maior RSS observado
+da GUI foi 207,17 MiB. O estado relatado como `granular_state_bytes` soma 173.232 bytes
+a 48 kHz para as duas vozes, incluindo alinhadores compartilhados: não é o aumento
+exclusivo do granular nem o RSS total. A capacidade é preparada e não cresce com a
+sessão. As tarefas foram seriais sob limite de 3 GiB/sem swap; não há novo passe de
+sessão prolongada com áudio ativo.
+
+Esses resultados são históricos da frente DSP e não aprovam automaticamente a fonte
+integrada. A nova CI Linux/Windows, corpus, benchmarks, política de dependências,
+empacotamento e inspeção dos candidatos precisam de registro próprio. As evidências
+Windows e limitações operacionais anteriores continuam válidas em seus contextos:
+VB-CABLE exige instalação separada e par de endpoints validado; o aplicativo não
+instala driver. Não houve novo teste de voz física, qualidade percebida ou estabilidade
+nativa; driver próprio e tentativa de quatro horas continuam encerrados.
+
+## Integração pública Linux — 27/10/2026
+
+Fonte pública integrada às correções Windows atuais: formatação, Clippy com
+avisos negados, limites entre componentes, **198 testes Rust e 52 Python**
+aprovados em Linux. Sete perfis de benchmark DSP e a regressão PipeWire privada
+passaram, incluindo vocoder/ambos os modos granular no consumidor virtual,
+soundboard após DSP e pré-escuta privada. Pacote Linux desta fonte pública
+gerado e inspecionado por checksum, binários e documentação; nenhum arquivo
+de biblioteca pessoal ou preset customizado foi incluído. Operações locais
+seriais sob limite de 3 GiB/sem swap, sem hardware ou GUI pessoal.
+
+A CI integrada Ubuntu/Windows MSVC, o smoke nativo estendido dos três efeitos e
+a inspeção dos candidatos remotos ainda são gates próprios. Estes resultados
+locais não qualificam fala percebida, Windows 10/11 físico, VB-CABLE instalado,
+Discord/Audacity, latência física ou sessões longas, nem promovem a versão a beta.
