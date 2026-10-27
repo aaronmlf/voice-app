@@ -804,6 +804,7 @@ struct Engine {
     paths: Paths,
     library: Library,
     preset_image_revision: u64,
+    preset_revision: u64,
     session: Session,
     shared: Arc<AudioShared>,
     worker: Worker,
@@ -848,6 +849,7 @@ impl Engine {
             paths,
             library,
             preset_image_revision: 0,
+            preset_revision: 0,
             session,
             shared,
             worker,
@@ -1019,7 +1021,9 @@ impl Engine {
                     "dsp": true, "soundboard": true, "processed_recording": true,
                     "replay": true, "pitch": true, "formant": true, "chorus": true,
                     "noise_reduction": true, "reorder_effects": true, "preset_images": true,
-                    "voice_blend": true, "effect_intensity": true, "neural_voice": false,
+                    "voice_blend": true, "effect_intensity": true, "vocoder": true,
+                    "granular": true, "granular_natural_experimental": true,
+                    "local_preset_collections": true, "neural_voice": false,
                     "desktop_capture": crate::audio::DESKTOP_CAPTURE,
                     "virtual_microphone": virtual_microphone.available, "global_shortcuts": false
                 });
@@ -1056,6 +1060,7 @@ impl Engine {
                     "desktop": desktop, "recording_error": self.worker.error.lock().ok().and_then(|v|v.clone()),
                     "last_audio_error": self.last_audio_error, "data_dir": self.paths.data,
                     "preset_image_revision": self.preset_image_revision,
+                    "preset_revision": self.preset_revision,
                     "virtual_microphone": virtual_microphone, "capabilities": capabilities
                 }))
             }
@@ -1162,6 +1167,11 @@ impl Engine {
                 Ok(json!({"updated":true}))
             }
             Command::Presets => Ok(serde_json::to_value(self.library.presets()?)?),
+            Command::SetPresetOriginal { id, original } => {
+                let preset = self.library.set_preset_original(&id, original)?;
+                self.preset_revision = self.preset_revision.wrapping_add(1);
+                Ok(serde_json::to_value(preset)?)
+            }
             Command::PresetImage { id } => {
                 Ok(serde_json::to_value(self.library.preset_image(&id)?)?)
             }
@@ -1192,12 +1202,26 @@ impl Engine {
             }
             Command::SavePreset { id, name, settings } => {
                 settings.validate().map_err(anyhow::Error::msg)?;
-                let preset = Preset { id, name, settings };
+                let preset = Preset {
+                    id,
+                    name,
+                    settings,
+                    original: false,
+                };
                 self.library.save_preset(&preset)?;
-                Ok(serde_json::to_value(preset)?)
+                self.preset_revision = self.preset_revision.wrapping_add(1);
+                let saved = self
+                    .library
+                    .presets()?
+                    .into_iter()
+                    .find(|p| p.id == preset.id)
+                    .context("saved preset not found")?;
+                Ok(serde_json::to_value(saved)?)
             }
             Command::ImportPreset { path } => {
-                Ok(serde_json::to_value(self.library.import_preset(&path)?)?)
+                let preset = self.library.import_preset(&path)?;
+                self.preset_revision = self.preset_revision.wrapping_add(1);
+                Ok(serde_json::to_value(preset)?)
             }
             Command::ExportPreset { id, path } => {
                 self.library.export_preset(&id, &path)?;
@@ -1932,8 +1956,82 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn original_collection_commands_preserve_session_and_definition() -> Result<()> {
+        let paths = test_paths();
+        let mut engine = Engine::new(paths.clone())?;
+        let stop = AtomicBool::new(false);
+        let id = "custom.curated";
+        let settings = DspSettings {
+            vocoder_mix: 0.35,
+            ..Default::default()
+        };
+        let saved = engine.execute(
+            Command::SavePreset {
+                id: id.into(),
+                name: "Curated voice".into(),
+                settings,
+            },
+            &stop,
+        )?;
+        assert_eq!(saved["original"], false);
+        let baseline = serde_json::to_value(&engine.session)?;
+        let promoted = engine.execute(
+            Command::SetPresetOriginal {
+                id: id.into(),
+                original: true,
+            },
+            &stop,
+        )?;
+        assert_eq!(promoted["original"], true);
+        assert_eq!(promoted["id"], id);
+        assert_eq!(promoted["settings"], serde_json::to_value(settings)?);
+        assert_eq!(baseline, serde_json::to_value(&engine.session)?);
+        let status = engine.execute(Command::Status, &stop)?;
+        assert_eq!(status["preset_revision"], 2);
+        assert_eq!(status["capabilities"]["local_preset_collections"], true);
+        assert_eq!(status["capabilities"]["vocoder"], true);
+        assert_eq!(status["capabilities"]["granular"], true);
+        assert_eq!(
+            status["capabilities"]["granular_natural_experimental"],
+            true
+        );
+        assert!(
+            engine
+                .execute(
+                    Command::SetPresetOriginal {
+                        id: "builtin.clean".into(),
+                        original: false,
+                    },
+                    &stop
+                )
+                .is_err()
+        );
+        assert_eq!(
+            engine.execute(Command::Status, &stop)?["preset_revision"],
+            2
+        );
+        let updated = engine.execute(
+            Command::SavePreset {
+                id: id.into(),
+                name: "Updated voice".into(),
+                settings,
+            },
+            &stop,
+        )?;
+        assert_eq!(updated["original"], true);
+        drop(engine);
+        let mut reopened = Engine::new(paths.clone())?;
+        let listed: Vec<Preset> =
+            serde_json::from_value(reopened.execute(Command::Presets, &stop)?)?;
+        assert!(listed.iter().find(|p| p.id == id).unwrap().is_original());
+        drop(reopened);
+        fs::remove_dir_all(paths.data.parent().context("test root")?)?;
+        Ok(())
+    }
+
+    #[test]
     fn voice_blend_and_effect_intensity_roundtrip_and_restore_the_selected_voice() -> Result<()> {
-        use voice_core::{EffectKind, VoiceBlend, VoiceLayer};
+        use voice_core::{EffectKind, GranularMode, VoiceBlend, VoiceLayer};
 
         let paths = test_paths();
         let mut engine = Engine::new(paths.clone())?;
@@ -1941,12 +2039,24 @@ mod tests {
         let mut secondary = DspSettings {
             pitch_semitones: 2.0,
             robot_mix: 0.3,
+            granular_mode: GranularMode::Natural,
+            granular_mix: 0.25,
+            granular_pitch_semitones: -2.0,
+            granular_grain_ms: 24.0,
+            granular_clarity: 0.9,
             ..Default::default()
         };
         secondary.effect_mix[EffectKind::Gate as usize] = 0.65;
+        secondary.effect_mix[EffectKind::Granular as usize] = 0.8;
         let mut settings = DspSettings {
             gain_db: -2.0,
             pitch_semitones: -3.5,
+            granular_mix: 0.4,
+            granular_pitch_semitones: 7.0,
+            granular_grain_ms: 48.0,
+            granular_scatter: 0.3,
+            granular_feedback: 0.2,
+            granular_clarity: 0.65,
             blend: Some(VoiceBlend {
                 secondary: VoiceLayer::from(secondary),
                 primary_mix: 0.6,
@@ -1963,7 +2073,13 @@ mod tests {
             serde_json::from_value::<DspSettings>(status["settings"].clone())?,
             settings
         );
-        for capability in ["preset_images", "voice_blend", "effect_intensity"] {
+        for capability in [
+            "preset_images",
+            "voice_blend",
+            "effect_intensity",
+            "granular",
+            "granular_natural_experimental",
+        ] {
             assert_eq!(status["capabilities"][capability], true);
         }
         let id = "custom.blended";
@@ -2003,6 +2119,25 @@ mod tests {
         let persisted = fs::read(paths.data.join("session.json"))?;
         let mut invalid = settings;
         invalid.effect_mix[0] = 1.1;
+        assert!(
+            engine
+                .execute(Command::Configure { settings: invalid }, &stop)
+                .is_err()
+        );
+        let mut invalid = settings;
+        invalid.granular_mix = 1.1;
+        assert!(
+            engine
+                .execute(Command::Configure { settings: invalid }, &stop)
+                .is_err()
+        );
+        let mut invalid = settings;
+        invalid
+            .blend
+            .as_mut()
+            .expect("blend fixture")
+            .secondary
+            .granular_feedback = f32::NAN;
         assert!(
             engine
                 .execute(Command::Configure { settings: invalid }, &stop)

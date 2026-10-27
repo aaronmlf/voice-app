@@ -19,6 +19,7 @@ pub enum Command {
         config: AudioConfig,
     },
     Stop,
+    /// Configure all DSP stages, including granular mode and both voice layers.
     Configure {
         settings: DspSettings,
     },
@@ -30,6 +31,10 @@ pub enum Command {
         soundboard_gain: Option<f32>,
     },
     Presets,
+    SetPresetOriginal {
+        id: String,
+        original: bool,
+    },
     PresetImage {
         id: String,
     },
