@@ -378,6 +378,7 @@ fn offline_render_is_real_audio_and_existing_output_is_preserved() {
             .save_preset(&voice_library::Preset {
                 id: "test.pitch".into(),
                 name: "Test octave".into(),
+                original: false,
                 settings: voice_core::DspSettings {
                     pitch_semitones: 12.0,
                     ..Default::default()
@@ -448,6 +449,7 @@ fn offline_render_uses_the_saved_effect_order_instead_of_only_preset_parameters(
                 .save_preset(&voice_library::Preset {
                     id: id.into(),
                     name: id.into(),
+                    original: false,
                     settings,
                 })
                 .unwrap();
