@@ -104,3 +104,27 @@ A CI integrada Ubuntu/Windows MSVC, o smoke nativo estendido dos três efeitos e
 a inspeção dos candidatos remotos ainda são gates próprios. Estes resultados
 locais não qualificam fala percebida, Windows 10/11 físico, VB-CABLE instalado,
 Discord/Audacity, latência física ou sessões longas, nem promovem a versão a beta.
+
+## Validação da publicação — 27/10/2026
+
+A [PR #6](https://github.com/aaronmlf/voice-app/pull/6) foi integrada à `main`;
+o código compartilhado também está em `beta` e `windows-native`. Na fonte
+`1308b0d622eefb2ef28a8202b7db97cb0e9cf127`, a
+[CI Linux](https://github.com/aaronmlf/voice-app/actions/runs/40526368003) passou
+com 198 testes Rust, 52 Python, formatação, Clippy, boundaries, corpus, sete
+benchmarks, política de dependências/licenças, PipeWire privado e pacote. A
+[CI Windows](https://github.com/aaronmlf/voice-app/actions/runs/40526366912) passou
+com 186 testes Rust no check nativo, corpus, benchmarks, licenças, checksum/PE,
+smoke do pacote extraído (vocoder, dois modos granular, migração 11/12 → 13,
+CLI/IPC/MCP e persistência) e GUI com renderização por software.
+
+A primeira tentativa Wine expirou baixando dependências Ubuntu, antes de executar
+o aplicativo. Só esse job foi repetido, preservando o candidato nativo. Na segunda
+tentativa, os comandos offline passaram e a recusa exata do ambiente sem DACL
+protegida foi verificada. **GUI/IPC e compatibilidade Wine não foram qualificadas.**
+Hardware Windows 10/11, VB-CABLE instalado, Discord/Audacity/Tenacity, fala percebida,
+latência física e sessões longas continuam gates próprios; nenhuma promoção a beta.
+
+Após essa CI, mudou apenas este registro documental. As receitas distribuídas
+continuam sendo as 12 builtin; biblioteca, presets, imagens e áudios pessoais
+não foram publicados.
