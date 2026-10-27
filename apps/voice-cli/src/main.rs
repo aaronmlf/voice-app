@@ -146,12 +146,12 @@ enum Action {
         id: String,
         path: PathBuf,
     },
-    /// Forward a JSON Command or {id,command} Request to the engine registry.
+    /// Forward a JSON Command or {id,command} Request; configure includes granular DSP settings.
     Ctl {
         json: String,
     },
     Shutdown,
-    /// Decode/resample, apply DSP and write a new WAV offline.
+    /// Decode/resample, apply a preset's DSP (including granular) and write a new WAV offline.
     Process {
         input: PathBuf,
         output: PathBuf,
