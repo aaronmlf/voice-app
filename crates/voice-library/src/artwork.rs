@@ -200,6 +200,7 @@ mod tests {
     }
     fn save_custom(library: &Library) -> Result<()> {
         library.save_preset(&Preset {
+            original: false,
             id: "custom.marine".into(),
             name: "Marine".into(),
             settings: Default::default(),
@@ -226,7 +227,11 @@ mod tests {
             let library = Library::open(&root)?;
             save_custom(&library)?;
             assert!(library.preset_image("custom.marine")?.is_none());
+            let initial = library.set_preset_image("custom.marine", &source)?;
+            library.set_preset_original("custom.marine", true)?;
+            // Curated originals retain custom ownership and editable artwork.
             managed = library.set_preset_image("custom.marine", &source)?;
+            assert!(!initial.path.exists());
             assert_ne!(managed.path, source);
             assert!(managed.path.starts_with(root.join("artwork")));
             assert!(fs::metadata(&managed.path)?.len() <= MAX_PRESET_IMAGE_BYTES);
