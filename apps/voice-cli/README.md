@@ -74,6 +74,27 @@ Bench reports only local DSP CPU time; use a release build for performance measu
 `{"id":42,"command":{"op":"status"}}` Request preserves its ID. Engine validation handles
 parameters consistently across clients.
 
+`ctl '{"op":"set_preset_original","id":"custom.my-voice","original":true}'` curates a
+voice into the local original collection without publishing it or changing its DSP definition,
+ID or artwork. Builtin ownership remains separate: builtins cannot be demoted, while curated
+custom voices retain editable images. Save/import preserves existing membership; new IDs start
+personal. Export omits membership, and import does not adopt membership supplied by the file.
+The engine's `preset_revision` lets the GUI refresh after CLI/MCP catalog changes.
+
+Vocoder controls use the same `configure.settings` as the GUI: `vocoder_mix` (0–1, default 0),
+`vocoder_carrier_hz` (55–440), `vocoder_unvoiced` (0–1), and `vocoder_release_ms` (10–200).
+`effect_mix` and `effect_order` now contain 13 effects. Legacy 11- or 12-effect definitions
+are extended without enabling either new effect or changing the previous relative order.
+
+Granular controls are also available in the primary chain and `blend.secondary`:
+`granular_mode` (`stylized`/`natural`), `granular_mix` (0–1, default 0),
+`granular_pitch_semitones` (−12 to +12), `granular_grain_ms` (12–80),
+`granular_scatter` (0–1), `granular_feedback` (0–0.65), and `granular_clarity` (0–1).
+Natural mode experimentally limits effective pitch to ±4 semitones and grains to 40 ms;
+scatter and feedback stay stored but do not affect this mode. These controls change DSP,
+not platform audio routing. See [the granular contract](../../docs/GRANULAR.md) for nominal
+buffering, migration and quality limits.
+
 ## MCP
 
 Launch `voice-cli --socket /absolute/path/control.sock mcp` as a stdio MCP server while the
