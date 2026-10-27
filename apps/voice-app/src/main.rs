@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use voice_core::{
     AudioConfig, DeviceInfo, DeviceKind, DspSettings, EFFECT_COUNT, EffectKind, EffectOrder,
-    RecordingSource, VoiceBlend, VoiceLayer,
+    GranularMode, RecordingSource, VoiceBlend, VoiceLayer,
 };
 use voice_engine::{Paths, ServiceHandle, client, protocol::Command};
 use voice_library::{Board, Clip, MAX_PRESET_IMAGE_BYTES, PRESET_IMAGE_SIDE, Preset, PresetImage};
@@ -27,6 +27,50 @@ const TEXT: Color32 = Color32::from_rgb(237, 242, 242);
 const MUTED: Color32 = Color32::from_rgb(139, 151, 153);
 const PRESET_IMAGE_CACHE_SIZE: usize = 64;
 const MAX_PENDING_PRESET_IMAGES: usize = 4;
+const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(400);
+const DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const FAST_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(any(windows, test))]
+const WINDOWS_ACTIVE_REPAINT_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Software DX12 rendering is costly even when the displayed state is unchanged.
+/// Native input still wakes egui immediately. Pending edits already schedule a
+/// 100 ms frame; other background replies can share the 200 ms active cadence.
+fn repaint_after_background_reply(ctx: &egui::Context) {
+    #[cfg(windows)]
+    ctx.request_repaint_after(WINDOWS_ACTIVE_REPAINT_INTERVAL);
+    #[cfg(not(windows))]
+    ctx.request_repaint();
+}
+
+#[cfg(any(windows, test))]
+fn windows_repaint_delay(
+    status: &Value,
+    pending_controls: bool,
+    timed_qa: bool,
+    next_status_poll: Option<Duration>,
+    next_devices_poll: Option<Duration>,
+) -> Duration {
+    let live = ["audio_running", "audio_connecting", "recording"]
+        .into_iter()
+        .any(|key| status[key].as_bool().unwrap_or(false))
+        || status["desktop"]["active"].as_bool().unwrap_or(false)
+        || status["playing"].as_u64().unwrap_or(0) > 0;
+    let cadence = if pending_controls || timed_qa {
+        FAST_REPAINT_INTERVAL
+    } else if live {
+        WINDOWS_ACTIVE_REPAINT_INTERVAL
+    } else {
+        STATUS_POLL_INTERVAL
+    };
+    [next_status_poll, next_devices_poll]
+        .into_iter()
+        .flatten()
+        .fold(cadence, Duration::min)
+        // A pending/full IPC queue can leave a deadline overdue. Retry at the
+        // existing fast cadence instead of creating a zero-delay repaint loop.
+        .max(FAST_REPAINT_INTERVAL)
+}
 
 struct CachedPresetImage {
     id: String,
@@ -151,6 +195,7 @@ struct App {
     pending_preset_images: BTreeMap<String, u64>,
     preset_image_serial: u64,
     preset_image_revision: Option<u64>,
+    preset_revision: Option<u64>,
     looped: bool,
     overlap: bool,
     notice: Option<(String, bool)>,
@@ -215,6 +260,7 @@ impl App {
                 let refresh_library = matches!(
                     &command,
                     Command::SavePreset { .. }
+                        | Command::SetPresetOriginal { .. }
                         | Command::ImportPreset { .. }
                         | Command::CreateBoard { .. }
                         | Command::ImportClip { .. }
@@ -243,7 +289,7 @@ impl App {
                 {
                     break;
                 }
-                ctx.request_repaint();
+                repaint_after_background_reply(&ctx);
             }
         });
         let mut app = Self {
@@ -286,6 +332,7 @@ impl App {
             pending_preset_images: BTreeMap::new(),
             preset_image_serial: 0,
             preset_image_revision: None,
+            preset_revision: None,
             looped: false,
             overlap: true,
             notice: None,
@@ -521,7 +568,7 @@ impl App {
                         .suffix("%"),
                 )
                 .on_hover_text(
-                    "Volume de Ouvir-me nos fones. Não altera a gravação da voz processada.",
+                    "Volume de Ouvir-me nos fones. Não altera a gravação nem o envio ao microfone virtual.",
                 )
             })
             .inner;
@@ -641,6 +688,12 @@ impl App {
                 Ok(value) => match reply.tag {
                     Tag::Status => {
                         self.poll_pending = false;
+                        if let Some(revision) = value["preset_revision"].as_u64() {
+                            if self.preset_revision.is_some_and(|old| old != revision) {
+                                self.send(Tag::Presets, Command::Presets);
+                            }
+                            self.preset_revision = Some(revision);
+                        }
                         if let Some(revision) = value["preset_image_revision"].as_u64() {
                             if self
                                 .preset_image_revision
@@ -833,19 +886,13 @@ impl App {
                             (
                                 3,
                                 "Vozes originais",
-                                self.presets
-                                    .iter()
-                                    .filter(|p| p.id.starts_with("builtin."))
-                                    .count(),
+                                self.presets.iter().filter(|p| p.is_original()).count(),
                             ),
                             (1, "Favoritas", self.favorites.len()),
                             (
                                 2,
                                 "Minhas vozes",
-                                self.presets
-                                    .iter()
-                                    .filter(|p| !p.id.starts_with("builtin."))
-                                    .count(),
+                                self.presets.iter().filter(|p| !p.is_original()).count(),
                             ),
                         ] {
                             let active = self.voice_filter == index;
@@ -1142,14 +1189,46 @@ impl App {
                         .size(10.)
                         .color(MUTED),
                     );
-                    ui.label(
-                        RichText::new(if self.virtual_microphone() {
+                    let capture_label = if self.virtual_microphone() {
+                        #[cfg(windows)]
+                        {
+                            let render =
+                                self.status["virtual_microphone"]["render_device"].as_str();
+                            self.status["virtual_microphone"]["targets"]
+                                .as_array()
+                                .and_then(|targets| {
+                                    targets
+                                        .iter()
+                                        .find(|target| target["render_device"].as_str() == render)
+                                })
+                                .and_then(|target| target["capture_description"].as_str())
+                                .unwrap_or("Saída virtual selecionada")
+                        }
+                        #[cfg(not(windows))]
+                        {
                             "Voice App Virtual Microphone"
-                        } else {
-                            "Monitoração e gravação locais"
-                        })
-                        .size(11.),
-                    );
+                        }
+                    } else {
+                        "Monitoração e gravação locais"
+                    };
+                    ui.label(RichText::new(capture_label).size(11.));
+                    #[cfg(windows)]
+                    if self.virtual_microphone() {
+                        ui.label(
+                            RichText::new(
+                                if self.status["virtual_microphone"]["active"]
+                                    .as_bool()
+                                    .unwrap_or(false)
+                                {
+                                    "Envio ativo"
+                                } else {
+                                    "Envio desligado"
+                                },
+                            )
+                            .size(10.)
+                            .color(MUTED),
+                        );
+                    }
                 });
             });
     }
@@ -1266,8 +1345,8 @@ impl App {
                 matches_search
                     && match self.voice_filter {
                         1 => self.favorites.contains(&p.id),
-                        2 => !p.id.starts_with("builtin."),
-                        3 => p.id.starts_with("builtin."),
+                        2 => !p.is_original(),
+                        3 => p.is_original(),
                         _ => true,
                     }
             })
@@ -1786,6 +1865,45 @@ impl App {
                         });
                         columns[1].add_space(14.);
                         card().show(&mut columns[1], |ui| {
+                            ui.label(RichText::new("VOCODER").size(11.).color(ACCENT));
+                            ui.add_space(8.);
+                            changed |= parameter(
+                                ui,
+                                "Intensidade",
+                                &mut self.settings.vocoder_mix,
+                                0.0..=1.0,
+                                "",
+                            );
+                            changed |= parameter(
+                                ui,
+                                "Portadora",
+                                &mut self.settings.vocoder_carrier_hz,
+                                55.0..=440.0,
+                                " Hz",
+                            );
+                            changed |= parameter(
+                                ui,
+                                "Consoantes",
+                                &mut self.settings.vocoder_unvoiced,
+                                0.0..=1.0,
+                                "",
+                            );
+                            changed |= parameter(
+                                ui,
+                                "Soltura",
+                                &mut self.settings.vocoder_release_ms,
+                                10.0..=200.0,
+                                " ms",
+                            );
+                        });
+                        columns[1].add_space(14.);
+                        card().show(&mut columns[1], |ui| {
+                            ui.label(RichText::new("GRANULAR").size(11.).color(ACCENT));
+                            ui.add_space(8.);
+                            changed |= granular_controls(ui, &mut self.settings);
+                        });
+                        columns[1].add_space(14.);
+                        card().show(&mut columns[1], |ui| {
                             ui.label(RichText::new("AMBIÊNCIA").size(11.).color(ACCENT));
                             ui.add_space(8.);
                             changed |=
@@ -2197,6 +2315,9 @@ impl App {
         });
         ui.add_space(18.);
         ui.label(RichText::new("Microfone virtual").size(16.).strong());
+        #[cfg(windows)]
+        self.windows_virtual_microphone_settings(ui);
+        #[cfg(not(windows))]
         if self.virtual_microphone() {
             ui.label(
                 RichText::new("Voice App Virtual Microphone")
@@ -2207,15 +2328,6 @@ impl App {
                 RichText::new("Selecione esta entrada no Discord, OBS ou jogo.")
                     .size(12.)
                     .color(MUTED),
-            );
-        } else {
-            ui.label(RichText::new("Ainda não disponível no Windows").size(13.));
-            ui.label(
-                RichText::new(
-                    "Use esta versão para testar efeitos, Ouvir-me e gravação. O envio da voz para chamadas depende do driver virtual.",
-                )
-                .size(12.)
-                .color(MUTED),
             );
         }
         ui.add_space(22.);
@@ -2251,10 +2363,10 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.update_replies(ui.ctx());
-        if self.last_poll.elapsed() > Duration::from_millis(400) && !self.poll_pending {
+        if self.last_poll.elapsed() > STATUS_POLL_INTERVAL && !self.poll_pending {
             self.request_status();
         }
-        if self.last_devices_poll.elapsed() > Duration::from_secs(2) {
+        if self.last_devices_poll.elapsed() > DEVICE_POLL_INTERVAL {
             self.request_devices();
         }
         if self.settings_dirty
@@ -2325,14 +2437,200 @@ impl eframe::App for App {
         {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        ui.ctx().request_repaint_after(Duration::from_millis(100));
+        #[cfg(windows)]
+        {
+            let pending_controls = self.settings_dirty
+                || self.settings_pending
+                || self.monitor_gain_dirty
+                || self.monitor_gain_pending
+                || self.monitor_gain_dragging
+                || self.audio_start_pending.is_some()
+                || self.desktop_capture_pending
+                || self.remove_clip_pending.is_some()
+                || !self.pending_preset_images.is_empty();
+            let next_status_poll = (!self.poll_pending)
+                .then(|| STATUS_POLL_INTERVAL.saturating_sub(self.last_poll.elapsed()));
+            let next_devices_poll = (!self.devices_pending)
+                .then(|| DEVICE_POLL_INTERVAL.saturating_sub(self.last_devices_poll.elapsed()));
+            ui.ctx().request_repaint_after(windows_repaint_delay(
+                &self.status,
+                pending_controls,
+                self.smoke_seconds.is_some()
+                    || (self.screenshot.is_some() && !self.screenshot_requested),
+                next_status_poll,
+                next_devices_poll,
+            ));
+        }
+        #[cfg(not(windows))]
+        ui.ctx().request_repaint_after(FAST_REPAINT_INTERVAL);
+    }
+}
+
+#[cfg(windows)]
+impl App {
+    fn windows_virtual_microphone_settings(&mut self, ui: &mut egui::Ui) {
+        let status = serde_json::from_value::<voice_core::VirtualMicrophoneStatus>(
+            self.status["virtual_microphone"].clone(),
+        )
+        .unwrap_or_default();
+        ui.label(
+            RichText::new(if status.active {
+                "Envio ativo na conexão atual"
+            } else if status.available {
+                "Saída virtual detectada · envio desligado"
+            } else if self.status.is_null() {
+                "Verificando saídas virtuais…"
+            } else {
+                "Saída virtual ausente ou indisponível"
+            })
+            .size(13.)
+            .color(if status.active { ACCENT } else { TEXT }),
+        );
+        if let Some(diagnostic) = status.diagnostic.as_deref() {
+            ui.label(RichText::new(diagnostic).size(11.).color(MUTED));
+        }
+        ui.add_space(8.);
+        ui.label(
+            RichText::new("Enviar voz e soundboard para")
+                .size(12.)
+                .color(MUTED),
+        );
+        let mut selected = self.audio_config.virtual_output_device.clone();
+        egui::ComboBox::from_id_salt("windows-virtual-output")
+            .width(ui.available_width().min(570.))
+            .selected_text(virtual_output_selection_label(
+                &status.targets,
+                selected.as_deref(),
+            ))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut selected, None, "Desligado");
+                if let Some(saved) = self.audio_config.virtual_output_device.as_deref()
+                    && !status
+                        .targets
+                        .iter()
+                        .any(|target| target.render_device == saved)
+                {
+                    ui.selectable_value(
+                        &mut selected,
+                        Some(saved.to_owned()),
+                        format!("Indisponível · {saved}"),
+                    );
+                }
+                for target in &status.targets {
+                    ui.push_id(&target.render_device, |ui| {
+                        ui.selectable_value(
+                            &mut selected,
+                            Some(target.render_device.clone()),
+                            virtual_output_selection_label(
+                                &status.targets,
+                                Some(&target.render_device),
+                            ),
+                        )
+                        .on_hover_text(&target.render_device);
+                    });
+                }
+            });
+        if set_virtual_output(&mut self.audio_config, selected.as_deref(), &status.targets) {
+            self.audio_config_dirty = true;
+        }
+        if let Some(selected) = self.audio_config.virtual_output_device.as_deref() {
+            if let Some(target) = status
+                .targets
+                .iter()
+                .find(|target| target.render_device == selected)
+            {
+                ui.label(
+                    RichText::new(format!("Saída: {}", target.render_description))
+                        .size(12.)
+                        .color(MUTED),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "No Discord, escolha {} como entrada. No Audacity/Tenacity, escolha essa entrada para gravar em modo compartilhado.",
+                        target.capture_description,
+                    ))
+                    .size(12.)
+                    .color(MUTED),
+                );
+            } else {
+                ui.label(
+                    RichText::new("O dispositivo salvo não foi detectado. A conexão aguardará esse dispositivo sem trocar a saída.")
+                        .size(11.)
+                        .color(Color32::LIGHT_RED),
+                );
+            }
+        }
+        ui.label(
+            RichText::new("Use Conectar áudio ou Aplicar e reconectar após alterar esta opção.")
+                .size(11.)
+                .color(MUTED),
+        );
+        ui.label(
+            RichText::new("Ouvir-me e a pré-escuta ficam nos fones selecionados acima, com volume independente do envio.")
+                .size(11.)
+                .color(MUTED),
+        );
+        ui.add_space(8.);
+        ui.hyperlink_to(
+            "Baixar VB-CABLE (site oficial)",
+            "https://vb-audio.com/Cable/",
+        );
+        ui.label(
+            RichText::new("Instale o cabo separadamente e atualize a lista. O Voice App mantém os dispositivos padrão do Windows.")
+                .size(11.)
+                .color(MUTED),
+        );
     }
 }
 fn same_audio_config(left: &AudioConfig, right: &AudioConfig) -> bool {
     left.input_device == right.input_device
         && left.output_device == right.output_device
+        && left.virtual_output_device == right.virtual_output_device
         && left.sample_rate == right.sample_rate
         && left.quantum == right.quantum
+}
+
+#[cfg(any(windows, test))]
+fn set_virtual_output(
+    config: &mut AudioConfig,
+    selected: Option<&str>,
+    targets: &[voice_core::VirtualMicrophoneTarget],
+) -> bool {
+    let desired = if let Some(id) = selected {
+        if id.is_empty() || !targets.iter().any(|target| target.render_device == id) {
+            return false;
+        }
+        Some(id.to_owned())
+    } else {
+        None
+    };
+    if config.virtual_output_device == desired {
+        return false;
+    }
+    config.virtual_output_device = desired;
+    true
+}
+
+#[cfg(any(windows, test))]
+fn virtual_output_selection_label(
+    targets: &[voice_core::VirtualMicrophoneTarget],
+    selected: Option<&str>,
+) -> String {
+    let Some(selected) = selected else {
+        return "Desligado".into();
+    };
+    targets
+        .iter()
+        .find(|target| target.render_device == selected)
+        .map(|target| {
+            let provider = match target.provider.as_str() {
+                "vb_cable" => "VB-CABLE",
+                "voice_app" => "Voice App",
+                other => other,
+            };
+            format!("{} · {}", target.render_description, provider)
+        })
+        .unwrap_or_else(|| format!("Indisponível · {selected}"))
 }
 
 fn device_selection_label(
@@ -2435,6 +2733,8 @@ fn effect_name(effect: EffectKind) -> &'static str {
         EffectKind::Chorus => "Chorus",
         EffectKind::Echo => "Eco",
         EffectKind::Reverb => "Reverb",
+        EffectKind::Vocoder => "Vocoder",
+        EffectKind::Granular => "Granular",
     }
 }
 fn voice_blend_editor(ui: &mut egui::Ui, settings: &mut DspSettings, presets: &[Preset]) -> bool {
@@ -2552,6 +2852,15 @@ fn voice_blend_editor(ui: &mut egui::Ui, settings: &mut DspSettings, presets: &[
                 }
             }
         });
+        ui.collapsing("Granular da voz B", |ui| {
+            ui.push_id("granular-secondary", |ui| {
+                let mut secondary = blend.secondary.to_settings();
+                if granular_controls(ui, &mut secondary) {
+                    blend.secondary = VoiceLayer::from(secondary);
+                    changed = true;
+                }
+            });
+        });
         ui.label(
             RichText::new("Os controles abaixo editam a voz A.")
                 .size(11.)
@@ -2572,6 +2881,92 @@ fn voice_blend_editor(ui: &mut egui::Ui, settings: &mut DspSettings, presets: &[
         }
         settings.blend = Some(blend);
     });
+    changed
+}
+
+fn granular_controls(ui: &mut egui::Ui, settings: &mut DspSettings) -> bool {
+    let mut changed = false;
+    let previous_mode = settings.granular_mode;
+    egui::ComboBox::from_id_salt("granular-mode")
+        .selected_text(match settings.granular_mode {
+            GranularMode::Stylized => "Estilizado",
+            GranularMode::Natural => "Natural (experimental)",
+        })
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(
+                    &mut settings.granular_mode,
+                    GranularMode::Stylized,
+                    "Estilizado",
+                )
+                .changed();
+            changed |= ui
+                .selectable_value(
+                    &mut settings.granular_mode,
+                    GranularMode::Natural,
+                    "Natural (experimental)",
+                )
+                .changed();
+        });
+    let natural = settings.granular_mode == GranularMode::Natural;
+    if natural && previous_mode != settings.granular_mode {
+        settings.granular_pitch_semitones = settings.granular_pitch_semitones.clamp(-4., 4.);
+        settings.granular_grain_ms = settings.granular_grain_ms.min(40.);
+    }
+    ui.add_space(6.);
+    changed |= parameter(ui, "Intensidade", &mut settings.granular_mix, 0.0..=1.0, "");
+    let pitch_limit = if natural { 4. } else { 12. };
+    let mut pitch = settings
+        .granular_pitch_semitones
+        .clamp(-pitch_limit, pitch_limit);
+    if parameter(ui, "Pitch", &mut pitch, -pitch_limit..=pitch_limit, " st") {
+        settings.granular_pitch_semitones = pitch;
+        changed = true;
+    }
+    changed |= parameter(
+        ui,
+        "Proteção da fala",
+        &mut settings.granular_clarity,
+        0.0..=1.0,
+        "",
+    );
+    let grain_limit = if natural { 40. } else { 80. };
+    let mut grain_ms = settings.granular_grain_ms.clamp(12., grain_limit);
+    if parameter(
+        ui,
+        "Tamanho do grão",
+        &mut grain_ms,
+        12.0..=grain_limit,
+        " ms",
+    ) {
+        settings.granular_grain_ms = grain_ms;
+        changed = true;
+    }
+    if !natural {
+        changed |= parameter(
+            ui,
+            "Dispersão",
+            &mut settings.granular_scatter,
+            0.0..=1.0,
+            "",
+        );
+        changed |= parameter(
+            ui,
+            "Repetição",
+            &mut settings.granular_feedback,
+            0.0..=0.65,
+            "",
+        );
+    }
+    ui.label(
+        RichText::new(if natural {
+            "Para mudanças sutis de tom, até 4 semitons. Avalie a clareza na sua voz."
+        } else {
+            "Grãos e repetições criam texturas. Comece com intensidade baixa."
+        })
+        .size(11.)
+        .color(MUTED),
+    );
     changed
 }
 
@@ -3031,5 +3426,222 @@ fn main() {
                 .show();
         }
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod granular_control_tests {
+    use super::*;
+
+    #[test]
+    fn drawing_natural_controls_preserves_larger_stored_cli_values() {
+        let mut settings = DspSettings {
+            granular_mode: GranularMode::Natural,
+            granular_mix: 0.5,
+            granular_pitch_semitones: 12.,
+            granular_grain_ms: 80.,
+            ..Default::default()
+        };
+        let original = settings;
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                assert!(!granular_controls(ui, &mut settings));
+            });
+            output.drop_without_applying_deltas();
+            assert_eq!(settings, original);
+        }
+    }
+}
+
+#[cfg(test)]
+mod windows_repaint_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn idle_window_waits_for_poll_deadlines_without_a_ten_hz_timer() {
+        let idle = json!({"audio_running": false, "playing": 0});
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, None, None),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            windows_repaint_delay(
+                &idle,
+                false,
+                false,
+                Some(Duration::from_millis(300)),
+                Some(Duration::from_secs(1)),
+            ),
+            Duration::from_millis(300)
+        );
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, None, Some(Duration::from_millis(200))),
+            Duration::from_millis(200)
+        );
+    }
+
+    #[test]
+    fn every_live_audio_source_keeps_meter_updates_within_two_hundred_ms() {
+        for active in [
+            json!({"audio_running": true, "muted": true}),
+            json!({"audio_connecting": true}),
+            json!({"recording": true}),
+            json!({"desktop": {"active": true}}),
+            json!({"playing": 1}),
+        ] {
+            assert_eq!(
+                windows_repaint_delay(&active, false, false, None, None),
+                Duration::from_millis(200),
+                "{active}"
+            );
+        }
+    }
+
+    #[test]
+    fn edits_and_timed_qa_keep_the_existing_fast_deadline() {
+        let idle = json!({"audio_running": false});
+        let active = json!({"audio_running": true});
+        for status in [&idle, &active] {
+            assert_eq!(
+                windows_repaint_delay(status, true, false, None, None),
+                Duration::from_millis(100)
+            );
+            assert_eq!(
+                windows_repaint_delay(status, false, true, None, None),
+                Duration::from_millis(100)
+            );
+        }
+    }
+
+    #[test]
+    fn overdue_or_pending_poll_cannot_create_a_zero_delay_repaint_loop() {
+        let idle = Value::Null;
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, Some(Duration::ZERO), None),
+            Duration::from_millis(100)
+        );
+        // In-flight requests have no next-poll deadline. Their replies wake egui;
+        // merely waiting for IPC must not keep the old fast idle repaint timer.
+        assert_eq!(
+            windows_repaint_delay(&idle, false, false, None, None),
+            Duration::from_millis(400)
+        );
+    }
+}
+
+#[cfg(test)]
+mod virtual_output_tests {
+    use super::*;
+
+    fn target(render: &str, capture: &str) -> voice_core::VirtualMicrophoneTarget {
+        voice_core::VirtualMicrophoneTarget {
+            provider: "vb_cable".into(),
+            render_device: render.into(),
+            capture_device: capture.into(),
+            render_description: "CABLE Input".into(),
+            capture_description: "CABLE Output".into(),
+        }
+    }
+
+    #[test]
+    fn changing_virtual_routing_is_a_pending_audio_configuration_change() {
+        let original = AudioConfig::default();
+        let mut changed = original.clone();
+        changed.virtual_output_device = Some("owned-id".into());
+        assert!(!same_audio_config(&original, &changed));
+        assert!(same_audio_config(&changed, &changed));
+    }
+
+    #[test]
+    fn explicit_virtual_selection_preserves_the_headphones_and_can_be_disabled() {
+        let mut config = AudioConfig {
+            input_device: Some("microphone".into()),
+            output_device: Some("headphones".into()),
+            ..Default::default()
+        };
+        let targets = [target("vb-render-id", "vb-capture-id")];
+        assert!(set_virtual_output(
+            &mut config,
+            Some("vb-render-id"),
+            &targets
+        ));
+        assert_eq!(
+            config.virtual_output_device.as_deref(),
+            Some("vb-render-id")
+        );
+        assert!(!set_virtual_output(
+            &mut config,
+            Some("vb-render-id"),
+            &targets
+        ));
+        assert!(set_virtual_output(&mut config, None, &targets));
+        assert!(config.virtual_output_device.is_none());
+        assert_eq!(config.input_device.as_deref(), Some("microphone"));
+        assert_eq!(config.output_device.as_deref(), Some("headphones"));
+    }
+
+    #[test]
+    fn missing_virtual_device_never_enables_or_replaces_a_saved_route() {
+        let mut config = AudioConfig::default();
+        assert!(!set_virtual_output(&mut config, Some("missing-id"), &[]));
+        assert!(!set_virtual_output(&mut config, Some(""), &[]));
+        assert!(config.virtual_output_device.is_none());
+        config.virtual_output_device = Some("saved-owned-id".into());
+        let targets = [target("different-cable", "different-capture")];
+        assert!(!set_virtual_output(
+            &mut config,
+            Some("saved-owned-id"),
+            &targets
+        ));
+        assert_eq!(
+            config.virtual_output_device.as_deref(),
+            Some("saved-owned-id")
+        );
+        assert_eq!(
+            virtual_output_selection_label(&targets, config.virtual_output_device.as_deref()),
+            "Indisponível · saved-owned-id",
+        );
+    }
+
+    #[test]
+    fn selecting_between_identically_named_cables_uses_exact_render_ids() {
+        let targets = [
+            target("render-a", "capture-a"),
+            target("render-b", "capture-b"),
+        ];
+        let mut config = AudioConfig::default();
+        assert!(set_virtual_output(&mut config, Some("render-b"), &targets));
+        assert_eq!(config.virtual_output_device.as_deref(), Some("render-b"));
+        assert_eq!(
+            virtual_output_selection_label(&targets, Some("render-b")),
+            "CABLE Input · VB-CABLE",
+        );
+        assert!(!set_virtual_output(
+            &mut config,
+            Some("capture-a"),
+            &targets
+        ));
+        assert_eq!(config.virtual_output_device.as_deref(), Some("render-b"));
+    }
+
+    #[test]
+    fn saved_and_legacy_audio_configuration_never_auto_enables_a_detected_cable() {
+        let targets = [target("render-a", "capture-a")];
+        let mut legacy: AudioConfig = serde_json::from_value(serde_json::json!({
+            "input_device": "microphone", "output_device": "headphones"
+        }))
+        .unwrap();
+        assert!(legacy.virtual_output_device.is_none());
+        assert_eq!(virtual_output_selection_label(&targets, None), "Desligado");
+        assert!(!set_virtual_output(&mut legacy, None, &targets));
+
+        assert!(set_virtual_output(&mut legacy, Some("render-a"), &targets));
+        let restored: AudioConfig =
+            serde_json::from_value(serde_json::to_value(&legacy).unwrap()).unwrap();
+        assert!(same_audio_config(&legacy, &restored));
+        assert_eq!(restored.output_device.as_deref(), Some("headphones"));
+        assert_eq!(restored.virtual_output_device.as_deref(), Some("render-a"));
     }
 }
