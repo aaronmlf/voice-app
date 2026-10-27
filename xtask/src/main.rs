@@ -67,22 +67,40 @@ fn execute() -> Result<()> {
                 if cfg!(windows) { "python" } else { "python3" },
                 &python_tests,
             )?;
-            driver_check()?;
+            // The retained driver prototype is optional source on windows-native.
+            // Application-only branches validate the shared engine without it.
+            if Path::new("drivers/windows").is_dir() {
+                driver_check()?;
+            }
             println!("Workspace formatting, Clippy, tests and dependency boundaries passed.");
         }
         "boundaries" => dependency_boundaries(&metadata(true)?)?,
-        "bench" => run(
-            "cargo",
-            &[
-                "run",
-                "--locked",
-                "--release",
-                "-p",
-                "voice-dsp",
-                "--example",
-                "bench",
-            ],
-        )?,
+        "bench" => {
+            for profile in [
+                &[][..],
+                &["--vocoder"][..],
+                &["--vocoder", "--blend"][..],
+                &["--granular"][..],
+                &["--granular-clear"][..],
+                &["--granular-natural"][..],
+                &["--granular-natural", "--blend"][..],
+            ] {
+                let mut args = vec![
+                    "run",
+                    "--locked",
+                    "--release",
+                    "-p",
+                    "voice-dsp",
+                    "--example",
+                    "bench",
+                ];
+                if !profile.is_empty() {
+                    args.push("--");
+                    args.extend_from_slice(profile);
+                }
+                run("cargo", &args)?;
+            }
+        }
         "audio-check" => {
             ensure!(
                 cfg!(target_os = "linux"),
@@ -679,6 +697,8 @@ fn package(root: &Path) -> Result<()> {
             "ROADMAP.md",
             "VALIDATION.md",
             "VOICE-LAB.md",
+            "VOCODER.md",
+            "GRANULAR.md",
             "WINDOWS.md",
             "images/desktop-capture.png",
             "images/lab.png",
