@@ -3,6 +3,8 @@
 //! Conventional DSP, Signalsmith pitch/formants and RNNoise speech noise suppression.
 //! The final safety ceiling has no lookahead: it bounds peaks and may distort overloaded audio.
 mod advanced;
+mod granular;
+mod vocoder;
 use std::f32::consts::TAU;
 use voice_core::{DspSettings, EFFECT_COUNT, EffectKind, EffectOrder};
 
@@ -56,6 +58,16 @@ struct Controls {
     echo_feedback: f32,
     reverb_mix: f32,
     chorus_mix: f32,
+    vocoder_mix: f32,
+    vocoder_step: f32,
+    vocoder_level: f32,
+    vocoder_unvoiced: f32,
+    vocoder_release: f32,
+    granular_mix: f32,
+    granular_ratio: f32,
+    granular_scatter: f32,
+    granular_feedback: f32,
+    granular_clarity: f32,
 }
 
 impl Controls {
@@ -70,6 +82,12 @@ impl Controls {
             d.lowpass_hz.min(rate * 0.49),
         )
         .max(hp_hz);
+        let vocoder_hz = bounded(
+            settings.vocoder_carrier_hz,
+            55.0,
+            440.0,
+            d.vocoder_carrier_hz,
+        );
         Self {
             gain: 10.0_f32.powf(bounded(settings.gain_db, -60.0, 24.0, d.gain_db) / 20.0),
             gate: 10.0_f32.powf(bounded(settings.gate_db, -100.0, 0.0, d.gate_db) / 20.0),
@@ -85,6 +103,25 @@ impl Controls {
             echo_feedback: bounded(settings.echo_feedback, 0.0, 0.9, d.echo_feedback),
             reverb_mix: bounded(settings.reverb_mix, 0.0, 1.0, d.reverb_mix),
             chorus_mix: bounded(settings.chorus_mix, 0.0, 1.0, d.chorus_mix),
+            vocoder_mix: bounded(settings.vocoder_mix, 0.0, 1.0, d.vocoder_mix),
+            vocoder_step: vocoder_hz / rate,
+            vocoder_level: (110.0 / vocoder_hz).sqrt(),
+            vocoder_unvoiced: bounded(settings.vocoder_unvoiced, 0.0, 1.0, d.vocoder_unvoiced),
+            granular_mix: bounded(settings.granular_mix, 0.0, 1.0, d.granular_mix),
+            granular_ratio: 2.0_f32
+                .powf(bounded(settings.granular_pitch_semitones, -12.0, 12.0, 0.0) / 12.0),
+            granular_scatter: bounded(settings.granular_scatter, 0.0, 1.0, d.granular_scatter),
+            granular_feedback: bounded(settings.granular_feedback, 0.0, 0.65, d.granular_feedback),
+            granular_clarity: bounded(settings.granular_clarity, 0.0, 1.0, d.granular_clarity),
+            vocoder_release: coefficient(
+                bounded(
+                    settings.vocoder_release_ms,
+                    10.0,
+                    200.0,
+                    d.vocoder_release_ms,
+                ) / 1_000.0,
+                rate,
+            ),
         }
     }
 
@@ -103,8 +140,33 @@ impl Controls {
             echo_delay,
             echo_feedback,
             reverb_mix,
-            chorus_mix
+            chorus_mix,
+            vocoder_mix,
+            vocoder_step,
+            vocoder_level,
+            vocoder_unvoiced,
+            vocoder_release,
+            granular_mix,
+            granular_ratio,
+            granular_scatter,
+            granular_feedback,
+            granular_clarity
         );
+        if (self.granular_mix - target.granular_mix).abs() < 1.0e-6 {
+            self.granular_mix = target.granular_mix;
+        }
+        if (self.granular_ratio - target.granular_ratio).abs() < 1.0e-6 {
+            self.granular_ratio = target.granular_ratio;
+        }
+        if (self.granular_scatter - target.granular_scatter).abs() < 1.0e-6 {
+            self.granular_scatter = target.granular_scatter;
+        }
+        if (self.granular_feedback - target.granular_feedback).abs() < 1.0e-6 {
+            self.granular_feedback = target.granular_feedback;
+        }
+        if (self.vocoder_mix - target.vocoder_mix).abs() < 1.0e-6 {
+            self.vocoder_mix = target.vocoder_mix;
+        }
     }
 }
 
@@ -181,6 +243,11 @@ struct Chain {
     denoise_dry: AlignmentDelay,
     active_pitch: bool,
     active_denoise: bool,
+    vocoder: vocoder::Vocoder,
+    granular: granular::Granular,
+    granular_dry: AlignmentDelay,
+    active_granular: bool,
+    granular_config: granular::Configuration,
 }
 
 impl Chain {
@@ -234,6 +301,15 @@ impl Chain {
             denoise_dry,
             active_pitch: false,
             active_denoise: false,
+            vocoder: vocoder::Vocoder::new(sample_rate),
+            granular: granular::Granular::new(sample_rate),
+            granular_dry: AlignmentDelay::new(granular::maximum_delay(sample_rate)),
+            active_granular: false,
+            granular_config: granular::configuration(
+                sample_rate,
+                voice_core::GranularMode::Stylized,
+                32.0,
+            ),
         }
     }
 
@@ -257,6 +333,18 @@ impl Chain {
         (if shifted { self.pitch.latency() } else { 0 })
             + if settings.denoise && settings.effect_mix[EffectKind::Denoise as usize] > 0.0 {
                 self.denoise.latency()
+            } else {
+                0
+            }
+            + if bounded(settings.granular_mix, 0.0, 1.0, 0.0) > 0.0
+                && settings.effect_mix[EffectKind::Granular as usize] > 0.0
+            {
+                granular::configuration(
+                    self.sample_rate,
+                    settings.granular_mode,
+                    settings.granular_grain_ms,
+                )
+                .delay
             } else {
                 0
             }
@@ -290,6 +378,10 @@ impl Chain {
         self.denoise_dry.reset();
         self.active_pitch = false;
         self.active_denoise = false;
+        self.vocoder.reset();
+        self.granular.reset();
+        self.granular_dry.reset();
+        self.active_granular = false;
     }
 
     /// Process normalized mono PCM in place, with no allocation, locks, logging or I/O.
@@ -309,11 +401,20 @@ impl Chain {
             && settings.effect_mix[EffectKind::PitchFormant as usize] > 0.0;
         let requested_denoise =
             settings.denoise && settings.effect_mix[EffectKind::Denoise as usize] > 0.0;
+        let requested_granular = bounded(settings.granular_mix, 0.0, 1.0, 0.0) > 0.0
+            && settings.effect_mix[EffectKind::Granular as usize] > 0.0;
+        let requested_granular_config = granular::configuration(
+            self.sample_rate,
+            settings.granular_mode,
+            settings.granular_grain_ms,
+        );
         if !self.order_initialized {
             self.effect_order = settings.effect_order;
             self.effect_mix = settings.effect_mix;
             self.active_pitch = requested_pitch;
             self.active_denoise = requested_denoise;
+            self.active_granular = requested_granular;
+            self.granular_config = requested_granular_config;
             self.order_initialized = true;
         }
         let target = Controls::from_settings(settings, self.sample_rate as f32);
@@ -327,6 +428,8 @@ impl Chain {
             if self.effect_order != settings.effect_order
                 || self.active_pitch != requested_pitch
                 || self.active_denoise != requested_denoise
+                || self.active_granular != requested_granular
+                || (requested_granular && self.granular_config != requested_granular_config)
             {
                 self.transition_gain = (self.transition_gain - self.transition_step).max(0.0);
                 if self.transition_gain == 0.0 {
@@ -339,6 +442,14 @@ impl Chain {
                         self.denoise_dry.reset();
                         self.denoise.reset();
                     }
+                    if self.active_granular != requested_granular
+                        || self.granular_config != requested_granular_config
+                    {
+                        self.granular.reset();
+                        self.granular_dry.reset();
+                    }
+                    self.granular_config = requested_granular_config;
+                    self.active_granular = requested_granular;
                     self.active_pitch = requested_pitch;
                     self.active_denoise = requested_denoise;
                 }
@@ -364,6 +475,9 @@ impl Chain {
                     EffectKind::PitchFormant if self.active_pitch => {
                         self.pitch_dry.tick(value, self.pitch.latency())
                     }
+                    EffectKind::Granular if self.active_granular => {
+                        self.granular_dry.tick(value, self.granular_config.delay)
+                    }
                     EffectKind::Denoise if self.active_denoise => {
                         self.denoise_dry.tick(value, self.denoise.latency())
                     }
@@ -371,7 +485,7 @@ impl Chain {
                 };
                 let wet = clean(self.process_stage(
                     effect,
-                    value,
+                    (value, dry),
                     &c,
                     if self.active_pitch { pitch } else { 0.0 },
                     if self.active_pitch { formant } else { 0.0 },
@@ -402,13 +516,42 @@ impl Chain {
     fn process_stage(
         &mut self,
         effect: EffectKind,
-        input: f32,
+        input_and_dry: (f32, f32),
         c: &Controls,
         pitch: f32,
         formant: f32,
         denoise: bool,
     ) -> f32 {
+        let (input, aligned_dry) = input_and_dry;
         match effect {
+            EffectKind::Granular => self.granular.tick(
+                input,
+                aligned_dry,
+                self.granular_config,
+                granular::Parameters {
+                    mix: if self.active_granular {
+                        c.granular_mix
+                    } else {
+                        0.0
+                    },
+                    ratio: c.granular_ratio,
+                    scatter: c.granular_scatter,
+                    feedback: c.granular_feedback,
+                    clarity: c.granular_clarity,
+                },
+            ),
+            EffectKind::Vocoder => self.vocoder.tick(
+                input,
+                if self.effect_mix[EffectKind::Vocoder as usize] == 0.0 {
+                    0.0
+                } else {
+                    c.vocoder_mix
+                },
+                c.vocoder_step,
+                c.vocoder_level,
+                c.vocoder_unvoiced,
+                c.vocoder_release,
+            ),
             EffectKind::Denoise => self.denoise.tick(input, denoise),
             EffectKind::PitchFormant => self.pitch.tick(input, pitch, formant),
             EffectKind::Gate => {
@@ -573,7 +716,7 @@ pub struct Processor {
     primary_delay: AlignmentDelay,
     secondary_delay: AlignmentDelay,
     scratch: [f32; 256],
-    route: Option<(bool, usize, usize, usize, u8)>,
+    route: Option<(bool, usize, usize, usize, u8, usize, usize)>,
     mix: [f32; 2],
     mix_initialized: bool,
     smoothing_step: f32,
@@ -588,7 +731,9 @@ impl Processor {
     pub fn new(sample_rate: u32) -> Self {
         let primary = Chain::new(sample_rate);
         let secondary = Chain::new(sample_rate);
-        let maximum = primary.pitch.latency() + primary.denoise.latency();
+        let maximum = primary.pitch.latency()
+            + primary.denoise.latency()
+            + granular::maximum_delay(primary.sample_rate());
         let rate = primary.sample_rate() as f32;
         Self {
             primary,
@@ -613,6 +758,21 @@ impl Processor {
     }
     pub fn latency_samples(&self) -> usize {
         self.primary.latency_samples()
+    }
+    /// Fixed inline vocoder storage for both prepared voices; no audio/model heap buffer.
+    pub fn vocoder_state_bytes(&self) -> usize {
+        2 * std::mem::size_of::<vocoder::Vocoder>()
+    }
+    /// Prepared granular inline/history and dry/dual-voice alignment storage. Includes
+    /// the shared branch-alignment buffers (also used by other delayed algorithms).
+    pub fn granular_state_bytes(&self) -> usize {
+        self.primary.granular.state_bytes()
+            + self.secondary.granular.state_bytes()
+            + std::mem::size_of::<AlignmentDelay>() * 4
+            + std::mem::size_of_val(&*self.primary.granular_dry.samples)
+            + std::mem::size_of_val(&*self.secondary.granular_dry.samples)
+            + std::mem::size_of_val(&*self.primary_delay.samples)
+            + std::mem::size_of_val(&*self.secondary_delay.samples)
     }
     pub fn latency_frames(&self, settings: &DspSettings) -> usize {
         let primary = self.primary.latency_frames(settings);
@@ -675,12 +835,28 @@ impl Processor {
             .blend
             .map_or([1.0, 0.0], |b| [b.primary_mix, b.secondary_mix]);
         let audible = u8::from(requested_mix[0] > 0.0) | (u8::from(requested_mix[1] > 0.0) << 1);
+        let granular_signature = |settings: &DspSettings| {
+            if bounded(settings.granular_mix, 0.0, 1.0, 0.0) > 0.0
+                && settings.effect_mix[EffectKind::Granular as usize] > 0.0
+            {
+                let config = granular::configuration(
+                    self.sample_rate(),
+                    settings.granular_mode,
+                    settings.granular_grain_ms,
+                );
+                config.frames * 2 + usize::from(config.mode == voice_core::GranularMode::Natural)
+            } else {
+                0
+            }
+        };
         let route = (
             settings.blend.is_some(),
             primary_latency,
             secondary_latency,
             total_latency,
             audible,
+            granular_signature(settings),
+            secondary_settings.as_ref().map_or(0, granular_signature),
         );
         if self.route != Some(route) {
             if self.route.is_some() {
@@ -824,6 +1000,464 @@ mod tests {
         audio
     }
 
+    fn granular_settings(mode: voice_core::GranularMode) -> DspSettings {
+        DspSettings {
+            granular_mode: mode,
+            granular_mix: 1.0,
+            granular_pitch_semitones: 3.0,
+            effect_mix: std::array::from_fn(|index| {
+                if index == EffectKind::Granular as usize {
+                    1.0
+                } else {
+                    0.0
+                }
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn granular_default_disabled_is_exact_bypass_and_neutral_opacities_have_no_comb_filter() {
+        for mode in [
+            voice_core::GranularMode::Stylized,
+            voice_core::GranularMode::Natural,
+        ] {
+            let source = sine(347.0, 0.15, 12_000);
+            let mut disabled = granular_settings(mode);
+            disabled.granular_mix = 0.0;
+            disabled.granular_scatter = 1.0;
+            disabled.granular_feedback = 0.65;
+            let mut output = source.clone();
+            let mut processor = Processor::new(48_000);
+            processor.process(&mut output, &disabled);
+            assert_eq!(source, output);
+            assert_eq!(processor.latency_frames(&disabled), 0);
+            let mut neutral = granular_settings(mode);
+            neutral.granular_pitch_semitones = 0.0;
+            for opacity in [0.15, 0.5, 1.0] {
+                neutral.effect_mix[EffectKind::Granular as usize] = opacity;
+                let mut output = source.clone();
+                let mut processor = Processor::new(48_000);
+                let delay = processor.latency_frames(&neutral);
+                processor.process(&mut output, &neutral);
+                assert!(output[..delay].iter().all(|x| *x == 0.0));
+                for (actual, expected) in output[delay..].iter().zip(&source) {
+                    assert!((actual - expected).abs() < 2.0e-8, "opacity {opacity}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn granular_feedback_does_not_contaminate_the_clean_dry_intensity_reference() {
+        let mut a = granular::Granular::new(48_000);
+        let mut b = granular::Granular::new(48_000);
+        let config = granular::configuration(48_000, voice_core::GranularMode::Stylized, 32.0);
+        for frame in 0..24_000 {
+            let input = 0.1 * (TAU * 330.0 * frame as f32 / 48_000.0).sin();
+            let dry = if frame >= config.delay {
+                0.1 * (TAU * 330.0 * (frame - config.delay) as f32 / 48_000.0).sin()
+            } else {
+                0.0
+            };
+            let parameters = granular::Parameters {
+                mix: 1.0,
+                ratio: 1.4,
+                scatter: 0.6,
+                feedback: 0.65,
+                clarity: 0.5,
+            };
+            let wet = a.tick(input, dry, config, parameters);
+            let almost_dry = b.tick(
+                input,
+                dry,
+                config,
+                granular::Parameters {
+                    mix: 0.001,
+                    ..parameters
+                },
+            );
+            assert!((almost_dry - (dry + 0.001 * (wet - dry))).abs() < 1.0e-8);
+            assert!(
+                (almost_dry - dry).abs() <= 0.001,
+                "feedback escaped the wet proportion"
+            );
+        }
+    }
+
+    #[test]
+    fn granular_mode_topology_and_blend_changes_are_chunk_independent_and_allocate_nothing() {
+        use voice_core::{GranularMode, VoiceBlend, VoiceLayer};
+        let mut a = Processor::new(48_000);
+        let mut b = Processor::new(48_000);
+        let mut settings = granular_settings(GranularMode::Stylized);
+        settings.blend = Some(VoiceBlend {
+            secondary: VoiceLayer::from(granular_settings(GranularMode::Natural)),
+            primary_mix: 0.65,
+            secondary_mix: 0.35,
+        });
+        for action in 0..8 {
+            match action {
+                1 => settings.granular_mode = GranularMode::Natural,
+                2 => settings.granular_grain_ms = 12.0,
+                3 => settings.granular_pitch_semitones = -4.0,
+                4 => settings.effect_order.0.reverse(),
+                5 => settings.granular_mix = 0.0,
+                6 => settings.granular_mix = 0.7,
+                7 => settings.effect_mix[EffectKind::Granular as usize] = 0.0,
+                _ => {}
+            }
+            let mut first = vec![0.1; 6_000];
+            let mut second = first.clone();
+            CALLS.with(|n| n.set(0));
+            TRACK.with(|v| v.set(true));
+            a.process(&mut first, &settings);
+            for chunk in second.chunks_mut(37) {
+                b.process(chunk, &settings);
+            }
+            TRACK.with(|v| v.set(false));
+            assert_eq!(CALLS.with(Cell::get), 0);
+            assert_eq!(first, second, "granular action {action}");
+            assert!(first.iter().all(|x| x.is_finite() && x.abs() <= CEILING));
+            let maximum_step = first
+                .windows(2)
+                .map(|x| (x[1] - x[0]).abs())
+                .fold(0.0, f32::max);
+            if action > 0 {
+                assert!(
+                    maximum_step < 0.02,
+                    "DC transition step {maximum_step} at action {action}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn granular_reset_and_reenable_do_not_reveal_an_older_phrase() {
+        for mode in [
+            voice_core::GranularMode::Stylized,
+            voice_core::GranularMode::Natural,
+        ] {
+            let enabled = DspSettings {
+                granular_scatter: 1.0,
+                granular_feedback: 0.65,
+                ..granular_settings(mode)
+            };
+            let mut processor = Processor::new(48_000);
+            let mut phrase = sine(220.0, 0.2, 12_000);
+            processor.process(&mut phrase, &enabled);
+            processor.reset();
+            let mut silence = [0.0; 12_000];
+            processor.process(&mut silence, &enabled);
+            assert!(silence.iter().all(|x| *x == 0.0));
+            processor.process(&mut phrase, &enabled);
+            let disabled = DspSettings {
+                granular_mix: 0.0,
+                ..enabled
+            };
+            processor.process(&mut silence, &disabled);
+            silence.fill(0.0);
+            processor.process(&mut silence, &enabled);
+            assert!(silence.iter().all(|x| *x == 0.0));
+        }
+    }
+
+    #[test]
+    fn granular_prepared_memory_and_extreme_controls_are_bounded_at_supported_rates() {
+        for rate in [8_000, 44_100, 48_000, 192_000] {
+            let mut processor = Processor::new(rate);
+            assert!(processor.granular_state_bytes() < 1_024 * 1_024);
+            if rate == 48_000 {
+                assert!(processor.granular_state_bytes() < 250 * 1_024);
+            }
+            for mode in [
+                voice_core::GranularMode::Stylized,
+                voice_core::GranularMode::Natural,
+            ] {
+                for (pitch, grain, scatter, feedback, clarity) in [
+                    (-12.0, 12.0, 0.0, 0.0, 0.0),
+                    (12.0, 80.0, 1.0, 0.65, 1.0),
+                    (
+                        f32::NAN,
+                        f32::INFINITY,
+                        f32::NAN,
+                        f32::INFINITY,
+                        f32::NEG_INFINITY,
+                    ),
+                ] {
+                    let settings = DspSettings {
+                        granular_pitch_semitones: pitch,
+                        granular_grain_ms: grain,
+                        granular_scatter: scatter,
+                        granular_feedback: feedback,
+                        granular_clarity: clarity,
+                        ..granular_settings(mode)
+                    };
+                    let mut block = [0.1; 257];
+                    for _ in 0..24 {
+                        block.fill(0.1);
+                        block[0] = f32::NAN;
+                        processor.process(&mut block, &settings);
+                        assert_eq!(block[0], 0.0);
+                        assert!(block.iter().all(|x| x.is_finite() && x.abs() <= CEILING));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn granular_first_callback_on_new_thread_blends_without_allocator_calls() {
+        use voice_core::{GranularMode, VoiceBlend, VoiceLayer};
+        let mut processor = Processor::new(48_000);
+        let mut settings = granular_settings(GranularMode::Natural);
+        settings.blend = Some(VoiceBlend {
+            secondary: VoiceLayer::from(granular_settings(GranularMode::Stylized)),
+            primary_mix: 0.6,
+            secondary_mix: 0.4,
+        });
+        let calls = std::thread::spawn(move || {
+            let mut block = [0.1; 257];
+            CALLS.with(|n| n.set(0));
+            TRACK.with(|v| v.set(true));
+            for frame in 0..120 {
+                if frame == 30 {
+                    settings.granular_mode = GranularMode::Stylized;
+                }
+                if frame == 60 {
+                    settings.granular_grain_ms = 80.0;
+                }
+                if frame == 90 {
+                    settings.granular_mix = 0.0;
+                }
+                processor.process(&mut block, &settings);
+            }
+            processor.reset();
+            processor.process(&mut block, &DspSettings::default());
+            TRACK.with(|v| v.set(false));
+            CALLS.with(Cell::get)
+        })
+        .join()
+        .unwrap();
+        assert_eq!(calls, 0);
+    }
+
+    fn vocoder_settings() -> DspSettings {
+        DspSettings {
+            vocoder_mix: 1.0,
+            vocoder_unvoiced: 0.5,
+            effect_mix: std::array::from_fn(|index| {
+                if index == EffectKind::Vocoder as usize {
+                    1.0
+                } else {
+                    0.0
+                }
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn disabled_vocoder_is_sample_exact_and_has_no_active_filter_history() {
+        let original = sine(467.0, 0.2, 4_096);
+        let settings = DspSettings {
+            vocoder_carrier_hz: 440.0,
+            vocoder_unvoiced: 1.0,
+            vocoder_release_ms: 200.0,
+            effect_mix: [0.0; EFFECT_COUNT],
+            ..Default::default()
+        };
+        let mut processor = Processor::new(48_000);
+        let mut output = original.clone();
+        processor.process(&mut output, &settings);
+        assert_eq!(output, original);
+        assert_eq!(processor.latency_frames(&settings), 0);
+
+        let mut active_opacity = settings;
+        active_opacity.effect_mix[EffectKind::Vocoder as usize] = 1.0;
+        let mut bypass_output = original.clone();
+        Processor::new(48_000).process(&mut bypass_output, &active_opacity);
+        assert_eq!(bypass_output, original);
+    }
+
+    #[test]
+    fn vocoder_carrier_changes_synthesis_and_preserves_high_consonant_content() {
+        let mut low = vocoder_settings();
+        low.vocoder_unvoiced = 0.0;
+        low.vocoder_carrier_hz = 90.0;
+        let mut high = low;
+        high.vocoder_carrier_hz = 180.0;
+        let a = settled(low, 1_000.0, 0.15);
+        let b = settled(high, 1_000.0, 0.15);
+        let difference: Vec<_> = a[24_000..]
+            .iter()
+            .zip(&b[24_000..])
+            .map(|(a, b)| a - b)
+            .collect();
+        assert!(
+            rms(&a[24_000..]) > 0.005,
+            "vocoder must produce an audible carrier"
+        );
+        assert!(
+            rms(&difference) > 0.005,
+            "carrier frequency must change the output"
+        );
+
+        let without = settled(low, 5_237.0, 0.1);
+        low.vocoder_unvoiced = 1.0;
+        let with = settled(low, 5_237.0, 0.1);
+        let projection = |audio: &[f32]| {
+            let (s, c) = audio[24_000..]
+                .iter()
+                .enumerate()
+                .fold((0.0, 0.0), |(s, c), (i, x)| {
+                    let phase = TAU * 5_237.0 * i as f32 / 48_000.0;
+                    (s + x * phase.sin(), c + x * phase.cos())
+                });
+            (s * s + c * c).sqrt() / 24_000.0
+        };
+        assert!(projection(&with) > 0.02, "consonant band was lost");
+        assert!(projection(&with) > projection(&without) * 5.0);
+    }
+
+    #[test]
+    fn vocoder_speech_like_input_keeps_headroom_for_the_soundboard() {
+        let input: Vec<_> = (0..48_000)
+            .map(|frame| {
+                let phase = TAU * frame as f32 / 48_000.0;
+                0.10 * (330.0 * phase).sin() + 0.03 * (990.0 * phase).sin()
+            })
+            .collect();
+        for carrier in [55.0, 110.0, 137.0, 220.0, 440.0] {
+            let settings = DspSettings {
+                vocoder_carrier_hz: carrier,
+                vocoder_unvoiced: 0.65,
+                ..vocoder_settings()
+            };
+            let mut output = input.clone();
+            Processor::new(48_000).process(&mut output, &settings);
+            assert!(rms(&output[4_800..]) < 0.15, "carrier {carrier}");
+            assert!(output.iter().all(|v| v.abs() < 0.6), "carrier {carrier}");
+        }
+    }
+
+    #[test]
+    fn vocoder_has_no_whole_stream_buffer_and_reset_discards_older_speech() {
+        let settings = vocoder_settings();
+        let mut processor = Processor::new(48_000);
+        assert_eq!(processor.latency_frames(&settings), 0);
+        let mut speech = sine(500.0, 0.1, 12_000);
+        processor.process(&mut speech, &settings);
+        processor.reset();
+        let mut silence = [0.0; 2_048];
+        processor.process(&mut silence, &settings);
+        assert!(silence.iter().all(|sample| *sample == 0.0));
+
+        // No FFT/window needs filling: the highpass consonant path responds in the
+        // first sample. This is not a physical or frequency-independent latency test.
+        let mut prepared = vocoder::Vocoder::new(48_000);
+        let first = prepared.tick(0.1, 1.0, 110.0 / 48_000.0, 1.0, 1.0, 0.99);
+        assert!(first > 0.05);
+    }
+
+    #[test]
+    fn disabling_and_reenabling_vocoder_cannot_reveal_a_previous_phrase() {
+        let enabled = vocoder_settings();
+        for bypass_opacity in [false, true] {
+            let mut processor = Processor::new(48_000);
+            let mut phrase = sine(500.0, 0.1, 12_000);
+            processor.process(&mut phrase, &enabled);
+            let mut disabled = enabled;
+            if bypass_opacity {
+                disabled.effect_mix[EffectKind::Vocoder as usize] = 0.0;
+            } else {
+                disabled.vocoder_mix = 0.0;
+            }
+            let mut silence = [0.0; 12_000];
+            processor.process(&mut silence, &disabled);
+            assert!(silence[9_600..].iter().all(|sample| *sample == 0.0));
+            silence.fill(0.0);
+            processor.process(&mut silence, &enabled);
+            assert!(silence.iter().all(|sample| *sample == 0.0));
+        }
+    }
+
+    #[test]
+    fn vocoder_transitions_and_reordering_are_chunk_independent_without_heap_calls() {
+        use voice_core::{VoiceBlend, VoiceLayer};
+        let mut a = Processor::new(48_000);
+        let mut b = Processor::new(48_000);
+        let mut source = sine(340.0, 0.1, 8_192);
+        let mut chunked = source.clone();
+        let mut settings = vocoder_settings();
+        settings.blend = Some(VoiceBlend {
+            secondary: VoiceLayer::from(DspSettings {
+                vocoder_carrier_hz: 165.0,
+                ..settings
+            }),
+            primary_mix: 0.65,
+            secondary_mix: 0.35,
+        });
+        for action in 0..5 {
+            if action == 1 {
+                settings.vocoder_mix = 0.0;
+            }
+            if action == 2 {
+                settings.vocoder_mix = 0.8;
+            }
+            if action == 3 {
+                settings.effect_order.0.reverse();
+            }
+            if action == 4 {
+                settings.effect_mix[EffectKind::Vocoder as usize] = 0.0;
+            }
+            source.fill(0.1);
+            chunked.copy_from_slice(&source);
+            CALLS.with(|n| n.set(0));
+            TRACK.with(|v| v.set(true));
+            a.process(&mut source, &settings);
+            for chunk in chunked.chunks_mut(37) {
+                b.process(chunk, &settings);
+            }
+            TRACK.with(|v| v.set(false));
+            assert_eq!(CALLS.with(Cell::get), 0);
+            assert_eq!(source, chunked, "action {action}");
+            assert!(source.iter().all(|x| x.is_finite() && x.abs() <= CEILING));
+        }
+    }
+
+    #[test]
+    fn vocoder_extreme_and_invalid_controls_are_finite_at_every_supported_rate() {
+        for rate in [8_000, 44_100, 48_000, 192_000] {
+            let mut processor = Processor::new(rate);
+            let mut settings = vocoder_settings();
+            let mut block = [0.0; 257];
+            for (carrier, release, unvoiced, mix) in [
+                (55.0, 10.0, 0.0, 1.0),
+                (440.0, 200.0, 1.0, 1.0),
+                (f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::NAN),
+                (f32::MAX, -f32::MAX, f32::MAX, f32::MAX),
+            ] {
+                settings.vocoder_carrier_hz = carrier;
+                settings.vocoder_release_ms = release;
+                settings.vocoder_unvoiced = unvoiced;
+                settings.vocoder_mix = mix;
+                for repeat in 0..12 {
+                    for (index, sample) in block.iter_mut().enumerate() {
+                        *sample = if index == 0 {
+                            f32::NAN
+                        } else {
+                            (TAU * 340.0 * (repeat * 257 + index) as f32 / rate as f32).sin() * 16.0
+                        };
+                    }
+                    processor.process(&mut block, &settings);
+                    assert_eq!(block[0], 0.0);
+                    assert!(block.iter().all(|x| x.is_finite() && x.abs() <= CEILING));
+                }
+            }
+        }
+    }
+
     #[test]
     fn silence_and_invalid_inputs_are_finite_and_bounded() {
         let mut processor = Processor::new(48_000);
@@ -855,6 +1489,10 @@ mod tests {
             pitch_semitones: f32::NAN,
             formant_semitones: f32::INFINITY,
             chorus_mix: f32::NAN,
+            vocoder_mix: f32::INFINITY,
+            vocoder_carrier_hz: f32::NAN,
+            vocoder_unvoiced: f32::INFINITY,
+            vocoder_release_ms: f32::NEG_INFINITY,
             denoise: true,
             ..Default::default()
         };
@@ -1254,6 +1892,10 @@ mod tests {
                 pitch_semitones: 7.0,
                 formant_semitones: -3.0,
                 chorus_mix: 1.0,
+                vocoder_mix: 1.0,
+                vocoder_carrier_hz: 440.0,
+                vocoder_unvoiced: 1.0,
+                vocoder_release_ms: 200.0,
                 denoise: true,
                 ..Default::default()
             };
@@ -1632,6 +2274,7 @@ mod tests {
             pitch_semitones: 7.0,
             formant_semitones: -3.0,
             chorus_mix: 0.5,
+            vocoder_mix: 0.8,
             denoise: true,
             ..Default::default()
         };
