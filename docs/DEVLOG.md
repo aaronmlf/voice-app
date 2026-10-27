@@ -573,3 +573,25 @@ MCP persistente, conserva eventos de startup e exige prontidão após pelo menos
 cinco segundos, 21 contadores sem mudanças durante o período medido e análise
 contínua do WAV. Critérios e limites estão em `VALIDATION.md`. Não há novo passe
 de estabilidade, audição ou latência, publicação de binários ou retomada do driver próprio.
+
+
+### Sexta etapa: playback separado de gravação no Windows; aceitação nativa pendente
+
+A fonte `30d26b8c82941748413326556ebf43f90f5517ac` isola, no Windows, o produtor de
+soundboard/pré-escuta do worker de gravação/replay, preservando controles, barreiras,
+reserva limitada e contadores; Linux mantém o algoritmo anterior. A regressão de captura
+bloqueada e os gates locais passaram. As CIs concluíram:
+[Windows](https://github.com/aaronmlf/voice-app/actions/runs/40421597228), 154 Rust/15
+Python no gate nativo, e
+[Linux](https://github.com/aaronmlf/voice-app/actions/runs/40421605594), 166 Rust/51
+Python, PipeWire isolado e demais gates. O pacote Windows foi conferido no host.
+
+A rodada anterior `9954ec9` foi reprovada por +1 `soundboard_underruns` na primeira
+observação após prontidão, com outros deltas pós-prontidão zero e startup preservado.
+Novos ensaios de 60 s e 30 min não foram iniciados: o headset USB estava indisponível e
+o integrado de 44,1 kHz não atende ao perfil nativo 48 kHz/F32. A estabilidade
+operacional permanece sem comprovação.
+
+A sessão foi encerrada com a VM desligada normalmente e o indexador do host retomado. A
+revogação das permissões USB temporárias continua dependendo de autenticação
+administrativa do Linux. Áudio e evidência bruta permanecem locais.

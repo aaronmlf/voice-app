@@ -664,3 +664,46 @@ heartbeat do controlador em até 15 s; falha encerra a fonte de áudio e arquivo
 parciais/forçados não são aceitos. Esse loopback não substitui receptor CABLE
 independente, avaliação no ouvido, voz física com efeitos ou latência ponta a ponta.
 Não há novo passe de estabilidade nem promoção a beta/estável nesta preparação.
+
+
+## Encerramento da rodada de estabilidade Windows — 26/10/2026
+
+A fonte `30d26b8` passou os gates locais seriais de formatação, Clippy, 166 Rust/51
+Python, limites entre componentes, benchmark, licenças e pacote. As CIs
+[Windows40421597228](https://github.com/aaronmlf/voice-app/actions/runs/40421597228) e
+[Linux40421605594](https://github.com/aaronmlf/voice-app/actions/runs/40421605594)
+concluíram com 154 Rust/15 Python no gate nativo Windows e 166 Rust/51 Python no Linux;
+reexecuções de corpus são separadas dos totais. Wine validou comandos offline e a recusa
+segura por DACL protegida indisponível; GUI, IPC e compatibilidade Wine continuam não
+qualificados.
+
+A nova regressão, efetivamente executada, bloqueou captura e verificou Play/Stop e 7200
+frames corretos nas duas filas em cadência, sem aguardar enchimento entre lotes; não
+abriu dispositivos.
+
+No ensaio anterior `9954ec9`, +1 `soundboard_underruns` foi detectado na primeira
+observação após prontidão, com outros deltas pós-prontidão zero e startup retido.
+
+O candidato atual não iniciou 60/1800 s por ausência do headset USB no host/VirtualBox.
+As rodadas curtas usaram Windows 10 Enterprise LTSC, VM de 4000 MiB/oito vCPUs,
+VirtualBox 7.2.16/Guest Additions 7.2.2 e Audacity 3.7.9, GUI normal e microfone mutado.
+A nova leitura dos seis defaults, após reinicialização e antes do aplicativo, já
+apontava ao integrado; sua diferença para a leitura histórica do headset não demonstra
+alteração pelo aplicativo.
+
+Permanecem sem aceitação estabilidade prolongada, redução de CPU, audição subjetiva, voz
+física, Discord, latência física e qualificação beta/estável.
+
+Pacote do candidato Windows, gerado pela CI a partir de
+`30d26b8c82941748413326556ebf43f90f5517ac`, com integridade conferida no host:
+
+| Arquivo | SHA-256 |
+|---|---|
+| ZIP Windows interno, artefato `voice-app-windows-candidate` | `d641e74afda74f78fe4c7beafde02536d27dc6265a029f84f3f90627a222b52a` |
+| `voice-app.exe` | `b1d65cdb83311d696a33a43318b3d697785dc36a853b1e64ee03555a024d0cc1` |
+| `voice-cli.exe` | `bdd0d4f7cfbab306829351d9454f1c6ccc10b020c0ac3a2291adf902647726ed` |
+
+O artefato está disponível na execução de CI vinculada acima; não foi criada uma release
+nem promovido um marco a estável. As gravações reprovadas foram preservadas localmente.
+VM encerrada normalmente e indexador do host retomado; revogação das ACLs USB
+temporárias pendente de autenticação administrativa.
