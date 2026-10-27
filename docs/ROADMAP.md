@@ -19,8 +19,9 @@ Há uma implementação Linux experimental cobrindo a infraestrutura M0 e partes
 M1/M2. A matriz FEATURES.md é a fonte de verdade. Não considerar M0/M1/M2 aprovados apenas por
 compilarem: os critérios de aplicativos reais, hardware, duração e distribuição continuam abertos.
 
-A frente Windows prepara backend WASAPI, controle local privado e pacote nativo.
-Compilação em CI e Wine não concluem M4: driver virtual e testes em Windows real permanecem pendentes.
+A frente Windows inclui backend WASAPI, controle local privado, pacote nativo e código
+experimental de driver WaveRT com rota virtual explícita. Compilação em CI e Wine não
+concluem M4: assinatura, driver carregado e testes em Windows real permanecem pendentes.
 
 ## Próximas prioridades
 
