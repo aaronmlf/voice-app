@@ -22,6 +22,18 @@ def envelope(starts, length=3000, gain=0.1):
 
 
 class OnsetTests(unittest.TestCase):
+    def test_energy_window_preserves_delay_across_subcycle_carrier_nulls(self):
+        # Four-millisecond carrier periods never produce three consecutive
+        # high 1 ms bins. Their energy is still one continuous voiced event.
+        reference = [0.0] * 3000
+        for start in [100, 700, 1350, 2100]:
+            reference[start:start + 160] = [0.1, 0.0, 0.0, 0.0] * 40
+        processed = [0.0] * 13 + reference[:-13]
+        first = latency.detect_onsets(latency.smooth_energy(reference))
+        second = latency.detect_onsets(latency.smooth_energy(processed))
+        observations = latency.pair_onsets(first["onsets_ms"], second["onsets_ms"], 4)
+        self.assertEqual([event["delay_ms"] for event in observations], [13.0] * 4)
+
     def test_known_delay_uses_samples_not_algorithmic_metadata(self):
         reference = latency.detect_onsets(envelope([100, 700, 1350, 2100]))
         processed = latency.detect_onsets(envelope([193, 793, 1443, 2193], gain=0.03))
