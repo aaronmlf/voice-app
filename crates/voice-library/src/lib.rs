@@ -30,9 +30,16 @@ pub struct Preset {
     pub id: String,
     pub name: String,
     pub settings: DspSettings,
+    /// Local collection membership; independent of builtin ownership and not exported.
+    #[serde(default)]
+    pub original: bool,
 }
 
 impl Preset {
+    pub fn is_original(&self) -> bool {
+        self.id.starts_with("builtin.") || self.original
+    }
+
     pub fn validate(&self) -> Result<()> {
         validate_id(&self.id)?;
         validate_name(&self.name)?;
@@ -111,6 +118,9 @@ impl Library {
         db.execute_batch(
             "BEGIN;
              CREATE TABLE IF NOT EXISTS presets(id TEXT PRIMARY KEY, name TEXT NOT NULL, settings TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS preset_origins(
+                 preset_id TEXT PRIMARY KEY REFERENCES presets(id) ON DELETE CASCADE,
+                 original INTEGER NOT NULL CHECK(original IN (0,1)));
              CREATE TABLE IF NOT EXISTS preset_images(
                  preset_id TEXT PRIMARY KEY REFERENCES presets(id) ON DELETE CASCADE,
                  file_name TEXT NOT NULL);
@@ -140,20 +150,25 @@ impl Library {
     }
 
     pub fn presets(&self) -> Result<Vec<Preset>> {
-        let mut query = self
-            .db
-            .prepare("SELECT id,name,settings FROM presets ORDER BY name,id")?;
+        let mut query = self.db.prepare(
+            "SELECT p.id,p.name,p.settings,COALESCE(o.original,0)
+                FROM presets p LEFT JOIN preset_origins o ON o.preset_id=p.id
+                ORDER BY p.name,p.id",
+        )?;
         let rows = query.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, bool>(3)?,
             ))
         })?;
         let mut presets = Vec::new();
         for row in rows {
-            let (id, name, settings) = row?;
+            let (id, name, settings, original) = row?;
+            let original = original || id.starts_with("builtin.");
             let preset = Preset {
+                original,
                 id,
                 name,
                 settings: serde_json::from_str(&settings)
@@ -165,6 +180,8 @@ impl Library {
         Ok(presets)
     }
 
+    /// Saving a definition preserves its existing local collection membership.
+    /// New IDs start as personal, regardless of metadata supplied by an import.
     pub fn save_preset(&self, preset: &Preset) -> Result<()> {
         preset.validate()?;
         self.db.execute(
@@ -177,6 +194,29 @@ impl Library {
             ],
         )?;
         Ok(())
+    }
+
+    /// Curate a local collection without modifying the definition, image or ID.
+    pub fn set_preset_original(&self, id: &str, original: bool) -> Result<Preset> {
+        validate_id(id)?;
+        ensure!(
+            original || !id.starts_with("builtin."),
+            "builtin voices are always original"
+        );
+        let mut preset = self
+            .presets()?
+            .into_iter()
+            .find(|p| p.id == id)
+            .context("preset not found")?;
+        if !id.starts_with("builtin.") {
+            self.db.execute(
+                "INSERT INTO preset_origins(preset_id,original) VALUES(?1,?2)
+                 ON CONFLICT(preset_id) DO UPDATE SET original=excluded.original",
+                params![id, original],
+            )?;
+        }
+        preset.original = original;
+        Ok(preset)
     }
 
     pub fn delete_preset(&self, id: &str) -> Result<()> {
@@ -199,10 +239,10 @@ impl Library {
             .context("preset not found")?;
         fs::write(
             path,
-            serde_json::to_vec_pretty(&PresetFile {
-                version: FORMAT_VERSION,
-                preset,
-            })?,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": FORMAT_VERSION,
+                "preset": {"id": preset.id, "name": preset.name, "settings": preset.settings}
+            }))?,
         )
         .context("write preset export")
     }
@@ -220,7 +260,10 @@ impl Library {
         );
         file.preset.validate()?;
         self.save_preset(&file.preset)?;
-        Ok(file.preset)
+        self.presets()?
+            .into_iter()
+            .find(|p| p.id == file.preset.id)
+            .context("imported preset not found")
     }
 
     pub fn boards(&self) -> Result<Vec<Board>> {
@@ -577,6 +620,7 @@ pub fn builtin_presets() -> Vec<Preset> {
         id: format!("builtin.{id}"),
         name: name.into(),
         settings,
+        original: true,
     })
     .collect()
 }
@@ -923,6 +967,7 @@ mod tests {
             voice_core::EffectKind::Distortion as usize,
         );
         let preset = Preset {
+            original: false,
             id: "custom-test".into(),
             name: "My radio".into(),
             settings: DspSettings {
@@ -944,6 +989,134 @@ mod tests {
         let reopened = Library::open(&root)?;
         assert!(reopened.presets()?.contains(&preset));
         assert!(reopened.boards()?.contains(&board));
+        Ok(())
+    }
+
+    #[test]
+    fn original_collection_is_local_persistent_and_independent_of_names() -> Result<()> {
+        let temp = Temp::new();
+        let root = temp.0.join("library");
+        let preset = Preset {
+            id: "custom.generic".into(),
+            name: "Original custom voice".into(),
+            settings: DspSettings {
+                gain_db: -3.0,
+                ..Default::default()
+            },
+            original: true,
+        };
+        {
+            let library = Library::open(&root)?;
+            assert_eq!(
+                library
+                    .presets()?
+                    .iter()
+                    .filter(|p| p.is_original())
+                    .count(),
+                12
+            );
+            library.save_preset(&preset)?;
+            let saved = library
+                .presets()?
+                .into_iter()
+                .find(|p| p.id == preset.id)
+                .unwrap();
+            assert!(
+                !saved.is_original(),
+                "saving or naming cannot promote a preset"
+            );
+            let curated = library.set_preset_original(&preset.id, true)?;
+            assert_eq!(curated.id, preset.id);
+            assert_eq!(curated.name, preset.name);
+            assert_eq!(curated.settings, preset.settings);
+            assert!(curated.is_original());
+            assert!(library.set_preset_original("builtin.clean", false).is_err());
+            assert!(library.set_preset_original("custom.missing", true).is_err());
+            // Updating the DSP definition does not reset the curated category.
+            library.save_preset(&saved)?;
+        }
+        let library = Library::open(&root)?;
+        let curated = library
+            .presets()?
+            .into_iter()
+            .find(|p| p.id == preset.id)
+            .unwrap();
+        assert!(curated.is_original());
+        assert_eq!(curated.settings, preset.settings);
+        let personal = library.set_preset_original(&preset.id, false)?;
+        assert!(!personal.is_original());
+        assert_eq!(personal.settings, preset.settings);
+        Ok(())
+    }
+
+    #[test]
+    fn interchange_does_not_transfer_original_collection_membership() -> Result<()> {
+        let temp = Temp::new();
+        let library = Library::open(&temp.0.join("library"))?;
+        let preset = Preset {
+            id: "custom.curated".into(),
+            name: "Curated".into(),
+            settings: DspSettings::default(),
+            original: false,
+        };
+        library.save_preset(&preset)?;
+        library.set_preset_original(&preset.id, true)?;
+        let path = temp.0.join("preset.json");
+        library.export_preset(&preset.id, &path)?;
+        let mut exported: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        assert!(exported["preset"].get("original").is_none());
+        assert!(library.import_preset(&path)?.is_original());
+        // Even a received JSON that advertises membership cannot promote a new ID.
+        library.delete_preset(&preset.id)?;
+        exported["preset"]["original"] = serde_json::json!(true);
+        fs::write(&path, serde_json::to_vec(&exported)?)?;
+        assert!(!library.import_preset(&path)?.is_original());
+        library.set_preset_original(&preset.id, true)?;
+        exported["preset"]["original"] = serde_json::json!(false);
+        fs::write(&path, serde_json::to_vec(&exported)?)?;
+        assert!(library.import_preset(&path)?.is_original());
+        let other = Library::open(&temp.0.join("other-library"))?;
+        assert!(!other.import_preset(&path)?.is_original());
+        assert_eq!(
+            other.presets()?.iter().filter(|p| p.is_original()).count(),
+            12
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn existing_library_adds_collection_metadata_without_rewriting_definitions() -> Result<()> {
+        let temp = Temp::new();
+        let root = temp.0.join("library");
+        fs::create_dir_all(&root)?;
+        let settings = r#"{"gain_db":-4.0,"drive":0.2}"#;
+        {
+            let db = Connection::open(root.join("library.sqlite3"))?;
+            db.execute_batch("CREATE TABLE presets(id TEXT PRIMARY KEY,name TEXT NOT NULL,settings TEXT NOT NULL); PRAGMA user_version=1;")?;
+            db.execute(
+                "INSERT INTO presets VALUES(?1,?2,?3)",
+                params!["custom.existing", "Existing", settings],
+            )?;
+        }
+        let library = Library::open(&root)?;
+        let preset = library
+            .presets()?
+            .into_iter()
+            .find(|p| p.id == "custom.existing")
+            .unwrap();
+        assert!(!preset.is_original());
+        assert_eq!(preset.settings.gain_db, -4.0);
+        assert_eq!(preset.settings.vocoder_mix, 0.0);
+        library.set_preset_original(&preset.id, true)?;
+        let stored: String = library.db.query_row(
+            "SELECT settings FROM presets WHERE id=?1",
+            [&preset.id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(
+            stored, settings,
+            "metadata must not reserialize existing DSP settings"
+        );
         Ok(())
     }
 
@@ -994,6 +1167,7 @@ mod tests {
         let temp = Temp::new();
         let library = Library::open(&temp.0.join("library"))?;
         let preset = Preset {
+            original: false,
             id: "custom.ordered".into(),
             name: "Preserved voice".into(),
             settings: DspSettings {
@@ -1014,6 +1188,7 @@ mod tests {
             match failure {
                 "duplicate" => order[0] = order[1].clone(),
                 "missing" => {
+                    order.pop();
                     order.pop();
                 }
                 "unknown" => order[0] = serde_json::json!("unknown_effect"),

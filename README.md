@@ -49,10 +49,19 @@ pré-escuta e gravação, com o mesmo motor/biblioteca. A CI compila com MSVC em
 Server 2022; uma verificação adicional pelo Wine usa um prefixo isolado e áudio sintético.
 Os resultados desses gates são registrados separadamente de testes em Windows 10/11 real.
 
-**O microfone virtual Windows ainda depende de um driver próprio.** Esta versão inicial
-permite preparar efeitos e testar monitoração/gravação; não cria uma entrada para chamadas.
-O pacote será um ZIP experimental com checksum, em uma release `windows-v…` separada do Linux.
-Veja o [escopo e as verificações pendentes](docs/WINDOWS.md).
+A implementação experimental mais recente permite enviar efeitos e soundboard a um
+**VB-CABLE instalado separadamente**. Em Configurações, escolha explicitamente **CABLE Input**
+como saída virtual. No Discord ou Audacity/Tenacity, escolha **CABLE Output** como entrada.
+**Ouvir-me**, seu volume e a pré-escuta continuam nos fones físicos selecionados.
+
+Baixe e instale o cabo pelo [site oficial da VB-Audio](https://vb-audio.com/Cable/), conforme
+os termos do fornecedor. O Voice App não inclui o cabo nem instala drivers; os dispositivos
+padrão do Windows são preservados. Essa rota dispensa desenvolver e assinar um driver próprio.
+Essa frente foi cancelada e o [PR #5](https://github.com/aaronmlf/voice-app/pull/5) foi fechado sem merge.
+
+Isso descreve o código experimental, sem anunciar uma nova release. O percurso com VB-CABLE
+instalado, efeitos e soundboard nos aplicativos de destino ainda precisa de validação em Windows.
+Wine e os testes offline não comprovam essa etapa. Veja o [guia e as verificações pendentes](docs/WINDOWS.md).
 
 ## Capturar áudio do desktop
 
@@ -110,7 +119,7 @@ oferece `voice_status` e `voice_command` por MCP/stdio usando o mesmo registro d
 - Microfone virtual, captura e monitoração independentes; pré-escuta apenas nos fones.
 - Gate, ganho, filtros, compressor, saturação, robô, eco, reverb e chorus.
 - Pitch e formantes via Signalsmith, redução de ruído RNNoise e 12 presets próprios.
-- Cadeia de 11 blocos reordenáveis no Laboratório, salva com o preset e com a sessão.
+- Cadeia de 13 blocos reordenáveis no Laboratório, incluindo vocoder e granular nos modos Estilizado e Natural experimental; presets antigos preservados pela migração.
 - Intensidade por efeito e mistura de duas vozes, com níveis independentes e atrasos alinhados.
 - Filtros para vozes originais e próprias; imagens locais personalizadas nos presets próprios.
 - Favoritos e biblioteca visual com avatares originais.

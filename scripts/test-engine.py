@@ -320,6 +320,110 @@ def exercise_desktop_isolation(harness):
     return isolated
 
 
+def exercise_effect_route(harness, clip_id, effect="vocoder"):
+    """Verify processed voice and untouched soundboard/preview at an external consumer."""
+    granular = effect.startswith("granular-")
+    natural = effect == "granular-natural"
+    settings = {"gate_db": -70.0, "highpass_hz": 80.0, "lowpass_hz": 8000.0}
+    if granular:
+        settings.update(granular_mode="natural" if natural else "stylized",
+                        granular_mix=1.0, granular_pitch_semitones=3.0 if natural else 7.0,
+                        granular_grain_ms=32.0, granular_clarity=0.85 if natural else 0.75,
+                        granular_scatter=0.0, granular_feedback=0.0)
+    else:
+        settings.update(vocoder_mix=0.85, vocoder_carrier_hz=137.0,
+                        vocoder_unvoiced=0.65, vocoder_release_ms=40.0)
+    previous = harness.command("status")["settings"]
+    source = harness.work / f"{effect}-speech-like.wav"
+    samples = array.array("h", (
+        round(32767 * (0.10 * math.sin(2 * math.pi * 330 * frame / 48000)
+                       + 0.03 * math.sin(2 * math.pi * 990 * frame / 48000)))
+        for frame in range(48000 * 6)))
+    if sys.byteorder != "little":
+        samples.byteswap()
+    with wave.open(str(source), "wb") as audio:
+        audio.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+        audio.writeframes(samples.tobytes())
+    harness.command("ctl", json.dumps({"op": "configure", "settings": settings}))
+    player = subprocess.Popen([
+        "pw-play", "--target", "0", "--latency", "256", "--properties",
+        f"node.name=voice-test.{effect}-source adapter.auto-port-config={{mode=dsp position=preserve}}",
+        str(source),
+    ], env=harness.env, stdout=harness.log, stderr=harness.log)
+    harness.children.append(player)
+
+    def capture(label):
+        path = harness.work / f"{effect}-{label}.raw"
+        consumer = harness.consumer(path)
+        time.sleep(0.35)
+        harness.stop_child(consumer)
+        raw = path.read_bytes()
+        metrics = pcm_metrics(raw)
+        require(metrics["frames"] >= 4800, f"{effect} capture is too short for the spectral checks: {metrics}")
+        values = array.array("h", raw)
+        if sys.byteorder != "little":
+            values.byteswap()
+        def amplitude(hz):
+            sine = cosine = 0.0
+            for index, sample in enumerate(values):
+                phase = 2 * math.pi * hz * index / 48000
+                sine += sample / 32768.0 * math.sin(phase)
+                cosine += sample / 32768.0 * math.cos(phase)
+            return 2 * math.hypot(sine, cosine) / len(values)
+        metrics["soundboard_440_amplitude"] = amplitude(440)
+        if granular:
+            metrics["shifted_voice_amplitude"] = amplitude(330 * 2 ** ((3 if natural else 7) / 12))
+            metrics["shifted_soundboard_amplitude"] = amplitude(440 * 2 ** ((3 if natural else 7) / 12))
+        # The backend's final voice+soundboard ceiling is ±1; the DSP-only
+        # ceiling of ±0.98 precedes the independently gained soundboard mix.
+        require(metrics["peak"] <= 1.0, f"Virtual mix exceeded normalized PCM bounds: {metrics}")
+        return metrics
+
+    try:
+        harness.link(harness.port("-o", f"voice-test.{effect}-source:"),
+                     harness.port("-i", "voice-test.input:"))
+        time.sleep(0.15)
+        voice = capture("voice")
+        require(voice["peak"] > 0.005, f"{effect} voice did not reach virtual consumer")
+        require(voice["peak"] < 0.6, f"{effect} consumed the soundboard's headroom on a quiet probe")
+        if granular:
+            require(voice["shifted_voice_amplitude"] > 0.012,
+                    f"{effect} produced no measurable shifted voice at the external consumer: {voice}")
+        harness.command("play", clip_id, "--preview", "--looped")
+        preview = capture("preview")
+        require(preview["soundboard_440_amplitude"] < 0.015,
+                f"Preview leaked into the virtual microphone while {effect} was active")
+        require(0.8 * voice["rms"] <= preview["rms"] <= 1.2 * voice["rms"],
+                f"Preview interrupted or changed the processed voice while {effect} was active")
+        harness.command("stop-sounds")
+        time.sleep(0.05)
+        harness.command("play", clip_id, "--looped")
+        mixed = capture("soundboard")
+        print(json.dumps({effect + "_route": {"voice": voice, "preview": preview, "soundboard": mixed}}), flush=True)
+        require(mixed["peak"] < 0.8, f"Normal {effect}+soundboard probe unexpectedly approached clipping")
+        require(mixed["soundboard_440_amplitude"] > 0.04,
+                f"Soundboard tone was lost or transformed by the microphone {effect}")
+        require(mixed["soundboard_440_amplitude"] - voice["soundboard_440_amplitude"] > 0.10,
+                f"Soundboard lost its reference amplitude in the {effect} route")
+        if granular:
+            require(mixed["shifted_soundboard_amplitude"] - voice["shifted_soundboard_amplitude"] < 0.015,
+                    f"Soundboard was pitch shifted by the microphone {effect}")
+        state = harness.command("status")
+        require(state["audio_running"] and not state["monitor"], f"{effect} changed audio routing/monitoring")
+        frames = state["metrics"]["algorithmic_latency_frames"]
+        if granular:
+            require(0 < frames <= 48000 * 0.045,
+                    f"{effect} failed to report its bounded granular alignment delay: {frames}")
+        else:
+            require(frames == 0, "Filter-bank vocoder unexpectedly introduced whole-stream buffering")
+        return {"voice": voice, "preview": preview, "soundboard": mixed,
+                "whole_stream_buffer_frames": frames, "destination_application_tested": False}
+    finally:
+        harness.command("stop-sounds")
+        harness.stop_child(player)
+        harness.command("ctl", json.dumps({"op": "configure", "settings": previous}))
+
+
 def exercise(harness, fixture, daemon_pid):
     status = harness.serve()
     require(not status["audio_running"] and not status["monitor"] and not status["audio_requested"],
@@ -376,6 +480,9 @@ def exercise(harness, fixture, daemon_pid):
             "Ouvir-me volume changed the microphone DSP or soundboard volume")
     harness.start()
     desktop_isolation = exercise_desktop_isolation(harness)
+    vocoder_metrics = exercise_effect_route(harness, clip["id"])
+    granular_metrics = {mode: exercise_effect_route(harness, clip["id"], "granular-" + mode)
+                        for mode in ("stylized", "natural")}
     virtual_raw = harness.work / "virtual-output.raw"
     consumer = harness.consumer(virtual_raw)
 
@@ -504,10 +611,12 @@ def exercise(harness, fixture, daemon_pid):
     print("PASS: CLI -> engine -> SQLite -> worker mixer -> PipeWire virtual microphone -> external consumer")
     print("PASS: desktop defaults; independent persisted Ouvir-me volume; session auto-resume; daemon-loss recording finalization; automatic daemon recovery; Stop cancellation")
     print("PASS: explicit independent stereo desktop capture; source isolation; bounded replay; no overwrite; desktop-loss finalization; desktop remains off after restart")
+    print("PASS: vocoder and both granular modes reach virtual consumer; soundboard stays post-DSP; preview stays private")
     print(json.dumps({"recording": recorded_metrics, "replay": replay_metrics, "virtual_output": virtual_metrics,
                       "loss_recording": loss_metrics, "recovered_output": recovered_metrics,
                       "desktop": desktop_metrics, "desktop_virtual_isolation": desktop_isolation,
-                      "desktop_loss_recording": desktop_loss_metrics, "end_to_end_latency_measured": False}, sort_keys=True))
+                      "desktop_loss_recording": desktop_loss_metrics, "vocoder": vocoder_metrics, "granular": granular_metrics,
+                      "end_to_end_latency_measured": False}, sort_keys=True))
 
 
 def main():

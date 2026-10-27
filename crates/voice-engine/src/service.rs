@@ -17,7 +17,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use voice_core::{
     AudioConfig, AudioShared, DesktopShared, DspSettings, FORMAT_VERSION, RecordingSource,
-    SAMPLE_RATE, SampleQueue,
+    SAMPLE_RATE, SampleQueue, VirtualMicrophoneStatus,
 };
 use voice_library::{Library, Mixer, Preset, ReplayBuffer};
 
@@ -92,6 +92,9 @@ fn stable_audio_preferences(config: &AudioConfig, resolved: &AudioConfig) -> Aud
     if saved.output_device.is_some() {
         saved.output_device = resolved.output_device.clone();
     }
+    // Virtual endpoint IDs are explicit and must never become an automatic route.
+    // Preserve the requested ID even if a backend accidentally reports another one.
+    saved.virtual_output_device = config.virtual_output_device.clone();
     saved
 }
 
@@ -134,9 +137,16 @@ enum WorkerCommand {
         seconds: u32,
         reply: mpsc::Sender<Result<Value>>,
     },
+    #[cfg(test)]
+    BlockCapture {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+        blocked: Arc<AtomicBool>,
+    },
 }
 struct Worker {
     tx: mpsc::SyncSender<WorkerCommand>,
+    playback: Option<PlaybackProducer>,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     playing: Arc<AtomicUsize>,
@@ -281,8 +291,181 @@ fn source_index(source: RecordingSource) -> usize {
         RecordingSource::Desktop => 1,
     }
 }
+
+const MIX_BLOCK_FRAMES: usize = 480;
+
+fn playback_queue_target(render_callback_frames: u64) -> usize {
+    // WASAPI can deliver a batch larger than its requested buffer quantum. Keep
+    // two observed batches (at least 30 ms) prepared so a normal Windows worker
+    // wakeup cannot exhaust a 20-ms producer queue. The 100-ms ceiling remains
+    // bounded and Stop retains only this prepared tail, never an entire clip.
+    (render_callback_frames.min(2400) as usize * 2).clamp(1440, 4800)
+}
+
+fn fill_playback_queue(mixer: &mut Mixer, queue: &SampleQueue, target: usize, block: &mut [f32]) {
+    let target = target.min(queue.capacity().saturating_sub(block.len()));
+    while queue.len() < target {
+        let frames = (target - queue.len()).min(block.len());
+        mixer.process(&mut block[..frames]);
+        queue.push(&block[..frames]);
+    }
+}
+
+fn publish_playback_activity(shared: &AudioShared, mix: &Mixer, preview: &Mixer) {
+    shared
+        .soundboard_active
+        .store(mix.active_count() > 0, Ordering::Release);
+    shared
+        .preview_active
+        .store(preview.active_count() > 0, Ordering::Release);
+}
+
+enum PlaybackCommand {
+    Play {
+        id: String,
+        pcm: Arc<Vec<f32>>,
+        gain: f32,
+        looped: bool,
+        overlap: bool,
+        preview: bool,
+        reply: mpsc::Sender<Result<()>>,
+    },
+    StopAll {
+        reply: mpsc::Sender<Result<()>>,
+    },
+    StopClip {
+        id: String,
+        reply: mpsc::Sender<Result<()>>,
+    },
+}
+
+/// Windows playback never waits for replay updates, recording writes or finalization.
+/// This thread alone owns both mixers and produces their prepared SPSC queues.
+struct PlaybackProducer {
+    tx: mpsc::SyncSender<PlaybackCommand>,
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+impl PlaybackProducer {
+    fn spawn(shared: Arc<AudioShared>, playing: Arc<AtomicUsize>) -> Self {
+        let (tx, rx) = mpsc::sync_channel(32);
+        let stop = Arc::new(AtomicBool::new(false));
+        let done = stop.clone();
+        let join = thread::spawn(move || {
+            let (mut mix, mut preview) = (Mixer::new(), Mixer::new());
+            let mut mixed = [0_f32; MIX_BLOCK_FRAMES];
+            while !done.load(Ordering::Acquire) {
+                // New control traffic cannot postpone a refill indefinitely.
+                for _ in 0..32 {
+                    let Ok(command) = rx.try_recv() else {
+                        break;
+                    };
+                    let (reply, result) = match command {
+                        PlaybackCommand::Play {
+                            id,
+                            pcm,
+                            gain,
+                            looped,
+                            overlap,
+                            preview: is_preview,
+                            reply,
+                        } => {
+                            let mixer = if is_preview { &mut preview } else { &mut mix };
+                            (reply, mixer.play(&id, pcm, gain, looped, overlap))
+                        }
+                        PlaybackCommand::StopAll { reply } => {
+                            mix.stop_all();
+                            preview.stop_all();
+                            (reply, Ok(()))
+                        }
+                        PlaybackCommand::StopClip { id, reply } => {
+                            mix.stop(&id);
+                            preview.stop(&id);
+                            (reply, Ok(()))
+                        }
+                    };
+                    publish_playback_activity(&shared, &mix, &preview);
+                    playing.store(
+                        mix.active_count() + preview.active_count(),
+                        Ordering::Relaxed,
+                    );
+                    // Already prepared PCM is the same bounded Stop tail as before.
+                    // Never discard a queue from its producer.
+                    let _ = reply.send(result);
+                }
+                if shared.metrics.active.load(Ordering::Relaxed) {
+                    let target = playback_queue_target(
+                        shared
+                            .metrics
+                            .render_callback_frames_max
+                            .load(Ordering::Relaxed),
+                    );
+                    fill_playback_queue(&mut mix, &shared.soundboard, target, &mut mixed);
+                    fill_playback_queue(&mut preview, &shared.preview, target, &mut mixed);
+                } else {
+                    mix.stop_all();
+                    preview.stop_all();
+                }
+                publish_playback_activity(&shared, &mix, &preview);
+                playing.store(
+                    mix.active_count() + preview.active_count(),
+                    Ordering::Relaxed,
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+            playing.store(0, Ordering::Relaxed);
+            shared.soundboard_active.store(false, Ordering::Release);
+            shared.preview_active.store(false, Ordering::Release);
+        });
+        Self {
+            tx,
+            stop,
+            join: Some(join),
+        }
+    }
+    fn send(&self, command: PlaybackCommand) -> Result<()> {
+        self.tx
+            .try_send(command)
+            .map_err(|e| anyhow!("playback producer busy or disconnected: {e}"))
+    }
+    fn stop_all(&self) -> Result<()> {
+        let (reply, acknowledgement) = mpsc::channel();
+        self.send(PlaybackCommand::StopAll { reply })?;
+        acknowledgement
+            .recv_timeout(Duration::from_secs(3))
+            .context("playback producer stop acknowledgement timed out")?
+    }
+}
+impl Drop for PlaybackProducer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+#[cfg(test)]
+struct CaptureStallGuard {
+    release: mpsc::Sender<()>,
+    blocked: Arc<AtomicBool>,
+}
+#[cfg(test)]
+impl Drop for CaptureStallGuard {
+    fn drop(&mut self) {
+        let _ = self.release.send(());
+    }
+}
+
 impl Worker {
     fn spawn(shared: Arc<AudioShared>, desktop: Arc<DesktopShared>) -> Self {
+        Self::spawn_with_playback_thread(shared, desktop, cfg!(windows))
+    }
+    fn spawn_with_playback_thread(
+        shared: Arc<AudioShared>,
+        desktop: Arc<DesktopShared>,
+        separate_playback: bool,
+    ) -> Self {
         let (tx, rx) = mpsc::sync_channel(32);
         let stop = Arc::new(AtomicBool::new(false));
         let playing = Arc::new(AtomicUsize::new(0));
@@ -298,8 +481,10 @@ impl Worker {
             recording.clone(),
             error.clone(),
         );
+        let playback =
+            separate_playback.then(|| PlaybackProducer::spawn(shared.clone(), playing.clone()));
         let join = thread::spawn(move || {
-            let (mut mix, mut preview) = (Mixer::new(), Mixer::new());
+            let mut mixers = (!separate_playback).then(|| (Mixer::new(), Mixer::new()));
             let mut captures = [
                 CaptureState::new(
                     RecordingSource::ProcessedVoice,
@@ -316,7 +501,7 @@ impl Worker {
                     err,
                 ),
             ];
-            let mut mixed = [0_f32; 480];
+            let mut mixed = [0_f32; MIX_BLOCK_FRAMES];
             while !done.load(Ordering::Acquire) {
                 while let Ok(command) = rx.try_recv() {
                     // Drain before command boundaries so Finish/Replay include queued tails,
@@ -333,16 +518,32 @@ impl Worker {
                             preview: is_preview,
                             reply,
                         } => {
-                            let target = if is_preview { &mut preview } else { &mut mix };
-                            let _ = reply.send(target.play(&id, pcm, gain, looped, overlap));
+                            let (mix, preview) = mixers.as_mut().expect(
+                                "separate playback commands never enter the capture worker",
+                            );
+                            let result = if is_preview {
+                                preview.play(&id, pcm, gain, looped, overlap)
+                            } else {
+                                mix.play(&id, pcm, gain, looped, overlap)
+                            };
+                            publish_playback_activity(&shared, mix, preview);
+                            let _ = reply.send(result);
                         }
                         WorkerCommand::StopAll => {
+                            let (mix, preview) = mixers.as_mut().expect(
+                                "separate playback commands never enter the capture worker",
+                            );
                             mix.stop_all();
                             preview.stop_all();
+                            publish_playback_activity(&shared, mix, preview);
                         }
                         WorkerCommand::StopClip { id, reply } => {
+                            let (mix, preview) = mixers.as_mut().expect(
+                                "separate playback commands never enter the capture worker",
+                            );
                             mix.stop(&id);
                             preview.stop(&id);
+                            publish_playback_activity(&shared, mix, preview);
                             voices.store(
                                 mix.active_count() + preview.active_count(),
                                 Ordering::Relaxed,
@@ -356,9 +557,12 @@ impl Worker {
                             clear_replay,
                             reply,
                         } => {
-                            mix.stop_all();
-                            preview.stop_all();
-                            voices.store(0, Ordering::Relaxed);
+                            if let Some((mix, preview)) = &mut mixers {
+                                mix.stop_all();
+                                preview.stop_all();
+                                publish_playback_activity(&shared, mix, preview);
+                                voices.store(0, Ordering::Relaxed);
+                            }
                             let capture = &mut captures[0];
                             let result = capture.finish(false).map(|_| ());
                             if clear_replay {
@@ -420,27 +624,44 @@ impl Worker {
                             };
                             let _ = reply.send(result);
                         }
-                    }
-                }
-                // One producer per queue; keep at most 20 ms queued instead of accumulating latency.
-                if shared.metrics.active.load(Ordering::Relaxed) {
-                    for (mixer, queue) in [
-                        (&mut mix, &shared.soundboard),
-                        (&mut preview, &shared.preview),
-                    ] {
-                        while queue.len() < 960 {
-                            mixer.process(&mut mixed);
-                            queue.push(&mixed);
+                        #[cfg(test)]
+                        WorkerCommand::BlockCapture {
+                            entered,
+                            release,
+                            blocked,
+                        } => {
+                            blocked.store(true, Ordering::Release);
+                            let _ = entered.send(());
+                            // The guard releases even during unwinding; a timeout also
+                            // bounds a broken fixture independently of worker Drop.
+                            let _ = release.recv_timeout(Duration::from_secs(3));
+                            blocked.store(false, Ordering::Release);
                         }
                     }
-                } else {
-                    mix.stop_all();
-                    preview.stop_all();
                 }
-                voices.store(
-                    mix.active_count() + preview.active_count(),
-                    Ordering::Relaxed,
-                );
+                // Linux keeps its original combined worker and 20-ms fill algorithm.
+                // Windows queues/activity belong exclusively to PlaybackProducer.
+                if let Some((mix, preview)) = &mut mixers {
+                    if shared.metrics.active.load(Ordering::Relaxed) {
+                        for (mixer, queue) in [
+                            (&mut *mix, &shared.soundboard),
+                            (&mut *preview, &shared.preview),
+                        ] {
+                            while queue.len() < 960 {
+                                mixer.process(&mut mixed);
+                                queue.push(&mixed);
+                            }
+                        }
+                    } else {
+                        mix.stop_all();
+                        preview.stop_all();
+                    }
+                    publish_playback_activity(&shared, mix, preview);
+                    voices.store(
+                        mix.active_count() + preview.active_count(),
+                        Ordering::Relaxed,
+                    );
+                }
                 captures[0].drain(&shared.recording);
                 captures[1].drain(&desktop.samples);
                 thread::sleep(Duration::from_millis(5));
@@ -450,10 +671,15 @@ impl Worker {
             for capture in &mut captures {
                 let _ = capture.finish(false);
             }
-            voices.store(0, Ordering::Relaxed);
+            if mixers.is_some() {
+                voices.store(0, Ordering::Relaxed);
+                shared.soundboard_active.store(false, Ordering::Release);
+                shared.preview_active.store(false, Ordering::Release);
+            }
         });
         Self {
             tx,
+            playback,
             stop,
             join: Some(join),
             playing,
@@ -464,9 +690,71 @@ impl Worker {
         }
     }
     fn send(&self, command: WorkerCommand) -> Result<()> {
+        if let Some(playback) = &self.playback {
+            match command {
+                WorkerCommand::Play {
+                    id,
+                    pcm,
+                    gain,
+                    looped,
+                    overlap,
+                    preview,
+                    reply,
+                } => {
+                    return playback.send(PlaybackCommand::Play {
+                        id,
+                        pcm,
+                        gain,
+                        looped,
+                        overlap,
+                        preview,
+                        reply,
+                    });
+                }
+                WorkerCommand::StopAll => return playback.stop_all(),
+                WorkerCommand::StopClip { id, reply } => {
+                    return playback.send(PlaybackCommand::StopClip { id, reply });
+                }
+                WorkerCommand::Reset {
+                    clear_replay,
+                    reply,
+                } => {
+                    // Backend stop precedes Reset. Establish the playback barrier
+                    // before capture drain/finalization can block on its own I/O.
+                    playback.stop_all()?;
+                    return self.enqueue_capture(WorkerCommand::Reset {
+                        clear_replay,
+                        reply,
+                    });
+                }
+                command => return self.enqueue_capture(command),
+            }
+        }
+        self.enqueue_capture(command)
+    }
+    fn enqueue_capture(&self, command: WorkerCommand) -> Result<()> {
         self.tx
             .try_send(command)
             .map_err(|e| anyhow!("audio worker busy or disconnected: {e}"))
+    }
+    #[cfg(test)]
+    fn stall_capture(&self) -> Result<CaptureStallGuard> {
+        let (entered, acknowledgement) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let blocked = Arc::new(AtomicBool::new(false));
+        let guard = CaptureStallGuard {
+            release,
+            blocked: blocked.clone(),
+        };
+        self.enqueue_capture(WorkerCommand::BlockCapture {
+            entered,
+            release: wait,
+            blocked,
+        })?;
+        acknowledgement
+            .recv_timeout(Duration::from_secs(1))
+            .context("capture stall fixture did not enter")?;
+        Ok(guard)
     }
     fn stop_clip(&self, id: String) -> Result<()> {
         let (reply, acknowledgement) = mpsc::channel();
@@ -503,6 +791,8 @@ impl Worker {
 }
 impl Drop for Worker {
     fn drop(&mut self) {
+        // Stop playback first; it never waits behind capture disk I/O.
+        drop(self.playback.take());
         self.stop.store(true, Ordering::Release);
         if let Some(j) = self.join.take() {
             let _ = j.join();
@@ -514,6 +804,7 @@ struct Engine {
     paths: Paths,
     library: Library,
     preset_image_revision: u64,
+    preset_revision: u64,
     session: Session,
     shared: Arc<AudioShared>,
     worker: Worker,
@@ -527,6 +818,8 @@ struct Engine {
     retry_delay: Duration,
     next_device_check: Instant,
     last_audio_error: Option<String>,
+    virtual_microphone: VirtualMicrophoneStatus,
+    next_virtual_probe: Instant,
 }
 impl Engine {
     fn new(paths: Paths) -> Result<Self> {
@@ -556,6 +849,7 @@ impl Engine {
             paths,
             library,
             preset_image_revision: 0,
+            preset_revision: 0,
             session,
             shared,
             worker,
@@ -569,6 +863,8 @@ impl Engine {
             retry_delay: Duration::from_secs(2),
             next_device_check: Instant::now(),
             last_audio_error: None,
+            virtual_microphone: VirtualMicrophoneStatus::default(),
+            next_virtual_probe: Instant::now(),
         })
     }
     fn commit_session(&mut self, candidate: Session) -> Result<()> {
@@ -587,7 +883,40 @@ impl Engine {
         self.audio.take();
         self.resolved_config = None;
         self.shared.metrics.active.store(false, Ordering::Release);
+        self.shared
+            .metrics
+            .virtual_microphone_active
+            .store(false, Ordering::Release);
         self.worker.reset(clear_replay)
+    }
+    fn virtual_microphone_status(&mut self) -> VirtualMicrophoneStatus {
+        let now = Instant::now();
+        if now >= self.next_virtual_probe {
+            self.virtual_microphone = crate::audio::virtual_microphone_status_for(
+                self.session.config.virtual_output_device.as_deref(),
+            )
+            .unwrap_or_else(|error| VirtualMicrophoneStatus {
+                diagnostic: Some(format!("Virtual microphone discovery failed: {error:#}")),
+                ..Default::default()
+            });
+            self.next_virtual_probe = now + Duration::from_secs(2);
+        }
+        let mut status = self.virtual_microphone.clone();
+        status.active = status.available
+            && self.shared.metrics.active.load(Ordering::Acquire)
+            && (crate::audio::VIRTUAL_MICROPHONE
+                || (status.render_device.as_deref().is_some()
+                    && self
+                        .resolved_config
+                        .as_ref()
+                        .and_then(|config| config.virtual_output_device.as_deref())
+                        == status.render_device.as_deref()
+                    && self
+                        .shared
+                        .metrics
+                        .virtual_microphone_active
+                        .load(Ordering::Acquire)));
+        status
     }
     fn stop_desktop(&mut self, clear_replay: bool) -> Result<()> {
         self.desktop.take();
@@ -621,22 +950,37 @@ impl Engine {
             return;
         }
         let now = Instant::now();
-        // Only automatic routes follow desktop default changes. Fixed names never
-        // fall back to another microphone. Discovery runs outside process callbacks.
+        // Automatic physical routes follow desktop defaults. An explicit virtual
+        // route must also remain a validated installed pair, even with fixed physical IDs.
+        // Discovery runs outside process callbacks; fixed IDs never fall back.
         if self.audio.is_some()
             && (self.session.config.input_device.is_none()
-                || self.session.config.output_device.is_none())
+                || self.session.config.output_device.is_none()
+                || self.session.config.virtual_output_device.is_some())
             && now >= self.next_device_check
         {
             self.next_device_check = now + Duration::from_secs(2);
-            if let Ok(resolved) = crate::audio::resolve_config(&self.session.config)
-                && self.resolved_config.as_ref() != Some(&resolved)
-            {
-                if let Err(error) = self.stop_audio(false) {
-                    self.last_audio_error =
-                        Some(format!("Não foi possível finalizar a gravação: {error:#}"));
+            match crate::audio::resolve_config(&self.session.config) {
+                Ok(resolved) if self.resolved_config.as_ref() != Some(&resolved) => {
+                    if let Err(error) = self.stop_audio(false) {
+                        self.last_audio_error =
+                            Some(format!("Não foi possível finalizar a gravação: {error:#}"));
+                    }
+                    self.next_audio_retry = Instant::now();
                 }
-                self.next_audio_retry = Instant::now();
+                Err(error) if self.session.config.virtual_output_device.is_some() => {
+                    // A missing/ambiguous pair must stop transmission rather than
+                    // leave an old render stream active while discovery reports failure.
+                    let error = match self.stop_audio(false) {
+                        Ok(()) => error,
+                        Err(finalization) => error.context(format!(
+                            "Falha ao finalizar a gravação após perder a rota virtual: {finalization:#}"
+                        )),
+                    };
+                    self.next_virtual_probe = Instant::now();
+                    self.schedule_retry(&error);
+                }
+                _ => {}
             }
         }
         if self.audio.is_none() && Instant::now() >= self.next_audio_retry {
@@ -671,11 +1015,58 @@ impl Engine {
             self.check_audio_health();
         }
         match command {
-            Command::Status => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"backend":crate::audio::BACKEND_NAME,"audio_running":self.shared.metrics.active.load(Ordering::Relaxed),"config":self.session.config,"resolved_config":self.resolved_config,"audio_requested":self.session.audio_enabled,"audio_connecting":self.session.audio_enabled && self.audio.is_none(),"settings":self.session.settings,"selected_preset":self.session.selected_preset,"bypass":self.shared.bypass.load(Ordering::Relaxed),"muted":self.shared.muted.load(Ordering::Relaxed),"monitor":self.shared.monitor_enabled.load(Ordering::Relaxed),"monitor_gain":self.session.monitor_gain,"soundboard_gain":self.session.soundboard_gain,"metrics":self.shared.metrics.snapshot(),"playing":self.worker.playing.load(Ordering::Relaxed),"recording":self.worker.recording.load(Ordering::Relaxed),"recording_source":match self.worker.recording_source.load(Ordering::Acquire) {1=>Some(RecordingSource::ProcessedVoice),2=>Some(RecordingSource::Desktop),_=>None},"replay_seconds":self.worker.replay_seconds(RecordingSource::ProcessedVoice),"desktop":{"active":self.desktop_shared.active.load(Ordering::Acquire),"output_device":self.desktop_target,"error":self.desktop_error,"replay_seconds":self.worker.replay_seconds(RecordingSource::Desktop),"metrics":{"frames":self.desktop_shared.frames.load(Ordering::Relaxed),"overruns":self.desktop_shared.overruns.load(Ordering::Relaxed),"non_finite_samples":self.desktop_shared.non_finite_samples.load(Ordering::Relaxed),"peak":f32::from_bits(self.desktop_shared.peak.load(Ordering::Relaxed))}},"recording_error":self.worker.error.lock().ok().and_then(|v|v.clone()),"last_audio_error":self.last_audio_error,"data_dir":self.paths.data,"preset_image_revision":self.preset_image_revision,"capabilities":{"dsp":true,"soundboard":true,"processed_recording":true,"replay":true,"pitch":true,"formant":true,"chorus":true,"noise_reduction":true,"reorder_effects":true,"preset_images":true,"voice_blend":true,"effect_intensity":true,"neural_voice":false,"desktop_capture":crate::audio::DESKTOP_CAPTURE,"virtual_microphone":crate::audio::VIRTUAL_MICROPHONE,"global_shortcuts":false}}),
-            ),
+            Command::Status => {
+                let virtual_microphone = self.virtual_microphone_status();
+                let capabilities = json!({
+                    "dsp": true, "soundboard": true, "processed_recording": true,
+                    "replay": true, "pitch": true, "formant": true, "chorus": true,
+                    "noise_reduction": true, "reorder_effects": true, "preset_images": true,
+                    "voice_blend": true, "effect_intensity": true, "vocoder": true,
+                    "granular": true, "granular_natural_experimental": true,
+                    "local_preset_collections": true, "neural_voice": false,
+                    "desktop_capture": crate::audio::DESKTOP_CAPTURE,
+                    "virtual_microphone": virtual_microphone.available, "global_shortcuts": false
+                });
+                let desktop = json!({
+                    "active": self.desktop_shared.active.load(Ordering::Acquire),
+                    "output_device": self.desktop_target, "error": self.desktop_error,
+                    "replay_seconds": self.worker.replay_seconds(RecordingSource::Desktop),
+                    "metrics": {
+                        "frames": self.desktop_shared.frames.load(Ordering::Relaxed),
+                        "overruns": self.desktop_shared.overruns.load(Ordering::Relaxed),
+                        "queue_overruns": self.desktop_shared.queue_overruns.load(Ordering::Relaxed),
+                        "backend_xruns": self.desktop_shared.backend_xruns.load(Ordering::Relaxed),
+                        "non_finite_samples": self.desktop_shared.non_finite_samples.load(Ordering::Relaxed),
+                        "peak": f32::from_bits(self.desktop_shared.peak.load(Ordering::Relaxed))
+                    }
+                });
+                Ok(json!({
+                    "version": env!("CARGO_PKG_VERSION"), "backend": crate::audio::BACKEND_NAME,
+                    "audio_running": self.shared.metrics.active.load(Ordering::Relaxed),
+                    "config": self.session.config, "resolved_config": self.resolved_config,
+                    "audio_requested": self.session.audio_enabled,
+                    "audio_connecting": self.session.audio_enabled && self.audio.is_none(),
+                    "settings": self.session.settings, "selected_preset": self.session.selected_preset,
+                    "bypass": self.shared.bypass.load(Ordering::Relaxed),
+                    "muted": self.shared.muted.load(Ordering::Relaxed),
+                    "monitor": self.shared.monitor_enabled.load(Ordering::Relaxed),
+                    "monitor_gain": self.session.monitor_gain, "soundboard_gain": self.session.soundboard_gain,
+                    "metrics": self.shared.metrics.snapshot(), "playing": self.worker.playing.load(Ordering::Relaxed),
+                    "recording": self.worker.recording.load(Ordering::Relaxed),
+                    "recording_source": match self.worker.recording_source.load(Ordering::Acquire) {
+                        1 => Some(RecordingSource::ProcessedVoice), 2 => Some(RecordingSource::Desktop), _ => None
+                    },
+                    "replay_seconds": self.worker.replay_seconds(RecordingSource::ProcessedVoice),
+                    "desktop": desktop, "recording_error": self.worker.error.lock().ok().and_then(|v|v.clone()),
+                    "last_audio_error": self.last_audio_error, "data_dir": self.paths.data,
+                    "preset_image_revision": self.preset_image_revision,
+                    "preset_revision": self.preset_revision,
+                    "virtual_microphone": virtual_microphone, "capabilities": capabilities
+                }))
+            }
             Command::Devices => Ok(serde_json::to_value(crate::audio::list_devices()?)?),
             Command::Start { config } => {
+                self.next_virtual_probe = Instant::now();
                 config.validate().map_err(anyhow::Error::msg)?;
                 let resolved = crate::audio::resolve_config(&config);
                 if resolved.is_err()
@@ -776,6 +1167,11 @@ impl Engine {
                 Ok(json!({"updated":true}))
             }
             Command::Presets => Ok(serde_json::to_value(self.library.presets()?)?),
+            Command::SetPresetOriginal { id, original } => {
+                let preset = self.library.set_preset_original(&id, original)?;
+                self.preset_revision = self.preset_revision.wrapping_add(1);
+                Ok(serde_json::to_value(preset)?)
+            }
             Command::PresetImage { id } => {
                 Ok(serde_json::to_value(self.library.preset_image(&id)?)?)
             }
@@ -806,12 +1202,26 @@ impl Engine {
             }
             Command::SavePreset { id, name, settings } => {
                 settings.validate().map_err(anyhow::Error::msg)?;
-                let preset = Preset { id, name, settings };
+                let preset = Preset {
+                    id,
+                    name,
+                    settings,
+                    original: false,
+                };
                 self.library.save_preset(&preset)?;
-                Ok(serde_json::to_value(preset)?)
+                self.preset_revision = self.preset_revision.wrapping_add(1);
+                let saved = self
+                    .library
+                    .presets()?
+                    .into_iter()
+                    .find(|p| p.id == preset.id)
+                    .context("saved preset not found")?;
+                Ok(serde_json::to_value(saved)?)
             }
             Command::ImportPreset { path } => {
-                Ok(serde_json::to_value(self.library.import_preset(&path)?)?)
+                let preset = self.library.import_preset(&path)?;
+                self.preset_revision = self.preset_revision.wrapping_add(1);
+                Ok(serde_json::to_value(preset)?)
             }
             Command::ExportPreset { id, path } => {
                 self.library.export_preset(&id, &path)?;
@@ -1035,6 +1445,169 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
     static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn playback_reserve_covers_real_batches_and_keeps_stop_tail_bounded() -> Result<()> {
+        let queue = SampleQueue::new(SAMPLE_RATE as usize / 2);
+        let mut mixer = Mixer::new();
+        mixer.play("loop", Arc::new(vec![0.25; 480]), 1.0, true, false)?;
+        let target = playback_queue_target(1024);
+        let mut block = [0.0; MIX_BLOCK_FRAMES];
+        fill_playback_queue(&mut mixer, &queue, target, &mut block);
+        // The old 960-frame reserve could not even supply one 1024-frame read.
+        let mut callback = [0.0; 1024];
+        for _ in 0..2 {
+            assert_eq!(queue.pop(&mut callback), callback.len());
+            assert!(callback.iter().all(|sample| *sample == 0.25));
+        }
+        fill_playback_queue(&mut mixer, &queue, target, &mut block);
+        mixer.stop_all();
+        let mut tail = vec![0.0; target];
+        assert_eq!(queue.pop(&mut tail), target);
+        fill_playback_queue(&mut mixer, &queue, target, &mut block);
+        assert_eq!(queue.pop(&mut tail), target);
+        assert!(tail.iter().all(|sample| *sample == 0.0));
+        for callback_frames in [0, 240, 480, 1024, 1536, 8192, u64::MAX] {
+            let target = playback_queue_target(callback_frames);
+            assert!((1440..=4800).contains(&target));
+            queue.discard();
+            queue.push(&[0.0; 239]);
+            fill_playback_queue(&mut mixer, &queue, target, &mut block);
+            assert_eq!(
+                queue.len(),
+                target,
+                "no extra block beyond the reserve budget"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn playback_activity_is_published_at_command_boundaries_and_natural_end() -> Result<()> {
+        let shared = Arc::new(AudioShared::default());
+        let desktop = Arc::new(DesktopShared::default());
+        shared.metrics.active.store(true, Ordering::Release);
+        let worker = Worker::spawn(shared.clone(), desktop);
+        let play = |id: &str, preview: bool, looped: bool| -> Result<()> {
+            let (reply, received) = mpsc::channel();
+            worker.send(WorkerCommand::Play {
+                id: id.into(),
+                pcm: Arc::new(vec![0.1; 480]),
+                gain: 1.0,
+                looped,
+                overlap: false,
+                preview,
+                reply,
+            })?;
+            received.recv_timeout(Duration::from_secs(3))??;
+            Ok(())
+        };
+        play("board", false, true)?;
+        play("preview", true, true)?;
+        assert!(shared.soundboard_active.load(Ordering::Acquire));
+        assert!(shared.preview_active.load(Ordering::Acquire));
+        let (reply, received) = mpsc::channel();
+        worker.send(WorkerCommand::StopClip {
+            id: "board".into(),
+            reply,
+        })?;
+        received.recv_timeout(Duration::from_secs(3))??;
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(shared.preview_active.load(Ordering::Acquire));
+        worker.send(WorkerCommand::StopAll)?;
+        worker.reset_desktop(false)?; // A command barrier, without waiting for a worker tick.
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(!shared.preview_active.load(Ordering::Acquire));
+        shared.soundboard.discard(); // This test is the sole prepared-queue consumer.
+        play("finite", false, false)?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut consumed = [0.0; 480];
+        while shared.soundboard_active.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < deadline,
+                "finite clip remained marked active"
+            );
+            shared.soundboard.pop(&mut consumed);
+            thread::sleep(Duration::from_millis(1));
+        }
+        shared.metrics.active.store(false, Ordering::Release);
+        worker.reset(true)?;
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(!shared.preview_active.load(Ordering::Acquire));
+        Ok(())
+    }
+    #[test]
+    fn separate_playback_refills_and_acknowledges_controls_while_capture_is_blocked() -> Result<()>
+    {
+        let shared = Arc::new(AudioShared::default());
+        let desktop = Arc::new(DesktopShared::default());
+        shared.metrics.active.store(true, Ordering::Release);
+        shared
+            .metrics
+            .render_callback_frames_max
+            .store(1056, Ordering::Relaxed);
+        // Exercise the Windows ownership path on every CI host, without a device.
+        let worker = Worker::spawn_with_playback_thread(shared.clone(), desktop, true);
+        // Declared after worker: unwinding releases capture before Worker::drop joins it.
+        let stall = worker.stall_capture()?;
+        for (id, value, preview) in [("board", 0.25, false), ("preview", 0.125, true)] {
+            let (reply, acknowledgement) = mpsc::channel();
+            worker.send(WorkerCommand::Play {
+                id: id.into(),
+                pcm: Arc::new(vec![value; 480]),
+                gain: 1.0,
+                looped: true,
+                overlap: false,
+                preview,
+                reply,
+            })?;
+            acknowledgement
+                .recv_timeout(Duration::from_secs(1))
+                .context("playback command waited behind blocked capture")??;
+        }
+        assert!(stall.blocked.load(Ordering::Acquire));
+        assert_eq!(worker.playing.load(Ordering::Relaxed), 2);
+        // This test is the sole FIFO consumer. Remove the pre-Play silence once;
+        // after initial priming no batch may wait for the producer to catch up.
+        shared.soundboard.discard();
+        shared.preview.discard();
+        let target = playback_queue_target(1056);
+        let ready_deadline = Instant::now() + Duration::from_secs(1);
+        while shared.soundboard.len() < target || shared.preview.len() < target {
+            assert!(Instant::now() < ready_deadline, "playback did not prime");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let mut board = [0.0; 1056];
+        let mut preview = [0.0; 1056];
+        let mut consumed = 0;
+        let mut batch = 0;
+        while consumed < 7200 {
+            let frames = [480, 1056][batch % 2].min(7200 - consumed);
+            assert!(stall.blocked.load(Ordering::Acquire));
+            assert_eq!(shared.soundboard.pop(&mut board[..frames]), frames);
+            assert_eq!(shared.preview.pop(&mut preview[..frames]), frames);
+            assert!(board[..frames].iter().all(|sample| *sample == 0.25));
+            assert!(preview[..frames].iter().all(|sample| *sample == 0.125));
+            consumed += frames;
+            batch += 1;
+            thread::sleep(Duration::from_secs_f64(frames as f64 / SAMPLE_RATE as f64));
+        }
+        // More than three 44-ms reserves were consumed while capture stayed blocked.
+        assert!(stall.blocked.load(Ordering::Acquire));
+        let stop_began = Instant::now();
+        worker.stop_clip("board".into())?;
+        assert!(stop_began.elapsed() < Duration::from_secs(1));
+        assert!(!shared.soundboard_active.load(Ordering::Acquire));
+        assert!(shared.preview_active.load(Ordering::Acquire));
+        worker.send(WorkerCommand::StopAll)?;
+        assert!(!shared.preview_active.load(Ordering::Acquire));
+        assert_eq!(worker.playing.load(Ordering::Relaxed), 0);
+        assert!(stall.blocked.load(Ordering::Acquire));
+        drop(stall);
+        shared.metrics.active.store(false, Ordering::Release);
+        worker.reset(true)?;
+        Ok(())
+    }
     fn test_paths() -> Paths {
         let p = std::env::temp_dir().join(format!(
             "voice-engine-test-{}-{}",
@@ -1180,9 +1753,15 @@ mod tests {
         );
         // Leave the existing bounded mixed tail intact, then consume it as the
         // synthetic callback would. Newly produced audio contains the other ID.
-        let mut tail = [0.0; 960];
-        assert_eq!(engine.shared.soundboard.pop(&mut tail), 960);
-        assert_eq!(engine.shared.preview.pop(&mut tail), 960);
+        let maximum_tail = if cfg!(windows) { 4800 } else { 960 };
+        let mut tail = vec![0.0; maximum_tail];
+        for queue in [&engine.shared.soundboard, &engine.shared.preview] {
+            // Snapshot once: the producer may already refill with the remaining
+            // ID while this synthetic callback drains the prepared mixed tail.
+            let prepared = queue.len();
+            assert!((1..=maximum_tail).contains(&prepared));
+            assert_eq!(queue.pop(&mut tail[..prepared]), prepared);
+        }
         let deadline = Instant::now() + Duration::from_secs(3);
         while engine.shared.soundboard.len() < 480 || engine.shared.preview.len() < 480 {
             assert!(
@@ -1377,8 +1956,82 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn original_collection_commands_preserve_session_and_definition() -> Result<()> {
+        let paths = test_paths();
+        let mut engine = Engine::new(paths.clone())?;
+        let stop = AtomicBool::new(false);
+        let id = "custom.curated";
+        let settings = DspSettings {
+            vocoder_mix: 0.35,
+            ..Default::default()
+        };
+        let saved = engine.execute(
+            Command::SavePreset {
+                id: id.into(),
+                name: "Curated voice".into(),
+                settings,
+            },
+            &stop,
+        )?;
+        assert_eq!(saved["original"], false);
+        let baseline = serde_json::to_value(&engine.session)?;
+        let promoted = engine.execute(
+            Command::SetPresetOriginal {
+                id: id.into(),
+                original: true,
+            },
+            &stop,
+        )?;
+        assert_eq!(promoted["original"], true);
+        assert_eq!(promoted["id"], id);
+        assert_eq!(promoted["settings"], serde_json::to_value(settings)?);
+        assert_eq!(baseline, serde_json::to_value(&engine.session)?);
+        let status = engine.execute(Command::Status, &stop)?;
+        assert_eq!(status["preset_revision"], 2);
+        assert_eq!(status["capabilities"]["local_preset_collections"], true);
+        assert_eq!(status["capabilities"]["vocoder"], true);
+        assert_eq!(status["capabilities"]["granular"], true);
+        assert_eq!(
+            status["capabilities"]["granular_natural_experimental"],
+            true
+        );
+        assert!(
+            engine
+                .execute(
+                    Command::SetPresetOriginal {
+                        id: "builtin.clean".into(),
+                        original: false,
+                    },
+                    &stop
+                )
+                .is_err()
+        );
+        assert_eq!(
+            engine.execute(Command::Status, &stop)?["preset_revision"],
+            2
+        );
+        let updated = engine.execute(
+            Command::SavePreset {
+                id: id.into(),
+                name: "Updated voice".into(),
+                settings,
+            },
+            &stop,
+        )?;
+        assert_eq!(updated["original"], true);
+        drop(engine);
+        let mut reopened = Engine::new(paths.clone())?;
+        let listed: Vec<Preset> =
+            serde_json::from_value(reopened.execute(Command::Presets, &stop)?)?;
+        assert!(listed.iter().find(|p| p.id == id).unwrap().is_original());
+        drop(reopened);
+        fs::remove_dir_all(paths.data.parent().context("test root")?)?;
+        Ok(())
+    }
+
+    #[test]
     fn voice_blend_and_effect_intensity_roundtrip_and_restore_the_selected_voice() -> Result<()> {
-        use voice_core::{EffectKind, VoiceBlend, VoiceLayer};
+        use voice_core::{EffectKind, GranularMode, VoiceBlend, VoiceLayer};
 
         let paths = test_paths();
         let mut engine = Engine::new(paths.clone())?;
@@ -1386,12 +2039,24 @@ mod tests {
         let mut secondary = DspSettings {
             pitch_semitones: 2.0,
             robot_mix: 0.3,
+            granular_mode: GranularMode::Natural,
+            granular_mix: 0.25,
+            granular_pitch_semitones: -2.0,
+            granular_grain_ms: 24.0,
+            granular_clarity: 0.9,
             ..Default::default()
         };
         secondary.effect_mix[EffectKind::Gate as usize] = 0.65;
+        secondary.effect_mix[EffectKind::Granular as usize] = 0.8;
         let mut settings = DspSettings {
             gain_db: -2.0,
             pitch_semitones: -3.5,
+            granular_mix: 0.4,
+            granular_pitch_semitones: 7.0,
+            granular_grain_ms: 48.0,
+            granular_scatter: 0.3,
+            granular_feedback: 0.2,
+            granular_clarity: 0.65,
             blend: Some(VoiceBlend {
                 secondary: VoiceLayer::from(secondary),
                 primary_mix: 0.6,
@@ -1408,7 +2073,13 @@ mod tests {
             serde_json::from_value::<DspSettings>(status["settings"].clone())?,
             settings
         );
-        for capability in ["preset_images", "voice_blend", "effect_intensity"] {
+        for capability in [
+            "preset_images",
+            "voice_blend",
+            "effect_intensity",
+            "granular",
+            "granular_natural_experimental",
+        ] {
             assert_eq!(status["capabilities"][capability], true);
         }
         let id = "custom.blended";
@@ -1448,6 +2119,25 @@ mod tests {
         let persisted = fs::read(paths.data.join("session.json"))?;
         let mut invalid = settings;
         invalid.effect_mix[0] = 1.1;
+        assert!(
+            engine
+                .execute(Command::Configure { settings: invalid }, &stop)
+                .is_err()
+        );
+        let mut invalid = settings;
+        invalid.granular_mix = 1.1;
+        assert!(
+            engine
+                .execute(Command::Configure { settings: invalid }, &stop)
+                .is_err()
+        );
+        let mut invalid = settings;
+        invalid
+            .blend
+            .as_mut()
+            .expect("blend fixture")
+            .secondary
+            .granular_feedback = f32::NAN;
         assert!(
             engine
                 .execute(Command::Configure { settings: invalid }, &stop)
@@ -1598,6 +2288,105 @@ mod tests {
         assert!(saved.output_device.is_none());
     }
     #[test]
+    fn virtual_route_preferences_pin_the_explicit_id_and_preserve_legacy_defaults() -> Result<()> {
+        let legacy: Session = serde_json::from_value(json!({
+            "config":{"input_device":null,"output_device":"headphones","sample_rate":48000,"quantum":256}
+        }))?;
+        assert!(legacy.config.virtual_output_device.is_none());
+        let config = AudioConfig {
+            output_device: Some("headphones".into()),
+            virtual_output_device: Some("owned-render-id".into()),
+            ..Default::default()
+        };
+        let resolved = AudioConfig {
+            input_device: Some("physical-microphone".into()),
+            output_device: Some("headphones".into()),
+            virtual_output_device: Some("another-render-id".into()),
+            ..Default::default()
+        };
+        let saved = stable_audio_preferences(&config, &resolved);
+        assert!(saved.input_device.is_none());
+        assert_eq!(saved.output_device.as_deref(), Some("headphones"));
+        assert_eq!(
+            saved.virtual_output_device.as_deref(),
+            Some("owned-render-id")
+        );
+        let automatic = stable_audio_preferences(&legacy.config, &resolved);
+        assert!(automatic.virtual_output_device.is_none());
+        Ok(())
+    }
+    #[test]
+    fn virtual_microphone_status_distinguishes_discovery_from_transmission() -> Result<()> {
+        let paths = test_paths();
+        let mut engine = Engine::new(paths.clone())?;
+        // Inject discovery results so this contract test never opens a device or relies
+        // on the test machine having the kernel driver installed.
+        engine.virtual_microphone = VirtualMicrophoneStatus {
+            available: true,
+            render_device: Some("owned-render-id".into()),
+            capture_device: Some("owned-capture-id".into()),
+            targets: vec![voice_core::VirtualMicrophoneTarget {
+                provider: "vb_cable".into(),
+                render_device: "external-render-id".into(),
+                capture_device: "external-capture-id".into(),
+                render_description: "CABLE Input".into(),
+                capture_description: "CABLE Output".into(),
+            }],
+            ..Default::default()
+        };
+        engine.next_virtual_probe = Instant::now() + Duration::from_secs(60);
+        let status = engine.execute(Command::Status, &AtomicBool::new(false))?;
+        assert_eq!(status["capabilities"]["virtual_microphone"], true);
+        assert_eq!(status["virtual_microphone"]["available"], true);
+        assert_eq!(status["virtual_microphone"]["active"], false);
+        assert_eq!(
+            status["virtual_microphone"]["targets"][0]["provider"],
+            "vb_cable"
+        );
+        assert_eq!(
+            status["virtual_microphone"]["targets"][0]["render_device"],
+            "external-render-id"
+        );
+        assert_eq!(
+            status["virtual_microphone"]["capture_device"],
+            "owned-capture-id"
+        );
+        engine.shared.metrics.active.store(true, Ordering::Release);
+        engine
+            .shared
+            .metrics
+            .virtual_microphone_active
+            .store(true, Ordering::Release);
+        engine.resolved_config = Some(AudioConfig {
+            virtual_output_device: Some("owned-render-id".into()),
+            ..Default::default()
+        });
+        assert!(engine.virtual_microphone_status().active);
+        engine.stop_audio(false)?;
+        assert!(!engine.virtual_microphone_status().active);
+        assert!(
+            !engine
+                .shared
+                .metrics
+                .virtual_microphone_active
+                .load(Ordering::Acquire)
+        );
+        engine.virtual_microphone = VirtualMicrophoneStatus {
+            diagnostic: Some("driver unavailable".into()),
+            ..Default::default()
+        };
+        let status = engine.execute(Command::Status, &AtomicBool::new(false))?;
+        assert_eq!(status["capabilities"]["virtual_microphone"], false);
+        assert_eq!(status["virtual_microphone"]["active"], false);
+        assert_eq!(
+            status["virtual_microphone"]["diagnostic"],
+            "driver unavailable"
+        );
+        drop(engine);
+        fs::remove_dir_all(paths.data.parent().unwrap())?;
+        Ok(())
+    }
+    #[test]
     fn stop_disables_capture_and_retries_even_when_session_cannot_be_saved() -> Result<()> {
         let paths = test_paths();
         let mut engine = Engine::new(paths.clone())?;
@@ -1628,6 +2417,7 @@ mod tests {
         candidate.audio_enabled = true;
         candidate.config.input_device = Some("saved-usb-microphone".into());
         candidate.config.output_device = Some("saved-headphones".into());
+        candidate.config.virtual_output_device = Some("saved-owned-render-id".into());
         candidate.monitor_gain = 0.35;
         engine.commit_session(candidate)?;
         drop(engine);
@@ -1652,6 +2442,10 @@ mod tests {
         assert_eq!(
             engine.session.config.output_device.as_deref(),
             Some("saved-headphones")
+        );
+        assert_eq!(
+            engine.session.config.virtual_output_device.as_deref(),
+            Some("saved-owned-render-id")
         );
         drop(engine);
         fs::remove_dir_all(paths.data.parent().unwrap())?;

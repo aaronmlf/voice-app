@@ -26,12 +26,33 @@ RATE = 48_000
 BIN_FRAMES = 48  # 1 ms RMS bins; reported delays have this quantization.
 MAX_CAPTURE_SECONDS = 25
 MAX_DELAY_MS = 400.0
+RMS_WINDOW_BINS = 10  # Same causal 10 ms energy window on both acquisition channels.
 COUNTERS = ("input_underruns", "input_overruns", "monitor_overruns",
             "recording_overruns", "non_finite_samples")
 
 
 class Inconclusive(RuntimeError):
     """The probe does not support an unambiguous measurement."""
+
+
+def smooth_energy(envelope, window=RMS_WINDOW_BINS):
+    """Retain 1 ms steps while avoiding false gaps at carrier waveform zero crossings.
+
+    A 1 ms RMS bin can be shorter than one carrier cycle. Applying the same bounded,
+    causal energy window to both channels supports low fundamentals without treating
+    their zero crossings as separate syllables. This changes onset estimates and is
+    explicitly recorded in each new measurement; historical reports are untouched.
+    """
+    if not 1 <= window <= 20 or not all(math.isfinite(v) and v >= 0 for v in envelope):
+        raise Inconclusive("invalid RMS envelope or smoothing window")
+    total = 0.0
+    output = []
+    for index, value in enumerate(envelope):
+        total += value * value
+        if index >= window:
+            total -= envelope[index - window] ** 2
+        output.append(math.sqrt(max(0.0, total) / min(index + 1, window)))
+    return output
 
 
 def percentile(values, fraction):
@@ -158,7 +179,7 @@ def make_probe(events):
 
 
 def profile_settings(profile):
-    # Identical to the stability profiles; denoise is tested separately because
+    # Base/pitch/blend match stability profiles; denoise is tested separately because
     # suppression of generated non-speech probes can invalidate onset detection.
     settings = {"gain_db": 0.0, "gate_db": -70.0, "highpass_hz": 80.0,
                 "lowpass_hz": 8000.0, "compressor": True}
@@ -169,6 +190,17 @@ def profile_settings(profile):
         settings["blend"] = {"primary_mix": 0.65, "secondary_mix": 0.35,
                              "secondary": {"pitch_semitones": 3.0, "formant_semitones": 1.0,
                                            "robot_mix": 0.35, "robot_hz": 110.0}}
+    if profile == "vocoder":
+        settings.update(vocoder_mix=0.8, vocoder_carrier_hz=110.0,
+                        vocoder_unvoiced=0.65, vocoder_release_ms=45.0)
+    if profile in ("granular-stylized", "granular-natural"):
+        natural = profile == "granular-natural"
+        settings.update(granular_mode="natural" if natural else "stylized",
+                        granular_mix=1.0 if natural else 0.65,
+                        granular_pitch_semitones=3.0 if natural else 7.0,
+                        granular_grain_ms=32.0, granular_clarity=0.85 if natural else 0.75,
+                        granular_scatter=0.0 if natural else 0.25,
+                        granular_feedback=0.0 if natural else 0.15)
     return settings
 
 
@@ -240,11 +272,11 @@ def measure_profile(args, profile):
         settings = final["settings"]
         algorithmic_frames = final["metrics"]["algorithmic_latency_frames"]
     left, right, metrics = pcm_envelopes(capture_path)
-    reference, processed = detect_onsets(left), detect_onsets(right)
+    reference, processed = detect_onsets(smooth_energy(left)), detect_onsets(smooth_energy(right))
     observations = pair_onsets(reference["onsets_ms"], processed["onsets_ms"], args.events)
     delays = [event["delay_ms"] for event in observations]
     p95 = percentile(delays, 0.95)
-    budget = 40.0 if profile == "basic" else 80.0
+    budget = 40.0 if profile in ("basic", "vocoder") else 80.0
     return {"profile": profile, "status": "measured", "settings": settings,
             "events_requested": args.events, "events_valid": len(observations),
             "observations": observations,
@@ -274,12 +306,14 @@ def execute(args):
                "status": "running", "started_at": datetime.now(timezone.utc).isoformat(),
                "sample_rate_hz": RATE, "quantum_frames": 256,
                "method": {"acquisition": "one stereo pw-record stream: FL pre-DSP reference, FR virtual microphone",
-                          "detector": "1 ms RMS bins; 20% of channel peak onset, 8% quiet, 3 ms confirmation, 30 ms rearm",
+                          "detector": "10 ms causal RMS energy window at 1 ms steps on both channels; 20% of channel peak onset, 8% quiet, 3 ms confirmation, 30 ms rearm",
+                          "rms_window_ms": RMS_WINDOW_BINS,
                           "delay_resolution_ms": 1.0, "pairing_window_ms": MAX_DELAY_MS,
                           "percentile": "linear interpolation between sorted observations (type 7)",
                           "probe": "0.18-amplitude harmonic bursts, 180 ms long, nonuniform intervals, generated locally"},
                "limitations": ["Software graph measurement only; excludes physical microphone, ADC, headset and DAC.",
                                "RMS onset delay depends on the explicit threshold and DSP attack/smearing.",
+                               "Granular onset can come from aligned dry/protected transients, not exclusively from the pitch-shifted component.",
                                "No Discord, OBS, Bluetooth or physical end-to-end acceptance is implied.",
                                "Noise reduction is disabled in these probes; speech performance requires a separate test.",
                                "Fewer than 20 observations are a smoke measurement, not a stable p95 estimate."],
@@ -287,7 +321,8 @@ def execute(args):
     path = args.output / "summary.json"
     atomic_json(path, summary)
     try:
-        for profile in (("basic", "pitch", "blend") if args.profile == "all" else (args.profile,)):
+        for profile in (("basic", "pitch", "blend", "vocoder", "granular-stylized", "granular-natural")
+                        if args.profile == "all" else (args.profile,)):
             summary["profiles"].append(measure_profile(args, profile))
             atomic_json(path, summary)
         summary["status"] = "measured"
@@ -317,7 +352,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", type=Path, default=ROOT / "target/release/voice-cli")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--profile", choices=("basic", "pitch", "blend", "all"), default="all")
+    parser.add_argument("--profile", choices=("basic", "pitch", "blend", "vocoder",
+                                              "granular-stylized", "granular-natural", "all"), default="all")
     parser.add_argument("--events", type=event_count, default=24)
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda _signal, _frame: (_ for _ in ()).throw(InterruptedError("SIGTERM")))

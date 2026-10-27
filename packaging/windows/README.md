@@ -6,10 +6,34 @@ commands. Windows 10/11 x64 are the intended desktop targets; a GitHub-hosted
 Windows Server 2022 build and offline tests do not establish physical desktop or
 audio compatibility.
 
-This preview has no virtual microphone driver. It cannot be selected as a voice
-changing microphone in Discord, OBS or games. The experimental WASAPI adapter
-can process microphone audio for local monitoring/recording and capture an
-explicitly selected desktop output, subject to later physical validation.
+This application ZIP does not bundle or install a virtual microphone driver.
+The latest experimental source adds an explicit route for processed voice and
+soundboard through an externally installed VB-CABLE. Obtain the base Windows x64
+cable from the [official VB-Audio site](https://vb-audio.com/Cable/) and follow the
+vendor's installation instructions and license. Its installer and driver are not
+included or licensed under the application's MIT/Apache-2.0 terms.
+
+1. In Voice App Settings, choose the physical microphone and headphones.
+2. Under the virtual microphone section, explicitly select **CABLE Input** and
+   apply/reconnect. This playback endpoint receives the effects and soundboard.
+3. In Discord or Audacity/Tenacity, select **CABLE Output** as the capture input.
+   Keep destination playback on the physical headphones.
+
+**Ouvir-me**, its volume and preview playback remain on the physical headphones.
+They do not enable or control the cable transmission. A saved missing cable is
+not replaced automatically. No system audio default is changed by this route.
+The installed VB-CABLE path and destination applications remain unvalidated on
+Windows; offline CI and Wine cannot establish that acceptance. This describes
+the experimental implementation, not a new release announcement or qualification
+of previously published ZIPs. See docs/WINDOWS.md for setup and outstanding checks.
+
+The first-party driver and signing effort was cancelled; PR #5 was closed without
+merging. Its old unsigned CI artifacts are historical development outputs, not
+user installers. This external-cable route does not require a Voice App driver
+or its signing process.
+
+The WASAPI adapter can also process microphone audio for local monitoring/recording
+and capture an explicitly selected desktop output, subject to physical validation.
 Monitoring is off by default. No driver, service or system audio default is
 installed or changed by extracting or launching this package.
 
@@ -44,8 +68,8 @@ pwsh -File .\scripts\test-windows-offline.ps1
 ```
 
 It uses a temporary synthetic library, starts only the local command service,
-tests CLI/MCP/persistence/DSP files, and shuts it down. It never starts audio,
-enumerates hardware or opens the GUI. Those tests do not qualify real-time
+tests CLI/MCP/persistence/DSP files, and shuts it down. It never starts capture/playback or opens the GUI. Status can query the Windows
+endpoint inventory/topology to discover installed virtual cables, without opening an audio stream. Those tests do not qualify real-time
 audio stability, latency, device reconnection, desktop capture or permissions.
 
 The [native Windows Server 2022 check for public commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538)
@@ -109,7 +133,7 @@ Checking this secure refusal does not mean the program works under Wine. No
 application permission check is weakened or bypassed. If Wine later preserves
 the required security properties and the service starts, the complete
 IPC/MCP/library/restart and timed GUI regression remains mandatory. Neither
-a native CI smoke nor Wine results establish physical Windows audio, driver,
+a native CI smoke nor Wine results establish physical Windows audio, installed VB-CABLE,
 Discord/OBS/Audacity/Tenacity or end-to-end latency support.
 
 Retain `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD_PARTY_LICENSES*`,

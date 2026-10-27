@@ -11,3 +11,9 @@ pub use service::{Paths, ServiceHandle, persist_private_file, spawn_service};
 pub fn probe_devices() -> anyhow::Result<Vec<voice_core::DeviceInfo>> {
     audio::list_devices()
 }
+
+/// Detect installed supported virtual cable pairs without opening audio or installing a driver.
+/// Availability does not imply an active route or installed-target acceptance.
+pub fn probe_virtual_microphone() -> anyhow::Result<voice_core::VirtualMicrophoneStatus> {
+    audio::virtual_microphone_status()
+}

@@ -98,11 +98,13 @@ SQLite e envelopes JSON possuem versão. Dados desconhecidos/corrompidos retorna
 recriados silenciosamente. Configurações são persistidas por substituição atômica; a monitoração
 não é restaurada automaticamente. Gravações são finalizadas ao parar/encerrar o áudio.
 
-A cadeia tem 11 blocos preparados, presentes uma vez cada: denoise, pitch/formante, gate,
-ganho, filtros, compressor, saturação, robô, chorus, eco e reverb. `DspSettings.effect_order`
-define uma permutação desses blocos. A ordem padrão reproduz a sequência histórica, e
-configurações antigas sem esse campo recebem o padrão. Gate e compressor medem a entrada
-local do próprio bloco; por isso presets antigos com filtros/compressor podem mudar de nível.
+A cadeia tem 13 blocos preparados, presentes uma vez cada: denoise, pitch/formante, gate,
+ganho, filtros, compressor, saturação, robô, vocoder, granular, chorus, eco e reverb.
+`DspSettings.effect_order` define uma permutação desses blocos. Vocoder e granular começam
+desligados, após robô e vocoder respectivamente; arrays antigos de 11 ou 12 posições são
+migrados preservando ordem e intensidades anteriores. Os índices anteriores permanecem iguais.
+Configurações antigas sem esses campos recebem o padrão. Gate e compressor medem a entrada
+local do próprio bloco; essa correção antecede o granular e permanece igual nesta entrega.
 
 A ordem é publicada em um único AtomicU64, sem uma permutação parcialmente escrita no callback.
 Cada processador percorre armazenamento fixo e mantém os históricos dos efeitos. Uma mudança
@@ -111,8 +113,19 @@ chamada usa a ordem solicitada diretamente; a transição não adiciona bufferin
 O teto de segurança permanece sempre ao final. Ordens inválidas são rejeitadas antes da
 persistência; chamadas diretas inválidas ao DSP produzem silêncio. Novos módulos deverão
 preservar o isolamento do DSP e declarar seu atraso algorítmico.
-Drivers virtuais Windows e macOS serão componentes próprios; não são implementados pela
-abstração atual de captura/reprodução.
+O vocoder usa 20 pares de filtros preparados, portadora interna e passagem de consoantes,
+sem FIFO/FFT ou lookahead de fluxo. Filtros e envelopes ainda têm resposta temporal;
+zero frames de buffering anunciado não significa latência física zero. Seu estado é fixo
+e o bypass não executa o banco de filtros. Não requer modelos ou dependências novas.
+Granular usa quatro grãos com janelas preparadas, histórico de capacidade fixa e referência
+seca independente da realimentação. Natural limita pitch e duração, alinha as formas de onda
+e protege consoantes/transientes; a qualidade percebida continua experimental. O diagnóstico
+inclui o atraso nominal e as duas vozes alinham-se pelo maior atraso ativo. Mudanças de modo
+ou duração incluem espera pelo novo histórico, mesmo quando o atraso nominal é igual.
+Detalhes e evidências estão em [GRANULAR.md](GRANULAR.md).
+No Windows, o backend envia PCM a um par de endpoints virtuais já instalado e validado,
+como VB-CABLE; não instala drivers nem cria dispositivos. A frente de driver próprio
+continua cancelada. macOS permanece planejado e exige integração virtual específica.
 
 
 ## DSP avançado
