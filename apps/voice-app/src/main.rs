@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use voice_core::{
     AudioConfig, DeviceInfo, DeviceKind, DspSettings, EFFECT_COUNT, EffectKind, EffectOrder,
-    RecordingSource, VoiceBlend, VoiceLayer,
+    GranularMode, RecordingSource, VoiceBlend, VoiceLayer,
 };
 use voice_engine::{Paths, ServiceHandle, client, protocol::Command};
 use voice_library::{Board, Clip, MAX_PRESET_IMAGE_BYTES, PRESET_IMAGE_SIDE, Preset, PresetImage};
@@ -195,6 +195,7 @@ struct App {
     pending_preset_images: BTreeMap<String, u64>,
     preset_image_serial: u64,
     preset_image_revision: Option<u64>,
+    preset_revision: Option<u64>,
     looped: bool,
     overlap: bool,
     notice: Option<(String, bool)>,
@@ -259,6 +260,7 @@ impl App {
                 let refresh_library = matches!(
                     &command,
                     Command::SavePreset { .. }
+                        | Command::SetPresetOriginal { .. }
                         | Command::ImportPreset { .. }
                         | Command::CreateBoard { .. }
                         | Command::ImportClip { .. }
@@ -330,6 +332,7 @@ impl App {
             pending_preset_images: BTreeMap::new(),
             preset_image_serial: 0,
             preset_image_revision: None,
+            preset_revision: None,
             looped: false,
             overlap: true,
             notice: None,
@@ -685,6 +688,12 @@ impl App {
                 Ok(value) => match reply.tag {
                     Tag::Status => {
                         self.poll_pending = false;
+                        if let Some(revision) = value["preset_revision"].as_u64() {
+                            if self.preset_revision.is_some_and(|old| old != revision) {
+                                self.send(Tag::Presets, Command::Presets);
+                            }
+                            self.preset_revision = Some(revision);
+                        }
                         if let Some(revision) = value["preset_image_revision"].as_u64() {
                             if self
                                 .preset_image_revision
@@ -877,19 +886,13 @@ impl App {
                             (
                                 3,
                                 "Vozes originais",
-                                self.presets
-                                    .iter()
-                                    .filter(|p| p.id.starts_with("builtin."))
-                                    .count(),
+                                self.presets.iter().filter(|p| p.is_original()).count(),
                             ),
                             (1, "Favoritas", self.favorites.len()),
                             (
                                 2,
                                 "Minhas vozes",
-                                self.presets
-                                    .iter()
-                                    .filter(|p| !p.id.starts_with("builtin."))
-                                    .count(),
+                                self.presets.iter().filter(|p| !p.is_original()).count(),
                             ),
                         ] {
                             let active = self.voice_filter == index;
@@ -1342,8 +1345,8 @@ impl App {
                 matches_search
                     && match self.voice_filter {
                         1 => self.favorites.contains(&p.id),
-                        2 => !p.id.starts_with("builtin."),
-                        3 => p.id.starts_with("builtin."),
+                        2 => !p.is_original(),
+                        3 => p.is_original(),
                         _ => true,
                     }
             })
@@ -1859,6 +1862,45 @@ impl App {
                                 0.0..=1.0,
                                 "",
                             );
+                        });
+                        columns[1].add_space(14.);
+                        card().show(&mut columns[1], |ui| {
+                            ui.label(RichText::new("VOCODER").size(11.).color(ACCENT));
+                            ui.add_space(8.);
+                            changed |= parameter(
+                                ui,
+                                "Intensidade",
+                                &mut self.settings.vocoder_mix,
+                                0.0..=1.0,
+                                "",
+                            );
+                            changed |= parameter(
+                                ui,
+                                "Portadora",
+                                &mut self.settings.vocoder_carrier_hz,
+                                55.0..=440.0,
+                                " Hz",
+                            );
+                            changed |= parameter(
+                                ui,
+                                "Consoantes",
+                                &mut self.settings.vocoder_unvoiced,
+                                0.0..=1.0,
+                                "",
+                            );
+                            changed |= parameter(
+                                ui,
+                                "Soltura",
+                                &mut self.settings.vocoder_release_ms,
+                                10.0..=200.0,
+                                " ms",
+                            );
+                        });
+                        columns[1].add_space(14.);
+                        card().show(&mut columns[1], |ui| {
+                            ui.label(RichText::new("GRANULAR").size(11.).color(ACCENT));
+                            ui.add_space(8.);
+                            changed |= granular_controls(ui, &mut self.settings);
                         });
                         columns[1].add_space(14.);
                         card().show(&mut columns[1], |ui| {
@@ -2691,6 +2733,8 @@ fn effect_name(effect: EffectKind) -> &'static str {
         EffectKind::Chorus => "Chorus",
         EffectKind::Echo => "Eco",
         EffectKind::Reverb => "Reverb",
+        EffectKind::Vocoder => "Vocoder",
+        EffectKind::Granular => "Granular",
     }
 }
 fn voice_blend_editor(ui: &mut egui::Ui, settings: &mut DspSettings, presets: &[Preset]) -> bool {
@@ -2808,6 +2852,15 @@ fn voice_blend_editor(ui: &mut egui::Ui, settings: &mut DspSettings, presets: &[
                 }
             }
         });
+        ui.collapsing("Granular da voz B", |ui| {
+            ui.push_id("granular-secondary", |ui| {
+                let mut secondary = blend.secondary.to_settings();
+                if granular_controls(ui, &mut secondary) {
+                    blend.secondary = VoiceLayer::from(secondary);
+                    changed = true;
+                }
+            });
+        });
         ui.label(
             RichText::new("Os controles abaixo editam a voz A.")
                 .size(11.)
@@ -2828,6 +2881,92 @@ fn voice_blend_editor(ui: &mut egui::Ui, settings: &mut DspSettings, presets: &[
         }
         settings.blend = Some(blend);
     });
+    changed
+}
+
+fn granular_controls(ui: &mut egui::Ui, settings: &mut DspSettings) -> bool {
+    let mut changed = false;
+    let previous_mode = settings.granular_mode;
+    egui::ComboBox::from_id_salt("granular-mode")
+        .selected_text(match settings.granular_mode {
+            GranularMode::Stylized => "Estilizado",
+            GranularMode::Natural => "Natural (experimental)",
+        })
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(
+                    &mut settings.granular_mode,
+                    GranularMode::Stylized,
+                    "Estilizado",
+                )
+                .changed();
+            changed |= ui
+                .selectable_value(
+                    &mut settings.granular_mode,
+                    GranularMode::Natural,
+                    "Natural (experimental)",
+                )
+                .changed();
+        });
+    let natural = settings.granular_mode == GranularMode::Natural;
+    if natural && previous_mode != settings.granular_mode {
+        settings.granular_pitch_semitones = settings.granular_pitch_semitones.clamp(-4., 4.);
+        settings.granular_grain_ms = settings.granular_grain_ms.min(40.);
+    }
+    ui.add_space(6.);
+    changed |= parameter(ui, "Intensidade", &mut settings.granular_mix, 0.0..=1.0, "");
+    let pitch_limit = if natural { 4. } else { 12. };
+    let mut pitch = settings
+        .granular_pitch_semitones
+        .clamp(-pitch_limit, pitch_limit);
+    if parameter(ui, "Pitch", &mut pitch, -pitch_limit..=pitch_limit, " st") {
+        settings.granular_pitch_semitones = pitch;
+        changed = true;
+    }
+    changed |= parameter(
+        ui,
+        "Proteção da fala",
+        &mut settings.granular_clarity,
+        0.0..=1.0,
+        "",
+    );
+    let grain_limit = if natural { 40. } else { 80. };
+    let mut grain_ms = settings.granular_grain_ms.clamp(12., grain_limit);
+    if parameter(
+        ui,
+        "Tamanho do grão",
+        &mut grain_ms,
+        12.0..=grain_limit,
+        " ms",
+    ) {
+        settings.granular_grain_ms = grain_ms;
+        changed = true;
+    }
+    if !natural {
+        changed |= parameter(
+            ui,
+            "Dispersão",
+            &mut settings.granular_scatter,
+            0.0..=1.0,
+            "",
+        );
+        changed |= parameter(
+            ui,
+            "Repetição",
+            &mut settings.granular_feedback,
+            0.0..=0.65,
+            "",
+        );
+    }
+    ui.label(
+        RichText::new(if natural {
+            "Para mudanças sutis de tom, até 4 semitons. Avalie a clareza na sua voz."
+        } else {
+            "Grãos e repetições criam texturas. Comece com intensidade baixa."
+        })
+        .size(11.)
+        .color(MUTED),
+    );
     changed
 }
 
@@ -3287,6 +3426,31 @@ fn main() {
                 .show();
         }
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod granular_control_tests {
+    use super::*;
+
+    #[test]
+    fn drawing_natural_controls_preserves_larger_stored_cli_values() {
+        let mut settings = DspSettings {
+            granular_mode: GranularMode::Natural,
+            granular_mix: 0.5,
+            granular_pitch_semitones: 12.,
+            granular_grain_ms: 80.,
+            ..Default::default()
+        };
+        let original = settings;
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                assert!(!granular_controls(ui, &mut settings));
+            });
+            output.drop_without_applying_deltas();
+            assert_eq!(settings, original);
+        }
     }
 }
 
