@@ -33,6 +33,7 @@ env:
 
 jobs:
   check:
+    name: Linux build and tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +64,7 @@ jobs:
           if-no-files-found: error
 
   dependency-policy:
+    name: Linux dependency policy
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -92,6 +94,7 @@ jobs:
         run: cargo deny check licenses bans sources advisories
 
   pipewire-smoke:
+    name: Linux PipeWire integration
     if: inputs.pipewire_smoke == true || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
