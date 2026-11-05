@@ -665,3 +665,29 @@ latência física e sessões longas continuam gates próprios; nenhuma promoçã
 Após essa CI, mudou apenas este registro documental. As receitas distribuídas
 continuam sendo as 12 builtin; biblioteca, presets, imagens e áudios pessoais
 não foram publicados.
+
+## Candidato de acessibilidade Linux — 05/11/2026
+
+A [issue #7](https://github.com/aaronmlf/voice-app/issues/7) tem um candidato com
+AccessKit Unix 0.24.1 e os componentes AT-SPI adaptados para zbus 6.2.1. O
+`rfd` 0.17.2 substituiu a dependência de `ashpd`. Os dois lockfiles usam zbus
+6.2.1 e excluem os três crates descontinuados. A suíte AT-SPI passou 1.141
+testes, incluindo os de assinatura XML. O cargo-deny 0.20.2 aprovou avisos,
+regras de dependências, licenças e origens nos dois grafos.
+
+Um cliente libatspi independente verificou a árvore da GUI, foco, acionamento de
+**Criar voz**, mudança para o Laboratório e as assinaturas reais de adição e
+remoção de nós. X11 em Xvfb e Wayland em KWin virtual passaram com PipeWire e
+D-Bus privados. A release alpha.3 reproduziu as duas assinaturas de cache
+incorretas no diagnóstico X11. O RSS da GUI amostrado após a ação foi de 196 MiB
+em X11, próximo à referência, e 200 MiB em Wayland. O pico observado na
+compilação Linux foi de 1,21 GiB em um
+grupo com limite de 3 GiB e swap bloqueado, sem eventos de OOM.
+
+O teste de diálogos verificou abertura, salvamento e cancelamento com caminhos
+Unicode por um serviço de portal simulado, pelo Zenity real e pelo portal KDE
+real em Xvfb. O teste do Zenity também conferiu foco de teclado e a caixa de
+mensagem. No KDE, o salvamento passou com destino explícito. O portal usou
+outra pasta inicial em uma tentativa que forneceu uma pasta sugerida, opção
+que a GUI atual não usa. Os portais em um desktop Wayland, o ensaio com Orca e
+os checks do GitHub Actions nesta revisão seguem pendentes antes da integração.

@@ -1,0 +1,92 @@
+[package]
+edition = "2021"
+rust-version = "1.89"
+publish = false
+name = "atspi-proxies"
+version = "0.13.0"
+build = false
+include = [
+    "LICENSE-*",
+    "README.md",
+    "src/**/*",
+]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "AT-SPI2 proxies to query or manipulate UI objects"
+homepage = "https://github.com/odilia-app/atspi"
+readme = "README.md"
+keywords = [
+    "a11y",
+    "accessibility",
+    "linux",
+    "screen-reader",
+    "tts",
+]
+categories = [
+    "accessibility",
+    "api-bindings",
+]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/odilia-app/atspi"
+
+[features]
+default = ["wrappers"]
+wrappers = []
+
+[lib]
+name = "atspi_proxies"
+path = "src/lib.rs"
+
+[dependencies.atspi-common]
+version = "0.13.0"
+path = "../atspi-common"
+
+[dependencies.serde]
+version = "^1.0.200"
+features = ["derive"]
+default-features = false
+
+[dependencies.zbus]
+version = "6.2.1"
+features = ["proxy"]
+default-features = false
+
+[dev-dependencies.atspi-common]
+version = "0.13.0"
+path = "../atspi-common"
+
+[dev-dependencies.byteorder]
+version = "1.4"
+
+[dev-dependencies.futures-lite]
+version = "2.6.0"
+default-features = false
+
+[dev-dependencies.rename-item]
+version = "0.1.0"
+
+[dev-dependencies.serde_json]
+version = "1.0.96"
+
+[dev-dependencies.serde_plain]
+version = "1.0.1"
+
+[dev-dependencies.tokio]
+version = "1.38.2"
+features = [
+    "macros",
+    "rt-multi-thread",
+]
+default-features = false
+
+[dev-dependencies.tokio-stream]
+version = "0.1.1"
+
+[dev-dependencies.tokio-test]
+version = "0.4.2"
+
+[dev-dependencies.tracing]
+version = "0.1.40"

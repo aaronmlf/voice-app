@@ -1,0 +1,82 @@
+[package]
+edition = "2021"
+rust-version = "1.89"
+publish = false
+name = "atspi-common"
+version = "0.13.0"
+build = false
+include = [
+    "LICENSE-*",
+    "README.md",
+    "src/**/*",
+    "xml/*",
+]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Primitive types used for sending and receiving Linux accessibility events."
+readme = "README.md"
+keywords = [
+    "Accessibility",
+    "Macros",
+]
+categories = [
+    "accessibility",
+    "api-bindings",
+]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/odilia-app/atspi"
+
+[features]
+default = [
+    "wrappers",
+    "zbus",
+]
+wrappers = []
+zbus = ["zbus/comms"]
+
+[lib]
+name = "atspi_common"
+path = "src/lib.rs"
+
+[dependencies.enumflags2]
+version = "0.7.9"
+
+[dependencies.serde]
+version = "1.0.200"
+
+[dependencies.static_assertions]
+version = "1.1.0"
+
+[dependencies.zbus]
+version = "6.2.1"
+default-features = false
+
+[dev-dependencies.assert_matches]
+version = "1.5.0"
+
+[dev-dependencies.rename-item]
+version = "0.1.0"
+
+[dev-dependencies.serde_plain]
+version = "1.0.1"
+
+[dev-dependencies.zbus]
+version = "6.2.1"
+features = ["comms"]
+default-features = false
+
+[dev-dependencies.zbus_xml]
+version = "6.0"
+
+# The XML-backed wire signature checks run in the standalone test suite.
+[dev-dependencies.zbus-lockstep]
+path = "../zbus-lockstep"
+
+[dev-dependencies.zbus-lockstep-macros]
+path = "../zbus-lockstep-macros"
+
+# Keep protocol test dependencies in their own locked workspace.
+[workspace]
