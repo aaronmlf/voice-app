@@ -1,130 +1,55 @@
 # Matriz de funcionalidades
 
-“Verificada” indica o contexto de teste descrito, não equivalência de qualidade com outro produto.
-Nenhum marco inteiro foi promovido a estável.
+Os estados abaixo se referem às condições de teste descritas. O Voice App continua
+experimental. A branch `beta` é um canal de integração, não uma qualificação do produto.
 
-| Capacidade | Estado | Evidência / pendência |
+As pré-releases [Linux alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.3)
+e [Windows alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.3)
+saíram do mesmo commit público, `f86d1fb`, após os gates de
+[Linux](https://github.com/aaronmlf/voice-app/actions/runs/40541334978) e
+[Windows](https://github.com/aaronmlf/voice-app/actions/runs/40541389816). Ambos os
+pacotes incluem checksum e somente os **12 presets embutidos**. A biblioteca e os
+presets, imagens e áudios pessoais ficam locais.
+
+## Núcleo e recursos compartilhados
+
+| Capacidade | Estado | Evidência e limites |
 |---|---|---|
-| Contratos, atômicos e filas limitadas | Verificada em testes | Ordem, concorrência, saturação, wrap de contador e validação |
-| DSP tradicional | Verificada offline; ao vivo experimental | Sinais sintéticos, extremos, preservação entre blocos e ausência de alocação Rust |
-| Fonte virtual + captura | Experimental | Cliente externo e módulo real `pulse_input_capture` da libobs 32.2.2 receberam sinal no grafo privado. Usuário relatou voz com efeito e soundboard funcionando no Discord desktop Linux em 22/10; gravação Audacity/Tenacity, GUI OBS e medições físicas pendentes |
-| Monitoração e pré-escuta separadas | Experimental | Ganho, sinal idêntico em L/R e isolamento medidos em sink estéreo no daemon privado |
-| Detecção e reconexão automática | Experimental | Metadata de padrões, troca durante a sessão, retorno do daemon, retomada entre processos e cancelamento por Stop testados em fixture privada |
-| Volume de Ouvir-me | Experimental | Controle de 0–200% independente; valor e persistência verificados por CLI/motor |
-| Interface nativa | Experimental; smoke nativo aprovado | [Windows Server 2022, `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350538): GUI extraída abriu em WGPU/DX12/CPU, renderizou PNG 1024×768 igual a dez medições da área cliente, verificou áudio desligado e encerrou com código 0. Viewport limitado ao monitor único; interação manual, layout maior e sessão longa pendentes |
-| Coleções locais de vozes originais e próprias | Experimental; testes locais anteriores à integração | As 12 vozes builtin continuam originais; uma voz própria pode ser classificada explicitamente na biblioteca local sem mudar ID, DSP ou imagem. Salvar/importar preserva a curadoria existente e intercâmbio não transfere a classificação. Isso não autoriza publicação; a distribuição contém somente as 12 vozes builtin. CI integrada e interação manual pendentes |
-| Imagens de presets próprios | Experimental | PNG/JPEG/WebP, recorte, limites, falhas e persistência verificados; imagem gerenciada após remover fonte e reiniciar, renderização circular e comandos CLI/MCP testados |
-| SQLite e presets JSON | Verificada em testes | Persistência, versão, limites e dados inválidos |
-| WAV/MP3/Ogg Vorbis/FLAC | Verificada offline | Fixtures próprias; mono48k, resampling, limites e corte |
-| Painéis, loop e sobreposição | Experimental | Mixer e comandos testados; sessão prolongada do perfil de mistura reprovada por incremento de contador, sem qualificação de quatro horas |
-| Remover som do soundboard | Experimental; testes aprovados | Menu ⋮ e botão direito, confirmação e comando único GUI/CLI/MCP. Persistência, IDs inválidos, isolamento dos outros sons e arquivos preservados cobertos pelo gate local de 111 testes Rust/51 Python. Remove o cadastro e para apenas esse som; arquivos originais e cópias normalizadas ficam em disco. CI pública do commit `bd75106`: Linux 111 testes Rust/51 Python e Windows 99 Rust/15 Python aprovados. Interação gráfica de remoção ainda pendente |
-| Gravação processada e replay30s | Experimental | Worker/PCM, finalização e preservação; criar voz A/B→gravar→cortar→soundboard→reiniciar→reutilizar sem WAV externo aprovado por comandos no grafo privado |
-| CLI e MCP | Verificada em testes locais | Mesmo registro; sessão parada, biblioteca e mensagens JSON-RPC |
-| Pacote Linux `.tar.gz` | Experimental | Checksum validado; binários extraídos executados, GUI em Xvfb e CLI integrado ao PipeWire privado |
-| Código público e releases GitHub | Experimental | `v0.1.0-alpha.1`, commit `046ae02`, publicada pelo Actions após 90 testes Rust, 40 Python, integração privada, corpus, benchmark e política de dependências. Dois assets reais com SHA-256 conferido e 23 arquivos documentais/scripts iguais ao snapshot público; binários desta release inspecionados por ELF, sem execução local durante o soak. Somente os 12 presets originais |
-| Pitch/formante, chorus, denoise | Verificada offline; ao vivo experimental | Backend real, testes espectrais/ruído/zero alloc Rust; pitch88ms, denoise20ms, ambos108ms de buffering algorítmico |
-| Reordenação de efeitos | Experimental | 13 blocos no Laboratório, incluindo vocoder e granular. Migração das ordens legadas de 11/12 posições preserva os índices históricos e a ordem relativa; validação, atualização atômica e persistência cobertas por testes locais anteriores à integração. CI integrada pendente |
-| Mistura de duas vozes | Experimental | Ramos alinhados, transições e persistência; áudio externo por 30 s sem novos erros; atraso de onset p95 101 ms no grafo privado, 24 eventos, perfil sem denoise; latência física pendente; tentativa de quatro horas interrompida por +1 `monitor_overruns` após 10.675,083 s saudáveis |
-| Intensidade por efeito | Experimental | 13 intensidades em A e B; arrays legados recebem valor 1 nos novos índices sem ligar vocoder/granular. Bypass, interpolação e alinhamento cobertos por testes locais anteriores à integração; CI integrada pendente |
-| Vocoder tradicional | Experimental; DSP local e grafo privado testados antes da integração | Banco de 20 bandas, portadora interna, proteção de consoantes e controles GUI/CLI/MCP. Estado preparado, bypass e ausência de buffering de fluxo próprios; resposta temporal dos filtros permanece. Soundboard pós-DSP e pré-escuta separada exercitados em PipeWire privado. CI integrada, audição e testes dos novos efeitos nos aplicativos de destino pendentes; ver VOCODER.md |
-| Granular Estilizado / Natural | Experimental; Natural requer avaliação perceptual | Quatro grãos e buffers fixos; limites, migração, transições, reset e processamento sem alloc/free Rust cobertos por testes locais anteriores à integração. Natural efetivo ±4 semitons/grão até 40 ms, sem dispersão/retorno. A 48 kHz, perfil Natural padrão anuncia 20,04 ms de buffering; não é latência física. CI integrada, áudio nativo e qualidade percebida pendentes; ver GRANULAR.md |
-| Atalho no menu Linux/KDE | Verificado nesta sessão | Entrada desktop e ícone instalados; abertura do binário pronto por gio, identidade voice-app, limite de 3 GiB e segundo clique sem duplicação verificados; pinagem manual pelo menu do KDE |
-| Captura do desktop | Experimental | Sink explícito, estéreo L/R, WAV/replay independentes, isolamento do virtual e recuperação verificados em PipeWire privado. No Windows, loopback digital dos fones gerou WAV estéreo/48 kHz/16 bits de 57,31 s; +1 overrun observado. Isso não comprova audição física ou sessão longa |
-| Validação reprodutível de áudio | Verificada em grafo privado; quatro horas reprovadas | Básico de 60 min aprovado: 3.600,018 s ativos/716 janelas saudáveis. Mistura: 10.675,083 s saudáveis de 14.400 s exigidos, 2.128/2.129 janelas e +1 `monitor_overruns`; serviço terminou com código 1. RSS máximo do motor 23,30 MiB; pico do serviço 51,24 MiB, sem OOM. PCM descartado, replay limitado. Ver `VALIDATION.md` |
-| Atalhos globais / bandeja | Planejada | Portal Wayland e fallback CLI |
-| IA de conversão de voz | Planejada | Worker, modelos/licenças/hashes e hardware medido |
-| Windows nativo | Experimental; CI nativa aprovada | [Commit bcb3f45](https://github.com/aaronmlf/voice-app/actions/runs/40037022519): 135 testes Rust/15 Python, quatro reexecuções de corpus e demais gates nativos aprovados. GUI extraída: 5,488 s, pico observado 75,12 MiB do processo, áudio desligado e PNG 1024×768 limitado ao monitor único. Não qualifica áudio instalado, interação manual, processo filho ou sessão longa; ver WINDOWS.md |
-| Diagnósticos e GUI em VM Windows | Experimental; smoke sem áudio aprovado em 26/10/2026 | Release original `windows-v0.1.0-alpha.2`/fonte `bcb3f45`, hashes conferidos. Windows 10 LTSC 19044 x64/VirtualBox 7.2.16: CLI/IPC e GUI com motor separado, PNG 1280×800 em DX12/CPU, zero frames e encerramento normal. Máximos amostrados de working set: GUI 75,70 MiB, motor 10,90 MiB. Smoke anterior à instalação do cabo; release original ainda enumera listas vazias após instalá-lo. Investigação e correção local posteriores não herdam esse passe; ver `VALIDATION.md` |
-| Instalação VB-CABLE e diagnóstico de identidade na VM | Instalação e enumeração corrigida observadas | Snapshot frio sem RAM criado, restauração não exercitada; Pack45 x64 instalado/reiniciado, driver assinado 3.3.1.7. Probe isolou envelope `{2}.`; a correção conservadora posteriormente executada no candidato enumera dispositivos físicos e dois alvos VB-CABLE. Os seis defaults pós-instalação foram consultados antes da passagem USB; sem promoção de compatibilidade universal |
-| Candidato com correção de identidade WASAPI | Experimental; CI e diagnósticos na VM aprovados | `cbe42d5`, código `cca3270`: [Windows](https://github.com/aaronmlf/voice-app/actions/runs/40335940556) passou 138 Rust/15 Python e demais gates; [Linux](https://github.com/aaronmlf/voice-app/actions/runs/40336998729) passou 150 Rust/51 Python e integração PipeWire isolada. ZIP/PE conferidos no host e convidado; diagnósticos sem áudio passaram, inclusive após passagem USB. Release original e seus testes permanecem separados |
-| HDA emulado desta VM a 48 kHz | Bloqueado para o perfil nativo; percurso USB testado separadamente | Windows mostrou apenas 16/22,05/44,1 kHz no mix. Os [caps declarados pela Oracle](https://github.com/VirtualBox/virtualbox/blob/b6bea72111fcff48f31c57c9f66365b1d3301bb9/src/VBox/Devices/Audio/DevHdaCodec.cpp#L239) omitem 48 kHz. USB direto permitiu conectar microfone/fones explícitos no perfil de 48 kHz; voz física permaneceu mutada, sem aceitação de seus efeitos |
-| Saída Windows por VB-CABLE externo | Experimental; recepção sintética local observada | No candidato `cbe42d5`, Audacity 3.7.9 isolado recebeu tons e fala SAPI previamente processada offline via soundboard, em WAV estéreo/48 kHz/16 bits; loopback registrou pré-escuta nos fones, sem qualificar isolamento absoluto. Ensaios de 41,139/61,461 s tiveram underruns/overruns, descritos em `VALIDATION.md`. Não houve escuta subjetiva, aceitação de voz física, Discord, latência ou estabilidade prolongada |
-| Fala sintética offline no Windows | Processamento e transporte numérico observados | Voz instalada do Windows gerou frase própria; Clean/Robot originais produziram WAVs mono/48 kHz/F32, depois importados com hashes conferidos e reproduzidos no soundboard. Correlação numérica no cabo/fones não comprova qualidade percebida, inteligibilidade ou DSP do microfone ao vivo |
-| Reabertura e controles manuais no Windows | Parcialmente observados | Mesma biblioteca/IPC reabertos em 4,361 s com cinco clips/frames/hashes e seleções USB/cabo preservados, captura inicialmente desligada. Conexão e disparo observados na GUI; pré-escuta/Stop manuais inconclusivos por expiração do prazo. Encerramento normal de GUI/motor/keeper em 1,407 s. Discord bloqueado por login; ASR indisponível sem reconhecedor instalado. VM desligada e USBs devolvidos; revogação das ACLs temporárias pendente de autenticação administrativa |
-| Candidato de estabilidade WASAPI | Experimental; gates aprovados, estabilidade operacional pendente | `30d26b8` separa playback de gravação/replay no Windows. Regressão de captura bloqueada, gates locais e CIs Windows (154 Rust/15 Python) e Linux (166 Rust/51 Python e PipeWire isolado) aprovados; pacote conferido no host. A rodada anterior `9954ec9` falhou por +1 `soundboard_underruns` após prontidão. Novos 60 s/30 min não iniciados por indisponibilidade USB; critérios e contadores preservados. |
-| Repintura da GUI Windows | Política implementada; redução de CPU não qualificada | Áudio ativo 200 ms, ociosa 400 ms e edição/trabalho pendente 100 ms; eventos nativos continuam despertando a interface. Linux mantém a política anterior. As amostras curtas não demonstram redução de CPU nem estabilidade prolongada |
-| Driver próprio Windows (histórico) | Cancelado; PR #5 fechado sem merge | Evidências antigas de compilação WDK/INF/C++ e testes da ponte foram preservadas; não houve assinatura, instalação ou qualificação do kernel. Esta frente não é necessária para a rota externa VB-CABLE e não tem trabalho ativo de assinatura |
-| macOS | Planejada | Plugin virtual, assinatura e hardware próprios |
-| Comunidade/mobile | Planejada | Serviços e pareamento ainda não implementados |
-| AppImage/Flatpak | Planejada | Distribuição inicial em tar.gz |
+| Contratos, atômicos e filas | Verificados em testes | Validação, concorrência, saturação e wrap de contador. Capacidade fixa; processamento em tempo real sem alocação Rust nos caminhos testados. |
+| DSP tradicional, pitch/formante, chorus e redução de ruído | Verificados offline; ao vivo experimental | Testes espectrais, ruído, extremos e continuidade entre blocos. Pitch/formante acrescentam 88 ms e redução de ruído, 20 ms de buffering algorítmico a 48 kHz; não é latência física. |
+| Laboratório de efeitos | Experimental; CI integrada aprovada | 13 blocos reordenáveis, intensidade por efeito em A/B e mistura de duas vozes. Migração das ordens/intensidades antigas preserva índices e ordem relativa, com os novos efeitos desligados nos presets existentes. |
+| Vocoder tradicional | Experimental; testes offline e grafo privado aprovados | 20 bandas, portadora interna e proteção de consoantes. Smoke Windows do pacote extraído também passou. Audição e uso dos novos efeitos em aplicativos de destino ainda precisam de validação específica. Veja [VOCODER.md](VOCODER.md). |
+| Granular Estilizado e Natural | Experimental; testes offline e grafo privado aprovados | Quatro grãos e buffers fixos; smoke Windows cobre os dois modos. No perfil Natural padrão, buffering de 20,04 ms a 48 kHz. Qualidade percebida e áudio físico continuam pendentes. Veja [GRANULAR.md](GRANULAR.md). |
+| Biblioteca de vozes e imagens próprias | Experimental | SQLite, importação de presets JSON versionados, favoritos e imagens PNG/JPEG/WebP. A classificação local como original não torna o preset embutido nem o torna público. |
+| Soundboard | Experimental | Importação WAV/MP3/Ogg Vorbis/FLAC normalizada para mono/48 kHz; painéis, loop, sobreposição, recorte e parada. Remover som exclui o cadastro e interrompe somente aquele som; os arquivos de áudio permanecem. |
+| Monitoração e pré-escuta | Experimentais | Rotas separadas da saída virtual, com volume independente de Ouvir-me (0–200%) e pré-escuta nos fones. Isolamento exercitado no PipeWire privado. |
+| Gravação e replay | Experimentais | Gravação em WAV e replay dos últimos 30 s por fonte; captura do desktop explícita e separada da saída virtual. Apenas uma gravação de arquivo por vez. |
+| GUI, CLI e MCP | Experimentais | Registro de comandos compartilhado. CLI/MCP e persistência verificados em testes; smokes de GUI não qualificam interação manual ou sessão longa. |
 
+## Linux
 
-Em [Linux/Ubuntu 24.04, commit `bd75106`](https://github.com/aaronmlf/voice-app/actions/runs/40008350530),
-111 testes Rust e 51 Python, formatação, Clippy, limites, corpus, benchmark, política
-de dependências/licenças, integração PipeWire privada e pacote foram aprovados. Isso
-não acrescenta uma qualificação de quatro horas, hardware ou latência física.
+| Capacidade | Estado | Evidência e limites |
+|---|---|---|
+| Captura, fonte virtual e reconexão PipeWire | Experimentais | Cliente externo, módulo de captura da libobs e integração no PipeWire privado. Retorno do daemon, troca de padrão, reconexão e cancelamento por Stop exercitados em fixtures. Usuário relatou voz com efeito e soundboard no Discord desktop em sessão anterior; GUI da OBS e compatibilidade ampla permanecem abertas. |
+| Gravação no Tenacity | Teste prático de uma sessão | Tenacity Flatpak, ALSA/`pulse`, mono a 48 kHz. A captura foi direcionada por aplicativo para Voice App Virtual Microphone, mantendo o microfone padrão. A nova gravação preservou a rota, e o usuário confirmou ter ouvido voz com os efeitos já ativos e os dois bipes do soundboard. Sem análise do WAV, medição de latência ou qualificação de vocoder/granular específicos. |
+| Captura do desktop | Experimental | Sink explícito, áudio estéreo, WAV/replay independentes e isolamento da fonte virtual verificados no grafo privado. |
+| Pacote Linux `.tar.gz` | Experimental | Build no Ubuntu 24.04 x86_64, checksum e conteúdo conferidos. Smokes de GUI em Xvfb e CLI no PipeWire privado; hardware, outras distribuições e fluxos longos são etapas separadas. |
+| Entrada no menu Linux/KDE | Verificada em uma sessão | Entrada e ícone instalados; abertura do binário pronto e segundo clique sem duplicação observados. Pinagem manual pelo KDE. |
+| Sessões prolongadas e latência | Qualificação parcial | Um perfil básico anterior passou 60 min em grafo privado. A tentativa de mistura por quatro horas falhou por novo `monitor_overruns`. Esses resultados não qualificam a alpha.3 nem demonstram latência física. Veja [VALIDATION.md](VALIDATION.md). |
 
+## Windows
 
+| Capacidade | Estado | Evidência e limites |
+|---|---|---|
+| Pacote nativo `.zip` | Experimental | CI MSVC em Windows Server 2022, checksum, inspeção PE, CLI/IPC/MCP e smoke de GUI com renderização por software e áudio desligado. Executáveis sem assinatura. Windows 10/11 real com áudio permanece pendente. |
+| Rota externa VB-CABLE | Experimental | Requer instalação separada do VB-CABLE base x64. Em VM anterior, o Audacity recebeu tons e fala sintética via soundboard; houve underruns/overruns. Isso não qualifica voz física, Discord/Tenacity, reconexão nem estabilidade da release atual. Veja [WINDOWS.md](WINDOWS.md). |
+| Captura do desktop WASAPI | Experimental | Loopback digital anterior em VM registrou WAV estéreo/48 kHz, com um overrun. Não qualifica audição física ou sessão longa. |
+| Wine | Offline verificado; GUI/IPC não qualificados | Comandos offline passaram; a recusa segura quando o ambiente não oferece DACL protegida também foi verificada. Não equivale a compatibilidade Wine. |
+| Driver próprio Windows | Cancelado | [PR #5](https://github.com/aaronmlf/voice-app/pull/5) fechado sem merge. O protótipo legado fica em `windows-native` e fora dos pacotes. A rota VB-CABLE não depende desse projeto. |
 
-Registro local da publicação em 23/10: [prévia Windows windows-v0.1.0-alpha.1](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.1)
-publicada pelo workflow40015353388 a partir da fonte pública94da7b9. ZIP e checksum
-baixados em streaming e conferidos; 19 arquivos próprios/notice iguais ao snapshot
-revisado, ambos os PE AMD64 e hashes GUI/CLI correspondentes à evidência nativa.
-Smoke de GUI em Windows Server2022:5,705s, pico75,35MiB, áudio desligado. Wine
-verificou comandos offline e recusa de DACL, sem aprovação GUI/IPC. Isso não
-qualifica driver virtual, dispositivos Windows10/11 físicos, chamadas, gravadores,
-latência física ou beta. Quatro horas continuam deixadas de lado por pedido.
+Atalhos globais, bandeja, conversão neural local, macOS, AppImage/Flatpak do Voice
+App, comunidade e controle móvel continuam planejados.
 
-
-Atualização de 23/10/2026: publicada a pré-release experimental
-[Windows windows-v0.1.0-alpha.2](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.2),
-tag `bd6f6b4`, binários da CI `bcb3f45` e apenas 12 vozes originais. O job Wine
-terminou: comandos offline e recusa segura de DACL verificados no Wine 9.0;
-resultado `unsupported_security_environment`, sem qualificação de GUI, IPC ou
-compatibilidade Wine. O VB-CABLE exige instalação separada e licença própria.
-Naquela publicação, cabo instalado, Discord/Audacity/Tenacity, hardware,
-Ouvir-me/pré-escuta, recursos ativos e latência permaneciam pendentes. Os ensaios
-posteriores de 26/10 são do candidato `cbe42d5`, separados desta release.
-O pico nativo de 75,12 MiB é apenas da GUI curta com áudio desligado. A meta de
-80 ms continua aberta; não há promoção a beta nem retomada do driver próprio.
-
-
-Atualização de integração DSP de 27/10/2026: vocoder, granular e classificação local de
-coleções estão sendo integrados à base pública com as correções de estabilidade WASAPI.
-Os gates locais anteriores dessa frente DSP passaram 179 testes Rust e 52 Python,
-formatação, Clippy, limites, benchmarks e regressão PipeWire privada. Esses números
-não são os testes da integração nem substituem os resultados Windows existentes.
-Até registrar novos gates, o candidato integrado permanece sem aprovação de CI/release.
-Apenas as 12 vozes builtin e suas artes acompanham a fonte; receitas, imagens e áudios
-pessoais ficam fora do GitHub. Nenhuma qualificação de quatro horas, beta, fala física,
-Discord/Audacity/Tenacity com os novos efeitos ou meta física de 80 ms foi acrescentada.
-
-## Integração pública Linux — 27/10/2026
-
-Fonte pública integrada às correções Windows atuais: formatação, Clippy com
-avisos negados, limites entre componentes, **198 testes Rust e 52 Python**
-aprovados em Linux. Sete perfis de benchmark DSP e a regressão PipeWire privada
-passaram, incluindo vocoder/ambos os modos granular no consumidor virtual,
-soundboard após DSP e pré-escuta privada. Pacote Linux desta fonte pública
-gerado e inspecionado por checksum, binários e documentação; nenhum arquivo
-de biblioteca pessoal ou preset customizado foi incluído. Operações locais
-seriais sob limite de 3 GiB/sem swap, sem hardware ou GUI pessoal.
-
-A CI integrada Ubuntu/Windows MSVC, o smoke nativo estendido dos três efeitos e
-a inspeção dos candidatos remotos ainda são gates próprios. Estes resultados
-locais não qualificam fala percebida, Windows 10/11 físico, VB-CABLE instalado,
-Discord/Audacity, latência física ou sessões longas, nem promovem a versão a beta.
-
-## Validação da publicação — 27/10/2026
-
-A [PR #6](https://github.com/aaronmlf/voice-app/pull/6) foi integrada à `main`;
-o código compartilhado também está em `beta` e `windows-native`. Na fonte
-`1308b0d622eefb2ef28a8202b7db97cb0e9cf127`, a
-[CI Linux](https://github.com/aaronmlf/voice-app/actions/runs/40526368003) passou
-com 198 testes Rust, 52 Python, formatação, Clippy, boundaries, corpus, sete
-benchmarks, política de dependências/licenças, PipeWire privado e pacote. A
-[CI Windows](https://github.com/aaronmlf/voice-app/actions/runs/40526366912) passou
-com 186 testes Rust no check nativo, corpus, benchmarks, licenças, checksum/PE,
-smoke do pacote extraído (vocoder, dois modos granular, migração 11/12 → 13,
-CLI/IPC/MCP e persistência) e GUI com renderização por software.
-
-A primeira tentativa Wine expirou baixando dependências Ubuntu, antes de executar
-o aplicativo. Só esse job foi repetido, preservando o candidato nativo. Na segunda
-tentativa, os comandos offline passaram e a recusa exata do ambiente sem DACL
-protegida foi verificada. **GUI/IPC e compatibilidade Wine não foram qualificadas.**
-Hardware Windows 10/11, VB-CABLE instalado, Discord/Audacity/Tenacity, fala percebida,
-latência física e sessões longas continuam gates próprios; nenhuma promoção a beta.
-
-Após essa CI, mudou apenas este registro documental. As receitas distribuídas
-continuam sendo as 12 builtin; biblioteca, presets, imagens e áudios pessoais
-não foram publicados.
+Para os resultados completos e seu contexto, consulte [VALIDATION.md](VALIDATION.md)
+e o [histórico público de desenvolvimento](DEVLOG.md). O
+[roteiro](ROADMAP.md) separa critérios futuros de capacidades já exercitadas.
