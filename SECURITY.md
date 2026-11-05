@@ -58,3 +58,17 @@ continua verificando todos os demais avisos e bloqueia essas exceções a partir
 **22/11/2026**. Antes dessa data, revisar as versões de eframe/accesskit/rfd e migrar as
 dependências indiretas para `zbus` 6, com testes de acessibilidade e seleção de arquivos.
 Isso não constitui uma auditoria ou uma promessa de ausência de vulnerabilidades.
+
+### Revisão de 05/11/2026
+
+A árvore do Cargo travada no Linux confirma `zbus 5.19.0` em duas rotas:
+`eframe → AccessKit/AT-SPI` e `rfd 0.15.4 → ashpd 0.11.1`. O
+[adaptador Unix atual do AccessKit](https://github.com/AccessKit/accesskit/blob/main/adapters/unix/Cargo.toml)
+ainda requer zbus 5. O [rfd 0.17.2](https://github.com/PolyMeilex/rfd/blob/0.17.2/src/lib.rs#L56-L77)
+usa outro backend de portal, mas atualizar só esse componente não elimina os avisos.
+A troca exige validação de diálogos e requisitos de execução.
+
+A migração integral permanece aberta na [issue #7](https://github.com/aaronmlf/voice-app/issues/7).
+A revisão preservou acessibilidade, diálogos, lockfile e o prazo do gate. Antes de
+retirar as exceções, confirme que os crates separados saíram do grafo Linux e
+valide o uso de acessibilidade, seleção de arquivos e os checks das duas plataformas.
