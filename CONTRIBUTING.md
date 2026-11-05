@@ -1,11 +1,11 @@
 # Como contribuir
 
-O voice-app é um aplicativo independente de voz, local e de código aberto. A versão Linux é
-experimental. Consulte o [roteiro](docs/ROADMAP.md), a [matriz de funcionalidades](docs/FEATURES.md)
+O voice-app é um aplicativo independente de voz, local e de código aberto. As versões Linux e
+Windows são experimentais. Consulte o [roteiro](docs/ROADMAP.md), a [matriz de funcionalidades](docs/FEATURES.md)
 e o [contrato de desenvolvimento](AGENTS.md) antes de propor uma mudança.
 
 Contribuições pequenas são mais fáceis de revisar. Para uma mudança de arquitetura, novo formato
-de preset, dependência ou funcionalidade ampla, abra uma discussão em uma issue primeiro e descreva
+de preset, dependência ou funcionalidade ampla, abra uma issue primeiro e descreva
 o comportamento esperado. Informe se você está trabalhando na tarefa para evitar trabalho duplicado.
 
 ## Preparar o ambiente
@@ -37,6 +37,7 @@ RAM. O perfil release mantém LTO desativado para reduzir o pico de memória.
 | `voice-core` | Contratos serializáveis, atômicos e filas limitadas; sem SO, GUI ou banco de dados |
 | `voice-dsp` | DSP preparado; depende do core e das bibliotecas DSP, sem GUI ou adaptador de plataforma |
 | `voice-pipewire` | Grafo de dispositivos Linux e callbacks; sem GUI, banco ou I/O de arquivos nos callbacks |
+| `voice-wasapi` | Dispositivos Windows, captura do desktop explícita e rota para um par virtual instalado e validado; sem criar endpoints ou instalar drivers |
 | `voice-library` | Decodificação, biblioteca persistente, intercâmbio e mistura offline |
 | `voice-engine` | Registro de comandos, sessão, socket local, gravação e workers |
 | `apps` | Clientes do motor; use o registro compartilhado, sem reimplementar comandos |
@@ -90,6 +91,20 @@ uma reprodução com sinais sintéticos e os menores trechos de diagnóstico nec
 
 ## Enviar um pull request
 
+O repositório mantém três branches públicas:
+
+| Branch | Papel |
+|---|---|
+| `main` | Código público revisado e fonte das releases |
+| `beta` | Integração antes de enviar à `main`; o nome não indica qualificação beta |
+| `windows-native` | Desenvolvimento e diagnóstico específicos do Windows |
+
+Prefira um PR de integração de `beta` para `main`. Para trazer mudanças de
+`windows-native`, revise os commits e caminhos que serão integrados: a branch guarda
+um protótipo legado de driver próprio e arquivos auxiliares. A integração deve levar
+somente as mudanças necessárias, mantendo o protótipo fora da `main` e dos pacotes.
+Contribuições de forks não exigem novas branches neste repositório.
+
 Explique o problema, o comportamento após a mudança e como reproduzir ou verificar o resultado.
 Liste os comandos realmente executados e suas limitações. Para alterações visuais, uma captura
 com dados fictícios ajuda na revisão. Para alterações de áudio, informe formato, taxa, perfil de
@@ -98,6 +113,9 @@ efeitos e contexto de teste; use uma amostra sintética ou com licença identifi
 Mantenha o escopo pequeno e evite mudanças de formatação em arquivos alheios à tarefa. Se usar
 agentes de IA, coordene os arquivos editados e as tarefas pesadas. A autoria da ferramenta não
 substitui revisão, testes ou conferência de licenças e dados que serão publicados.
+Verifique se a autoria do commit usa o endereço noreply do GitHub ou outro endereço
+explicitamente público. O repositório e os pacotes contêm somente os **12 presets embutidos**;
+presets próprios, imagens, gravações, modelos e a biblioteca pessoal ficam locais.
 
 ## Licenças e releases
 
@@ -107,7 +125,9 @@ Inclua a origem e a licença de qualquer conteúdo novo; não envie mídia ou mo
 e licença verificáveis. Referências a outros produtos não autorizam copiar sua identidade ou assets.
 
 Uma release experimental deve trazer notas com capacidades testadas, limitações e requisitos,
-o pacote Linux e seu SHA256. Os gates e o pacote precisam corresponder ao código da tag publicada.
+o pacote da plataforma (Linux `.tar.gz` ou Windows `.zip`) e seu `SHA256SUMS.txt`. Os
+gates e o pacote precisam corresponder ao código da tag inédita publicada a partir da
+`main`. Consulte o [guia de publicação](docs/RELEASING.md); preserve tags e assets antigos.
 Não promova uma versão a estável ou beta apenas porque compilou ou passou nos testes de software;
 os critérios de hardware, GUI, distribuição e uso prolongado continuam separados no roteiro.
 

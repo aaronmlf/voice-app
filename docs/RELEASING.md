@@ -4,33 +4,53 @@ O repositório público é [aaronmlf/voice-app](https://github.com/aaronmlf/voic
 O código próprio usa MIT OR Apache-2.0. Apenas os 12 presets originais do aplicativo são
 distribuídos; vozes criadas pelo usuário, gravações, modelos e bibliotecas pessoais ficam locais.
 
-## Fluxo
+## Preparar a origem
 
-1. Atualize `workspace.package.version` em `Cargo.toml`, as notas de versão e as evidências.
-2. Envie o código revisado para `main`. Confira o workflow **Linux checks**.
-3. Em **Actions → Linux experimental release → Run workflow**, escolha `main` e informe uma
-   tag nova, por exemplo `v0.1.0-alpha.1`. Alternativamente, envie uma tag `v*` pelo Git.
-4. O workflow fixa o commit de origem e confere a versão. Executa os gates de código,
-   corpus, benchmark, dependências/licenças e integração PipeWire isolada nos runners GitHub.
-5. Após todos os jobs passarem, cria um rascunho, anexa o `.tar.gz` e `SHA256SUMS.txt` e publica
-   como pré-release. Uma falha anterior à publicação mantém o diagnóstico em Actions.
+1. Revise o código público, o `Cargo.lock`, a versão base em `workspace.package.version`
+   e as notas das plataformas que serão publicadas.
+2. Integre a mudança revisada à `main` pelo [fluxo de contribuição](../CONTRIBUTING.md).
+   Confira os checks Linux e Windows relevantes e anote o SHA revisado.
+3. Escolha uma tag inédita, com a mesma versão base do Cargo. Verifique tags e releases
+   existentes, incluindo rascunhos. Use uma tag nova a cada publicação.
 
-Os binários são compilados com Rust 1.98.1 no Ubuntu 24.04 x86_64, com um job Cargo e sem LTO.
-Esse ambiente de compilação não certifica áudio em hardware Ubuntu. O aplicativo continua
-dependendo de PipeWire e das bibliotecas gráficas nativas; o arquivo não é um AppImage.
-Compilações locais podem exigir glibc mais nova e não devem substituir esses assets publicados.
+## Publicar por plataforma
 
-O workflow aceita tags da mesma versão base do Cargo, incluindo sufixos de pré-release.
-Enquanto o produto for experimental, ele sempre publica pré-releases. A promoção a estável
-exige evidências dos critérios do roteiro e alteração deliberada desse processo.
+Em **Actions**, abra o workflow da plataforma e selecione **Run workflow → main**.
+Preencha a tag explicitamente. Para publicar Linux e Windows da mesma fonte, confirme
+que os dois disparos selecionaram o mesmo SHA da `main`.
+
+| Workflow | Formato da tag | Notas | Assets |
+|---|---|---|---|
+| [Linux experimental release](../.github/workflows/release.yml) | `vMAJOR.MINOR.PATCH`, com sufixo opcional | [docs/RELEASE-NOTES.md](RELEASE-NOTES.md) | Linux x86_64 `.tar.gz` e `SHA256SUMS.txt` |
+| [Windows experimental release](../.github/workflows/release-windows.yml) | `windows-vMAJOR.MINOR.PATCH-alpha.N` | [packaging/windows/README.md](../packaging/windows/README.md) | Windows x64/MSVC `.zip` e `SHA256SUMS.txt` |
+
+Os workflows são manuais e usam o SHA exato do disparo na `main` para validar,
+compilar e publicar. Os dois executam checks de código, corpus, benchmarks e
+verificações de licenças. O Linux também executa a política de dependências e
+a integração PipeWire isolada; o Windows verifica o pacote extraído, a GUI sem
+áudio e o comportamento offline/recusa segura no Wine.
+
+Depois dos gates, cada workflow cria um rascunho, anexa o pacote e seu checksum e
+publica como pré-release. Confira a tag, o SHA, os nomes dos assets e os checksums.
+Atualize os links de download do [README](../README.md) para a plataforma publicada.
+Se a `main` avançar antes da publicação, o workflow para antes de criar a tag;
+revise a nova ponta da branch e inicie outro run.
+
+O Linux é compilado no Ubuntu 24.04 x86_64 e depende de PipeWire e das bibliotecas
+gráficas nativas. O Windows é compilado com MSVC em Windows Server 2022; o ZIP não
+inclui VB-CABLE nem driver próprio. Os dois workflows usam um job de compilação
+Cargo por runner e release sem LTO. O ambiente de compilação e os smokes de
+software não qualificam áudio em hardware. A promoção a estável exige evidências
+dos critérios do roteiro e alteração deliberada desse processo.
 
 ## Integridade e repetição
 
-O job de publicação recebe permissão de escrita somente para criar a release e enviar os
-assets; os jobs de compilação usam leitura. Ele baixa apenas o artifact desse run, exige os
+Somente o job de publicação recebe permissão de escrita. Ele cria a tag no SHA validado,
+cria a release e envia os assets; os jobs de compilação usam leitura. O job de publicação
+baixa apenas o artefato desse run, exige os
 dois arquivos esperados e verifica o SHA256 antes do upload. Não usa token pessoal nem sobrescreve
-assets existentes. Se uma tentativa deixar um rascunho, examine o run e o rascunho antes de
-escolher uma nova tag ou concluir a recuperação manualmente.
+assets existentes. Preserve as tags e os binários históricos. Se uma tentativa deixar uma tag
+ou um rascunho, examine o run e o estado da publicação antes de repetir com outra tag inédita.
 
 Os assets são anexados ao rascunho antes da publicação, conforme a recomendação do GitHub para
 [releases imutáveis](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
@@ -44,6 +64,8 @@ continuam sendo smoke, mesmo quando aprovadas. Atraso de CPU, buffering algorít
 física são grandezas distintas. Discord, GUI OBS, hardware, outras distribuições e sessões
 longas só entram como aprovados quando houver relatório específico.
 
-Revise a lista de arquivos antes do primeiro commit: fontes, fixtures próprias verificadas,
+Revise a lista explícita de arquivos antes de enviar o código público: fontes, fixtures próprias verificadas,
 capturas da interface com vozes originais, documentação pública e licenças. Relatórios privados
 podem conter caminhos, dispositivos e trabalho com presets pessoais; publique um resumo revisado.
+Verifique também que a autoria do commit usa o endereço noreply do GitHub ou outro endereço
+explicitamente público.

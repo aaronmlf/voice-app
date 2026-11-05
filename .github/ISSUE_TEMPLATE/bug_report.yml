@@ -22,6 +22,8 @@ body:
       label: Como você executa o programa?
       options:
         - Pacote Linux tar.gz da release
+        - Pacote Windows ZIP da release
+        - Pacote Windows ZIP executado com Wine
         - Compilado a partir do código
         - Outro método (descreva no ambiente)
     validations:
@@ -30,8 +32,8 @@ body:
     id: environment
     attributes:
       label: Ambiente
-      description: Distribuição e versão, PipeWire/WirePlumber, desktop e Wayland/X11. Em bugs de áudio, informe modelos de microfone/fone, conexão e taxa se conhecidos. Não inclua números de série.
-      placeholder: Linux, distribuição/versão, desktop, servidor de áudio e dispositivos relevantes.
+      description: Informe sistema e versão. No Linux, inclua PipeWire/WirePlumber, desktop e Wayland/X11; no Windows, diga se a execução é nativa, em VM ou Wine, e se há VB-CABLE. Em bugs de áudio, informe conexão, dispositivos, taxa e aplicativo de destino se conhecidos. Omitir números de série e caminhos pessoais.
+      placeholder: Sistema e versão, ambiente de execução, servidor ou rota de áudio e dispositivos relevantes.
     validations:
       required: true
   - type: textarea

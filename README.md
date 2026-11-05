@@ -1,21 +1,23 @@
 # voice-app
 
-[Releases](https://github.com/aaronmlf/voice-app/releases) ·
-[Contribuir](CONTRIBUTING.md) · [Reportar um problema](https://github.com/aaronmlf/voice-app/issues/new/choose)
-
 Um estúdio de voz local e de código aberto, escrito em Rust. Vozes tradicionais, soundboard,
-laboratório de efeitos, gravação e replay, com um microfone virtual PipeWire para outros aplicativos.
-
-**Versão experimental Linux.** O percurso de áudio foi testado em um daemon PipeWire isolado;
-captura pelo módulo de áudio da libobs também foi verificada. Discord, fluxo gráfico da OBS,
-hardware real, sessões longas e outras distribuições ainda exigem evidências específicas.
+laboratório de efeitos, gravação e replay. Envia voz processada e soundboard para outros
+aplicativos pelo PipeWire no Linux e, experimentalmente, pelo VB-CABLE no Windows.
 Este é um projeto independente, sem vínculo com o Voicemod.
+
+| Pré-release experimental | Baixar | Requisitos |
+|---|---|---|
+| [Linux alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.3) | [Pacote .tar.gz](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.3/voice-app-0.1.0-x86_64-unknown-linux-gnu.tar.gz) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.3/SHA256SUMS.txt) | Linux x86_64, PipeWire e bibliotecas gráficas nativas |
+| [Windows alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.3) | [Pacote .zip](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.3/voice-app-0.1.0-x86_64-pc-windows-msvc.zip) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.3/SHA256SUMS.txt) | Alvo Windows 10/11 x64; VB-CABLE separado para enviar áudio a outros apps |
+
+[Todas as releases](https://github.com/aaronmlf/voice-app/releases) ·
+[Funcionalidades e testes](docs/FEATURES.md) · [Contribuir](CONTRIBUTING.md) ·
+[Reportar um problema](https://github.com/aaronmlf/voice-app/issues/new/choose)
 
 ## Executar no Linux
 
-Baixe o `.tar.gz` e `SHA256SUMS.txt` na página de
-[releases](https://github.com/aaronmlf/voice-app/releases), confira `sha256sum -c SHA256SUMS.txt`,
-descompacte e execute `./voice-app` na pasta extraída. As primeiras releases são pré-releases.
+Com o pacote e o checksum na mesma pasta, confira `sha256sum -c SHA256SUMS.txt`,
+descompacte e execute `./voice-app` na pasta extraída.
 O arquivo `RUNNING.txt` descreve as dependências de execução; não é necessário compilar o pacote.
 O workflow de release compila no Ubuntu 24.04; isso não substitui validação com hardware nessa
 distribuição. Compilações locais podem exigir versões mais novas da glibc e das bibliotecas.
@@ -39,15 +41,22 @@ aberturas e retoma quando os dispositivos voltam; **Desconectar** desativa essa 
 A monitoração começa desligada; ative **Ouvir-me** e ajuste seu volume de 0 a 200% na barra inferior.
 O volume é salvo e não altera o microfone virtual nem o soundboard. Selecione **Voice App Virtual
 Microphone** como entrada no Discord, OBS ou jogo. O microfone padrão do sistema não é alterado.
+No Tenacity Flatpak, abra a entrada `pulse` no host ALSA, em mono e 48 kHz, e direcione
+apenas o fluxo de captura do Tenacity para **Voice App Virtual Microphone** no controle
+de áudio por aplicativo. Em uma sessão guiada, uma nova gravação manteve essa rota e o
+usuário ouviu a voz com os efeitos já ativos e dois bipes do soundboard. É evidência dessa
+sessão, sem medição de latência, análise do WAV ou qualificação de vocoder/granular específicos.
+
 Fechar a interface encerra o motor quando ela o iniciou; uma sessão `voice-cli serve` externa
 continua até `shutdown` ou Ctrl+C.
 
 ## Windows experimental
 
-A portabilidade nativa usa WASAPI para preparar captura, efeitos, Ouvir-me estéreo,
-pré-escuta e gravação, com o mesmo motor/biblioteca. A CI compila com MSVC em Windows
-Server 2022; uma verificação adicional pelo Wine usa um prefixo isolado e áudio sintético.
-Os resultados desses gates são registrados separadamente de testes em Windows 10/11 real.
+Confira o SHA-256 do ZIP com `Get-FileHash -Algorithm SHA256` e compare com
+`SHA256SUMS.txt`. Extraia o pacote e execute `voice-app.exe`. Os executáveis não
+são assinados. A CI compila com MSVC em Windows Server 2022 e testa o pacote extraído
+com áudio desligado na GUI; o Wine cobre comandos offline e recusa segura, com GUI e
+IPC ainda não qualificados nesse ambiente.
 
 A implementação experimental mais recente permite enviar efeitos e soundboard a um
 **VB-CABLE instalado separadamente**. Em Configurações, escolha explicitamente **CABLE Input**
@@ -59,9 +68,9 @@ os termos do fornecedor. O Voice App não inclui o cabo nem instala drivers; os 
 padrão do Windows são preservados. Essa rota dispensa desenvolver e assinar um driver próprio.
 Essa frente foi cancelada e o [PR #5](https://github.com/aaronmlf/voice-app/pull/5) foi fechado sem merge.
 
-Isso descreve o código experimental, sem anunciar uma nova release. O percurso com VB-CABLE
-instalado, efeitos e soundboard nos aplicativos de destino ainda precisa de validação em Windows.
-Wine e os testes offline não comprovam essa etapa. Veja o [guia e as verificações pendentes](docs/WINDOWS.md).
+Uma rodada anterior em VM registrou tons e fala sintética no Audacity via VB-CABLE.
+O percurso da release com microfone físico, efeitos e soundboard nos aplicativos de
+destino ainda precisa de validação. Veja o [guia e as verificações pendentes](docs/WINDOWS.md).
 
 ## Capturar áudio do desktop
 
@@ -80,17 +89,17 @@ As filas e os replays têm capacidade fixa; a duração da gravação não aumen
 
 ```bash
 # Terminal 1: serviço local; primeira sessão parada, última conexão lembrada
-cargo run -p voice-cli -- serve
+./voice-cli serve
 
 # Terminal 2: diagnóstico, vozes e início explícito
-cargo run -p voice-cli -- doctor
-cargo run -p voice-cli -- devices
-cargo run -p voice-cli -- voices
-cargo run -p voice-cli -- start
-cargo run -p voice-cli -- select builtin.radio
-cargo run -p voice-cli -- monitor true
-cargo run -p voice-cli -- status
-cargo run -p voice-cli -- stop
+./voice-cli doctor
+./voice-cli devices
+./voice-cli voices
+./voice-cli start
+./voice-cli select builtin.radio
+./voice-cli monitor true
+./voice-cli status
+./voice-cli stop
 ```
 
 Use `--help` para todos os comandos. `--data-dir` e `--socket` permitem sessões isoladas.
@@ -104,13 +113,11 @@ biblioteca e interrompe somente esse som; os arquivos de áudio são mantidos.
 ### Testar sem microfone
 
 ```bash
-cargo run -p voice-cli -- tone /tmp/entrada-voice.wav
-cargo run -p voice-cli -- process /tmp/entrada-voice.wav /tmp/radio-voice.wav --preset builtin.radio
-cargo xtask bench
+./voice-cli tone entrada-voice.wav
+./voice-cli process entrada-voice.wav radio-voice.wav --preset builtin.radio
 ```
 
-Esses comandos não abrem dispositivos nem reproduzem o som. O benchmark mede somente tempo
-de execução do DSP; não mede latência ponta a ponta. Com o serviço ativo, `voice-cli mcp`
+Esses comandos não abrem dispositivos nem reproduzem o som. Com o serviço ativo, `voice-cli mcp`
 oferece `voice_status` e `voice_command` por MCP/stdio usando o mesmo registro da GUI e CLI.
 
 ## Funcionalidades
@@ -132,8 +139,8 @@ Veja [a matriz de funcionalidades](docs/FEATURES.md) para distinguir capacidades
 experimentais e planejadas. No Laboratório, use as setas para processar um efeito antes/depois;
 “Ordem padrão” restaura a sequência sem mudar os parâmetros. O teto de segurança fica ao final.
 Veja [como personalizar vozes](docs/VOICE-LAB.md) para imagens, mistura e intensidade dos efeitos.
-IA de conversão de voz, atalhos globais por
-portal, bandeja do sistema, Windows/macOS, comunidade e celular ainda não estão entregues.
+IA de conversão de voz, atalhos globais por portal, bandeja do sistema, macOS,
+comunidade e celular seguem planejados.
 
 ## Desenvolvimento e validação
 
@@ -167,7 +174,8 @@ Os validadores de fluxo, latência por software, libobs e sessões prolongadas u
 pronto. Consulte [os procedimentos e limites](docs/VALIDATION.md). O wrapper Cargo e os
 validadores compartilham um lock no workspace que recusa uma segunda tarefa pesada.
 
-O pacote `.tar.gz` em `dist/` contém binários, documentação, licenças e avisos de terceiros.
+Os pacotes `.tar.gz` (Linux) e `.zip` (Windows) contêm binários, documentação,
+licenças e avisos de terceiros.
 Não instala serviços, drivers nem altera configurações globais. Consulte
 [arquitetura](docs/ARCHITECTURE.md), [roteiro](docs/ROADMAP.md), [protocolo](docs/CONTROL.md),
 [resultados](docs/DEVLOG.md), [notas da versão](docs/RELEASE-NOTES.md) e
@@ -178,10 +186,11 @@ O procedimento de publicação está em [RELEASING.md](docs/RELEASING.md).
 
 A biblioteca fica em `$XDG_DATA_HOME/voice-app` ou `~/.local/share/voice-app`; o socket fica em
 `$XDG_RUNTIME_DIR/voice-app/control.sock`. Configurações e áudios permanecem locais.
+O repositório e os pacotes incluem somente os **12 presets embutidos**.
+Presets próprios, imagens, gravações e a biblioteca pessoal ficam locais.
 Não há login, telemetria, download automático de modelos nem envio de microfone à internet.
 Para remover os dados, feche todas as sessões e remova explicitamente o diretório da biblioteca.
 
 Código próprio: **MIT OR Apache-2.0**. Dependências e fontes mantêm seus termos, incluindo MPL-2.0
 para Symphonia. O empacotamento inclui os respectivos avisos e fontes MPL inalteradas; o relatório
 SPDX não substitui uma auditoria de vulnerabilidades. Nenhum modelo de voz proprietário é distribuído.
-
