@@ -434,6 +434,8 @@ fn resolved_packages(meta: &Value) -> Result<Vec<&Value>> {
     Ok(packages)
 }
 fn license_report(meta: &Value, notices: Option<&Path>) -> Result<PathBuf> {
+    let vendor =
+        Path::new(meta["workspace_root"].as_str().context("workspace root")?).join("vendor");
     let mut rows = Vec::new();
     let mut rejected = Vec::new();
     for package in resolved_packages(meta)? {
@@ -444,6 +446,9 @@ fn license_report(meta: &Value, notices: Option<&Path>) -> Result<PathBuf> {
         let archive_hash = source_archive(package)
             .map(|path| sha256_file(&path))
             .transpose()?;
+        let vendored = package["manifest_path"]
+            .as_str()
+            .is_some_and(|path| Path::new(path).starts_with(&vendor));
         let mut models = Vec::new();
         if name == "nnnoiseless" {
             let root = Path::new(
@@ -455,7 +460,7 @@ fn license_report(meta: &Value, notices: Option<&Path>) -> Result<PathBuf> {
             .context("denoiser source directory")?;
             models.push(json!({"path":"src/weights.rnn","sha256":sha256_file(&root.join("src/weights.rnn"))?,"declared_license":"BSD-3-Clause","notice":"Default denoising weights shipped with this nnnoiseless crate; retain its complete COPYING notice. No external model is loaded."}));
         }
-        rows.push(json!({"name":name,"version":version,"source":package["source"],"repository":package["repository"],"source_archive_sha256":archive_hash,"declared_spdx":expression,"normalized_expression":expression.replace('/', " OR "),"accepted_by_allowlist":permitted,"embedded_models":models}));
+        rows.push(json!({"name":name,"version":version,"source":package["source"],"vendored":vendored,"repository":package["repository"],"source_archive_sha256":archive_hash,"declared_spdx":expression,"normalized_expression":expression.replace('/', " OR "),"accepted_by_allowlist":permitted,"embedded_models":models}));
         if !permitted {
             rejected.push(format!(
                 "{name} {version}: {}",
@@ -466,7 +471,7 @@ fn license_report(meta: &Value, notices: Option<&Path>) -> Result<PathBuf> {
                 }
             ));
         }
-        if let Some(destination) = notices.filter(|_| package["source"].is_string()) {
+        if let Some(destination) = notices.filter(|_| package["source"].is_string() || vendored) {
             copy_package_notices(package, &destination.join(format!("{name}-{version}")))?;
             // Ship the complete, unmodified covered source alongside the binary;
             // keep MPL obligations and notices separate from our own dual license.
@@ -741,6 +746,12 @@ fn package(root: &Path) -> Result<()> {
     }
     let report = license_report(&meta, Some(&staging.join("THIRD_PARTY_LICENSES")))?;
     fs::copy(report, staging.join("THIRD_PARTY_LICENSES.json"))?;
+    if !cfg!(windows) {
+        fs::copy(
+            root.join("vendor/README.md"),
+            staging.join("THIRD_PARTY_LICENSES/ACCESSIBILITY-PATCHES.md"),
+        )?;
+    }
     fs::write(
         staging.join("SOURCE-NOTICE.txt"),
         "This package includes unmodified MPL-2.0 dependency source in THIRD_PARTY_SOURCES/, including Symphonia decoders and, when enabled, audio_thread_priority. Those source files remain under their original licenses and notices, included in each source directory and THIRD_PARTY_LICENSES/. The project's MIT OR Apache-2.0 grant applies to our original code; it does not replace third-party code or font licenses. Fonts include OFL-1.1 and Ubuntu-font-1.0 notices. Declared package licenses are listed in THIRD_PARTY_LICENSES.json.\n",
@@ -748,7 +759,7 @@ fn package(root: &Path) -> Result<()> {
     if !cfg!(windows) {
         fs::write(
             staging.join("RUNNING.txt"),
-            "Linux native binaries. This archive is not a self-contained AppImage. Install PipeWire, libpipewire-0.3 and the display/windowing runtime required by your distribution. Run ./voice-app or ./voice-cli --help. Verify the outer archive with sha256sum -c SHA256SUMS.txt. No drivers, services, default microphone changes, or system installs are performed by unpacking this archive.\n",
+            "Linux native binaries. This archive is not a self-contained AppImage. Install PipeWire, libpipewire-0.3 and the display/windowing runtime required by your distribution. File dialogs use the desktop portal and libdbus (libdbus-1-3 on Ubuntu, dbus on Arch/Manjaro), with Zenity as a fallback. Run ./voice-app or ./voice-cli --help. Verify the outer archive with sha256sum -c SHA256SUMS.txt. No drivers, services, default microphone changes, or system installs are performed by unpacking this archive.\n",
         )?;
     }
     let output_directory = root.join("dist");

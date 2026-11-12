@@ -43,32 +43,20 @@ e na documentação de validação.
 Bugs de som, compatibilidade e interface sem impacto de segurança podem ser relatados pelo
 formulário público de bug, com uma reprodução sem informações sensíveis.
 
-## Pendência de manutenção das dependências
+## Dependências de acessibilidade no Linux
 
-Em 22/10/2026, a interface e os portais trazem `zbus` 5 e os crates separados `zvariant`,
-`zbus_names` e `zvariant_derive`. Os avisos informativos
+As releases anteriores à migração da [issue #7](https://github.com/aaronmlf/voice-app/issues/7)
+usavam `zbus` 5 e os crates separados `zvariant`, `zbus_names` e `zvariant_derive`. Os avisos informativos
 [RUSTSEC-2026-0370](https://rustsec.org/advisories/RUSTSEC-2026-0370.html),
 [0371](https://rustsec.org/advisories/RUSTSEC-2026-0371.html) e
 [0372](https://rustsec.org/advisories/RUSTSEC-2026-0372.html) registram a incorporação desses
-crates ao `zbus` 6 e a falta de manutenção dos pacotes separados. Esses três registros
-não descrevem uma vulnerabilidade corrigida por uma atualização compatível.
+crates ao `zbus` 6 e a falta de manutenção dos pacotes separados.
 
-`deny.toml` contém exceções individuais apenas para esses avisos de manutenção. A CI
-continua verificando todos os demais avisos e bloqueia essas exceções a partir de
-**22/11/2026**. Antes dessa data, revisar as versões de eframe/accesskit/rfd e migrar as
-dependências indiretas para `zbus` 6, com testes de acessibilidade e seleção de arquivos.
-Isso não constitui uma auditoria ou uma promessa de ausência de vulnerabilidades.
+O lockfile resolve `zbus` 6 para os [adaptadores AccessKit e AT-SPI](vendor/README.md).
+O `rfd` 0.17 usa o portal por `libdbus` e oferece Zenity como alternativa. A política
+de dependências proíbe `zbus` anterior a 6 e os três crates separados. A CI aplica a
+mesma política de fontes, licenças e avisos ao aplicativo e aos testes de protocolo AT-SPI.
 
-### Revisão de 05/11/2026
-
-A árvore do Cargo travada no Linux confirma `zbus 5.19.0` em duas rotas:
-`eframe → AccessKit/AT-SPI` e `rfd 0.15.4 → ashpd 0.11.1`. O
-[adaptador Unix atual do AccessKit](https://github.com/AccessKit/accesskit/blob/main/adapters/unix/Cargo.toml)
-ainda requer zbus 5. O [rfd 0.17.2](https://github.com/PolyMeilex/rfd/blob/0.17.2/src/lib.rs#L56-L77)
-usa outro backend de portal, mas atualizar só esse componente não elimina os avisos.
-A troca exige validação de diálogos e requisitos de execução.
-
-A migração integral permanece aberta na [issue #7](https://github.com/aaronmlf/voice-app/issues/7).
-A revisão preservou acessibilidade, diálogos, lockfile e o prazo do gate. Antes de
-retirar as exceções, confirme que os crates separados saíram do grafo Linux e
-valide o uso de acessibilidade, seleção de arquivos e os checks das duas plataformas.
+A CI continua rejeitando a volta das exceções a partir de **22/11/2026**. Ao atualizar
+o AccessKit, confirme o grafo resolvido e teste a árvore, o foco, as ações e os eventos
+AT-SPI, além da abertura, do salvamento e do cancelamento nos diálogos.

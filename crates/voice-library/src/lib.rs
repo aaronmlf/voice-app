@@ -333,6 +333,7 @@ impl Library {
             file_name == format!("{id}.wav"),
             "invalid managed audio path in database"
         );
+        let frames = u64::try_from(frames).context("invalid clip frame count")?;
         ensure!(frames > 0, "invalid clip frame count");
         Ok(Clip {
             id,
@@ -384,6 +385,8 @@ impl Library {
 
     fn store_clip(&self, samples: &[f32], board_id: &str, name: &str) -> Result<Clip> {
         ensure!(!samples.is_empty(), "audio clip is empty");
+        let stored_frames = i64::try_from(samples.len())
+            .context("clip frame count exceeds SQLite integer range")?;
         let id = new_id("clip");
         let file_name = format!("{id}.wav");
         let path = self.root.join("clips").join(&file_name);
@@ -393,7 +396,7 @@ impl Library {
         }
         let result = self.db.execute(
             "INSERT INTO clips(id,board_id,name,file_name,frames) VALUES(?1,?2,?3,?4,?5)",
-            params![id, board_id, name.trim(), file_name, samples.len() as u64],
+            params![id, board_id, name.trim(), file_name, stored_frames],
         );
         if let Err(err) = result {
             let _ = fs::remove_file(&path);
@@ -455,7 +458,7 @@ impl Library {
     }
 }
 
-type ClipRow = (String, String, String, String, u64);
+type ClipRow = (String, String, String, String, i64);
 fn clip_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipRow> {
     Ok((
         row.get(0)?,
@@ -929,6 +932,31 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn bundled_sqlite_includes_wal_page_size_fix() {
+        assert!(rusqlite::version_number() >= 3_054_000);
+    }
+
+    #[test]
+    fn clip_metadata_checks_signed_sqlite_frame_counts() -> Result<()> {
+        let temp = Temp::new();
+        let library = Library::open(&temp.0.join("library"))?;
+        for frames in [-1_i64, 0, 1, i64::MAX] {
+            let row = library.db.query_row(
+                "SELECT 'clip.test', 'default', 'test', 'clip.test.wav', ?1",
+                [frames],
+                clip_row,
+            )?;
+            let clip = library.finish_clip(row);
+            if frames <= 0 {
+                assert!(clip.is_err());
+            } else {
+                assert_eq!(clip?.frames, frames as u64);
+            }
+        }
+        Ok(())
     }
 
     #[test]

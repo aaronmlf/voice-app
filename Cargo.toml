@@ -1,5 +1,13 @@
 [workspace]
 members = ["crates/*", "apps/*", "xtask"]
+exclude = [
+    "vendor/accesskit_atspi_common",
+    "vendor/accesskit_unix",
+    "vendor/atspi-common",
+    "vendor/atspi-proxies",
+    "vendor/zbus-lockstep",
+    "vendor/zbus-lockstep-macros",
+]
 resolver = "2"
 
 [workspace.package]
@@ -21,6 +29,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 hound = "3.5"
+
+[patch.crates-io]
+accesskit_atspi_common = { path = "vendor/accesskit_atspi_common" }
+accesskit_unix = { path = "vendor/accesskit_unix" }
+atspi-common = { path = "vendor/atspi-common" }
+atspi-proxies = { path = "vendor/atspi-proxies" }
 
 [profile.release]
 lto = false

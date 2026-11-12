@@ -44,16 +44,33 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
+          sudo apt-get install -y pipewire pipewire-bin at-spi2-core gir1.2-atspi-2.0 python3-gi dbus-daemon xvfb xauth libgl1-mesa-dri libdbus-1-3
       - name: Set up Rust
         run: |
           rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.98.1
       - run: cargo fetch --locked
       - run: cargo xtask check
+      - name: Check AT-SPI wire signatures against the upstream XML
+        run: cargo test --locked --manifest-path vendor/atspi-common/Cargo.toml --lib --target-dir "$GITHUB_WORKSPACE/target" -- --quiet
       - run: cargo xtask corpus
       - run: cargo xtask bench
       - run: cargo xtask license-check
       - run: cargo xtask package
+      - name: Check X11 accessibility in a private session
+        run: |
+          sudo systemd-run --quiet --wait --pipe --collect --uid="$(id -u)" --gid="$(id -g)" \
+            --working-directory="$GITHUB_WORKSPACE" -p RuntimeMaxSec=100 \
+            -p MemoryHigh=2500M -p MemoryMax=3G -p MemorySwapMax=0 \
+            /usr/bin/python3 scripts/test-linux-accessibility.py --gui target/release/voice-app \
+            --cli target/release/voice-cli --output target/qa-a11y-x11
+      - name: Check file dialog portal and fallback
+        run: |
+          cargo build --locked -p voice-app --example rfd-dialog-probe
+          sudo systemd-run --quiet --wait --pipe --collect --uid="$(id -u)" --gid="$(id -g)" \
+            --working-directory="$GITHUB_WORKSPACE" -p RuntimeMaxSec=100 \
+            -p MemoryHigh=2500M -p MemoryMax=3G -p MemorySwapMax=0 \
+            /usr/bin/python3 scripts/rfd-dialog-qa.py "$GITHUB_WORKSPACE/target/debug/examples/rfd-dialog-probe"
       - name: Upload candidate archive
         uses: actions/upload-artifact@v4
         with:
@@ -91,7 +108,9 @@ jobs:
               raise SystemExit('Maintenance exceptions expired; review the zbus 6 migration before release')
           PY
       - name: Check declared licenses, sources, bans and known advisories
-        run: cargo deny check licenses bans sources advisories
+        run: |
+          cargo deny --locked check licenses bans sources advisories
+          cargo deny --locked --manifest-path vendor/atspi-common/Cargo.toml --config deny.toml check licenses bans sources advisories
 
   pipewire-smoke:
     name: Linux PipeWire integration

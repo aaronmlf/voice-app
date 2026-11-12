@@ -26,7 +26,9 @@ Para compilar a partir do código:
 
 Requisitos: Linux x86_64 com PipeWire e um gerenciador de sessão (por exemplo, WirePlumber),
 Rust 1.98+, compilador C/C++, Clang, pkg-config, bibliotecas de desenvolvimento do PipeWire,
-X11/Wayland e OpenGL. Seletores de arquivos usam o portal do desktop.
+X11/Wayland e OpenGL. Os seletores de arquivos usam o portal do desktop com `libdbus`
+(`libdbus-1-3` no Ubuntu, `dbus` no Arch/Manjaro), com `zenity` como alternativa
+quando o portal não está disponível.
 
 ```bash
 # Ubuntu: dependências de compilação
