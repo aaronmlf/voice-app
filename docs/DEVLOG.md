@@ -691,3 +691,26 @@ mensagem. No KDE, o salvamento passou com destino explícito. O portal usou
 outra pasta inicial em uma tentativa que forneceu uma pasta sugerida, opção
 que a GUI atual não usa. Os portais em um desktop Wayland, o ensaio com Orca e
 os checks do GitHub Actions nesta revisão seguem pendentes antes da integração.
+
+## Atualização do candidato da issue #7 — 12/11/2026
+
+O candidato preserva o AccessKit em zbus 6.2.1 e o rfd 0.17.2 já exercitado na
+revisão anterior. O SQLite embutido passa para 3.54.1 via rusqlite 0.41.1 e
+libsqlite3-sys 0.39.1, corrigindo o [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html).
+A contagem de quadros usa inteiros assinados na fronteira com o banco, com
+conversão verificada e preservação do esquema. Rustix 1.1.6 corrige o
+[RUSTSEC-2026-0486](https://rustsec.org/advisories/RUSTSEC-2026-0486.html).
+
+O `xtask check` passou com 200 testes Rust, incluindo a abertura de uma biblioteca
+sintética com esquema anterior, e 52 testes Python. O cargo-deny 0.20.2 passou nos
+grafos do app e da suíte AT-SPI com a base de avisos de 12/11. O pico observado
+no `xtask check` foi de 2,44 GiB sob limite de 3 GiB, com swap bloqueado e zero
+eventos de OOM. O grafo Windows também resolve o SQLite corrigido. A compilação
+e os testes Windows seguem a cargo da CI.
+
+O seletor nativo do KDE em Wayland passou em quatro cenários com o probe do
+rfd desta revisão. Abrir e salvar retornaram os caminhos Unicode esperados.
+Os dois cancelamentos retornaram sem seleção, e o salvamento cancelado deixou
+o destino ausente. O teste usou um compositor KWin virtual e um barramento
+privado. O pico do grupo foi de 173 MiB, com swap bloqueado e zero eventos de
+OOM. O ensaio cobre o seletor e o transporte do portal.
