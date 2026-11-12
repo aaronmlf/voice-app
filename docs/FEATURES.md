@@ -7,9 +7,9 @@ A pré-release [Linux alpha.4](https://github.com/aaronmlf/voice-app/releases/ta
 inclui a migração de acessibilidade para zbus 6, o seletor rfd atualizado e as
 correções de SQLite e rustix verificadas no
 [PR #10](https://github.com/aaronmlf/voice-app/pull/10).
-A [Windows alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.3)
-saiu do commit público `f86d1fb` após os
-[gates Windows](https://github.com/aaronmlf/voice-app/actions/runs/40541389816).
+A [Windows alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.4)
+incorpora a correção de SQLite da mesma revisão. A CI Windows exercita a
+biblioteca, os comandos offline e a interface com áudio desativado.
 Os pacotes incluem checksum e os **12 presets embutidos**. A biblioteca e os
 presets, imagens e áudios pessoais ficam locais.
 
