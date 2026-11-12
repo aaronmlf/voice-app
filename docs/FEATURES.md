@@ -3,12 +3,14 @@
 Os estados abaixo se referem às condições de teste descritas. O Voice App continua
 experimental. A branch `beta` é um canal de integração, não uma qualificação do produto.
 
-As pré-releases [Linux alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.3)
-e [Windows alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.3)
-saíram do mesmo commit público, `f86d1fb`, após os gates de
-[Linux](https://github.com/aaronmlf/voice-app/actions/runs/40541334978) e
-[Windows](https://github.com/aaronmlf/voice-app/actions/runs/40541389816). Ambos os
-pacotes incluem checksum e somente os **12 presets embutidos**. A biblioteca e os
+A pré-release [Linux alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.4)
+inclui a migração de acessibilidade para zbus 6, o seletor rfd atualizado e as
+correções de SQLite e rustix verificadas no
+[PR #10](https://github.com/aaronmlf/voice-app/pull/10).
+A [Windows alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.3)
+saiu do commit público `f86d1fb` após os
+[gates Windows](https://github.com/aaronmlf/voice-app/actions/runs/40541389816).
+Os pacotes incluem checksum e os **12 presets embutidos**. A biblioteca e os
 presets, imagens e áudios pessoais ficam locais.
 
 ## Núcleo e recursos compartilhados
@@ -37,7 +39,7 @@ presets, imagens e áudios pessoais ficam locais.
 | Captura do desktop | Experimental | Sink explícito, áudio estéreo, WAV/replay independentes e isolamento da fonte virtual verificados no grafo privado. |
 | Pacote Linux `.tar.gz` | Experimental | Build no Ubuntu 24.04 x86_64, checksum e conteúdo conferidos. Smokes de GUI em Xvfb e CLI no PipeWire privado; hardware, outras distribuições e fluxos longos são etapas separadas. |
 | Entrada no menu Linux/KDE | Verificada em uma sessão | Entrada e ícone instalados; abertura do binário pronto e segundo clique sem duplicação observados. Pinagem manual pelo KDE. |
-| Sessões prolongadas e latência | Qualificação parcial | Um perfil básico anterior passou 60 min em grafo privado. A tentativa de mistura por quatro horas falhou por novo `monitor_overruns`. Esses resultados não qualificam a alpha.3 nem demonstram latência física. Veja [VALIDATION.md](VALIDATION.md). |
+| Sessões prolongadas e latência | Qualificação parcial | Um perfil básico anterior passou 60 min em grafo privado. A tentativa de mistura por quatro horas falhou por novo `monitor_overruns`. As pré-releases atuais ainda precisam de validação prolongada e de latência física. Veja [VALIDATION.md](VALIDATION.md). |
 
 ## Windows
 
