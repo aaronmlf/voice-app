@@ -30,7 +30,7 @@ presets, imagens e áudios pessoais ficam locais.
 
 | Capacidade | Estado | Evidência e limites |
 |---|---|---|
-| Acessibilidade da GUI via AT-SPI | Candidato validado automaticamente | X11 e Wayland em sessões isoladas com libatspi: árvore, nomes e papéis, foco, acionamento e eventos de cache. Ensaio manual com Orca pendente. |
+| Acessibilidade da GUI via AT-SPI | Candidato validado em sessões isoladas | X11 e Wayland com libatspi verificaram árvore, nomes e papéis, foco, acionamento e eventos de cache. Orca 50.3 em X11 gerou os anúncios de **Criar voz** e **Importar** e a tecla Enter abriu o Laboratório. |
 | Diálogos de arquivo Linux | Candidato validado em sessões isoladas | O probe verificou abertura, salvamento com destino explícito e cancelamento com Unicode no portal KDE em X11 e Wayland e no Zenity em X11. |
 | Captura, fonte virtual e reconexão PipeWire | Experimentais | Cliente externo, módulo de captura da libobs e integração no PipeWire privado. Retorno do daemon, troca de padrão, reconexão e cancelamento por Stop exercitados em fixtures. Usuário relatou voz com efeito e soundboard no Discord desktop em sessão anterior; GUI da OBS e compatibilidade ampla permanecem abertas. |
 | Gravação no Tenacity | Teste prático de uma sessão | Tenacity Flatpak, ALSA/`pulse`, mono a 48 kHz. A captura foi direcionada por aplicativo para Voice App Virtual Microphone, mantendo o microfone padrão. A nova gravação preservou a rota, e o usuário confirmou ter ouvido voz com os efeitos já ativos e os dois bipes do soundboard. Sem análise do WAV, medição de latência ou qualificação de vocoder/granular específicos. |

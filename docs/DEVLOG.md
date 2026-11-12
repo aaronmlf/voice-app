@@ -714,3 +714,12 @@ Os dois cancelamentos retornaram sem seleção, e o salvamento cancelado deixou
 o destino ausente. O teste usou um compositor KWin virtual e um barramento
 privado. O pico do grupo foi de 173 MiB, com swap bloqueado e zero eventos de
 OOM. O ensaio cobre o seletor e o transporte do portal.
+
+O binário desta revisão passou com Orca 50.3 em X11 privado. O log do leitor
+registrou os anúncios de **Criar voz** e **Importar**, e Enter abriu o
+Laboratório. A árvore do cliente AT-SPI recebeu os eventos de cache nas
+assinaturas esperadas. O pico do grupo foi de 246 MiB, com swap bloqueado e
+zero eventos de OOM. O ensaio verificou a geração dos anúncios pelo log.
+Em Wayland privado, o mesmo binário registrou a árvore após ativação tardia
+e recuperou o foco em dois ciclos de desativação e reativação. O pico do grupo
+foi de 182 MiB, com swap bloqueado e zero eventos de OOM.
