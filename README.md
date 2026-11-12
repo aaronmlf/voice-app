@@ -8,7 +8,7 @@ Este é um projeto independente, sem vínculo com o Voicemod.
 | Pré-release experimental | Baixar | Requisitos |
 |---|---|---|
 | [Linux alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.4) | [Pacote .tar.gz](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.4/voice-app-0.1.0-x86_64-unknown-linux-gnu.tar.gz) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.4/SHA256SUMS.txt) | Linux x86_64, PipeWire e bibliotecas gráficas nativas |
-| [Windows alpha.3](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.3) | [Pacote .zip](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.3/voice-app-0.1.0-x86_64-pc-windows-msvc.zip) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.3/SHA256SUMS.txt) | Alvo Windows 10/11 x64; VB-CABLE separado para enviar áudio a outros apps |
+| [Windows alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.4) | [Pacote .zip](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.4/voice-app-0.1.0-x86_64-pc-windows-msvc.zip) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.4/SHA256SUMS.txt) | Alvo Windows 10/11 x64; VB-CABLE separado para enviar áudio a outros apps |
 
 [Todas as releases](https://github.com/aaronmlf/voice-app/releases) ·
 [Funcionalidades e testes](docs/FEATURES.md) · [Contribuir](CONTRIBUTING.md) ·

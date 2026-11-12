@@ -1,4 +1,11 @@
-# Voice App windows-v0.1.0-alpha.3 — Windows experimental
+# Voice App windows-v0.1.0-alpha.4 — Windows experimental
+
+This Windows x64 preview includes the bundled SQLite 3.54.1 security update
+from [issue #7](https://github.com/aaronmlf/voice-app/issues/7), addressing
+[RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html).
+The library schema is preserved. A regression test opens a synthetic
+library written with the previous schema. The shared file picker uses rfd
+0.17.2. Native file dialogs still need acceptance testing on Windows.
 
 Native Windows x86_64/MSVC preview with a traditional 20-band vocoder and granular
 Stylized/experimental Natural modes. The Laboratory has 13 reorderable blocks,
@@ -50,14 +57,13 @@ processing/engine commands. Optional developer smoke helpers are included under
 
 ## Evidence and limitations
 
-The [prior integrated CI](https://github.com/aaronmlf/voice-app/actions/runs/40526366912)
-passed 186 Rust tests in the native Windows Server 2022 check, formatting, Clippy,
-boundaries, corpus, seven benchmarks, license policy, package/checksum/PE checks,
-extracted-package vocoder and both granular modes, migration 11/12 to 13,
-CLI/IPC/MCP/persistence and a short software-rendered GUI smoke. The release
-workflow repeats gates on its exact source commit.
+The [Windows CI for issue #7](https://github.com/aaronmlf/voice-app/actions/runs/43282711401)
+passed the Windows Server 2022 tests, dependency and package checks, offline
+DSP and library tests, CLI/IPC/MCP checks, and a short software-rendered GUI
+smoke with audio disabled. The release workflow repeats the gates on the
+exact source commit and checks the 12 built-in IDs in a fresh library.
 
-Wine passed CLI/offline processing, then verified the exact secure refusal
+Wine passed CLI help, version and offline tone generation, then verified the exact secure refusal
 `voice-cli: private path must have a protected DACL`. The result was
 `unsupported_security_environment`: **Wine GUI, IPC and compatibility remain
 unqualified.** No access-control check was weakened.
