@@ -29,7 +29,18 @@ $samples = [Collections.Generic.List[object]]::new()
 $windowSamples = [Collections.Generic.List[object]]::new()
 $serial = 0
 $requestedSize = [ordered]@{ width_points = 1280; height_points = 800 }
-$expected = @('alien','broadcast','chorus','clean','deep','echo','high','megaphone','monster','radio','robot','space') | ForEach-Object { 'builtin.' + $_ }
+$expected = @(
+    'builtin.alien', 'builtin.broadcast', 'builtin.chorus', 'builtin.clean',
+    'builtin.deep', 'builtin.echo', 'builtin.high', 'builtin.megaphone',
+    'builtin.monster', 'builtin.radio', 'builtin.robot', 'builtin.space',
+    'custom.fantasy.gigante-pedra', 'custom.fantasy.goblin-sucateiro',
+    'custom.fiction.automato-exterminador', 'custom.fiction.espectro',
+    'custom.fiction.ia-laboratorio', 'custom.fiction.locutor-assombrado',
+    'custom.wh40k.chaos-marine', 'custom.wh40k.comissario-vox', 'custom.wh40k.dreadnought',
+    'custom.wh40k.krieg', 'custom.wh40k.marine-vox-leve', 'custom.wh40k.necron',
+    'custom.wh40k.ork-boy', 'custom.wh40k.servo-cranio', 'custom.wh40k.space-marine',
+    'custom.wh40k.tecnosacerdote', 'custom.wh40k.terminator', 'custom.wh40k.warboss'
+) | Sort-Object
 $adapterFile = Join-Path $output 'adapter.json'
 $screenshot = Join-Path $output 'gui.png'
 $data = Join-Path $output 'data'
@@ -324,7 +335,7 @@ try {
                     $voices = Invoke-Cli @('voices')
                     Require $voices.Success ('Could not inspect the fresh GUI library: ' + $voices.Error)
                     $ids = @($voices.Text | ConvertFrom-Json -Depth 100 | ForEach-Object { $_.id } | Sort-Object)
-                    Require ($ids.Count -eq 12 -and ($ids -join ',') -ceq ($expected -join ',')) 'Fresh GUI library did not contain exactly the 12 original voices.'
+                    Require ($ids.Count -eq $expected.Count -and ($ids -join ',') -ceq ($expected -join ',')) 'Fresh GUI library did not contain exactly the 30 shipped presets.'
                     $voicesChecked = $true
                 }
             }
@@ -339,7 +350,7 @@ try {
     Require ($guiExit -eq 0) ('Native Windows GUI exited with code ' + $guiExit + '; inspect logs/gui.err.')
     Require ($peakRss -gt 0) 'Could not measure the GUI process memory high-water mark.'
     Require ($samples.Count -ge 2) 'Could not observe two offline IPC status samples while the GUI was alive.'
-    Require $voicesChecked 'Original voice library was not inspected through the GUI engine.'
+    Require $voicesChecked 'The shipped presets were not inspected through the GUI engine.'
     Require (Test-Path -LiteralPath $adapterFile -PathType Leaf) 'The initialized GUI renderer did not produce its report.'
     $adapter = Read-SmallText $adapterFile 65536 | ConvertFrom-Json -Depth 20
     Require ($adapter.report_version -eq 1 -and $adapter.renderer -ceq 'wgpu' -and $adapter.backend -ceq 'Dx12' -and $adapter.device_type -ceq 'Cpu' -and $adapter.software_requested -eq $true) 'The actual GUI renderer was not DX12 software rendering.'
@@ -350,7 +361,7 @@ try {
     $checks.Add('The GUI rendered a PNG screenshot and exited normally after its four-second smoke interval')
     $checks.Add('PNG dimensions match the observed live client surface and the requested viewport or an independently measured single-monitor clamp')
     $checks.Add('Two or more local IPC snapshots showed zero audio frames and no capture, monitoring, desktop, recording or playback')
-    $checks.Add('Fresh GUI library exposes exactly the 12 original built-in voices')
+    $checks.Add('Fresh GUI library exposes exactly the 30 shipped presets')
     $report.result = 'passed'
 } catch {
     $failure = $_.Exception.Message

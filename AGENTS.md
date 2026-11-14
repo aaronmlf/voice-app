@@ -4,13 +4,11 @@ The project is an independent, offline-first voice application, licensed MIT OR 
 The product roadmap is in docs/ROADMAP.md. Report tested capabilities, not menu coverage.
 
 ## Public repository
-Only the application's 12 original built-in voices may be published. User presets,
-recordings, comparison audio, models and personal library/data
-stay local. Publish source through an explicit allowlist, never a recursive workspace upload.
-Local DEVLOG history contains private preset work; use a reviewed public summary for GitHub.
-Release binaries must come from the reviewed public source, with no personal assets or presets.
-Local collection membership is independent of built-in ownership and does not authorize
-publishing custom recipes, images or previews.
+Publish only the 12 built-in voices and the 18 approved recipes and original
+portraits in `crates/voice-library/catalog/`. Local image overrides, other user
+presets, recordings, comparison audio, models and personal library data stay local.
+Publish source through an explicit allowlist. Release binaries must come from
+reviewed public source. Use a reviewed public summary for the DEVLOG.
 Before publishing commits, verify that their author identity uses GitHub noreply or an
 explicitly public address. Do not expose private contact data through Git metadata.
 

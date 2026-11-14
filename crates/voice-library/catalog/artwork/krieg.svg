@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Soldado de Krieg</title>
+<desc id="desc">Soldado de capacete cáqui e máscara de lentes redondas, respirador e tubo curvo; desenho original.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#dfdfb8"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="82" rx="27" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<path d="M26 81 Q27 68 39 64 H61 Q73 68 74 81 Z" fill="#8b9c70" stroke="#4a5941" stroke-width="2.4"/>
+<path d="M33 39 H67 L71 58 Q69 69 58 74 H42 Q31 69 29 58 Z" fill="#d5dfbc" stroke="#4a5941" stroke-width="2.4"/>
+<path d="M26 36 Q27 20 42 18 H58 Q73 20 74 36 L78 40 Q79 44 73 45 H27 Q21 44 22 40 Z" fill="#8b9c70" stroke="#4a5941" stroke-width="2.4"/>
+<path d="M32 30 Q35 23 44 23" fill="none" stroke="#d5dfbc" stroke-width="3"/>
+<circle cx="39" cy="50" r="9" fill="#4a5941" stroke="none" stroke-width="2.4"/>
+<circle cx="61" cy="50" r="9" fill="#4a5941" stroke="none" stroke-width="2.4"/>
+<path d="M34 50 Q36 44 41 45 M56 50 Q58 44 63 45" fill="none" stroke="#b9ebd9" stroke-width="2.5"/>
+<path d="M47 55 H53 L59 64 Q58 72 50 73 Q42 72 41 64 Z" fill="#8b9c70" stroke="#4a5941" stroke-width="2.4"/>
+<circle cx="50" cy="64" r="5.6" fill="#4a5941" stroke="none" stroke-width="2.4"/>
+<path d="M47 63 H53 M47 66 H53" fill="none" stroke="#d5dfbc" stroke-width="1.6"/>
+<path d="M58 68 Q70 70 68 80 H77" fill="none" stroke="#4a5941" stroke-width="6"/>
+<path d="M58 68 Q70 70 68 80 H77" fill="none" stroke="#b9ebd9" stroke-width="2.4"/>
+<path d="M37 72 L41 81 M63 74 L60 81" fill="none" stroke="#d5dfbc" stroke-width="2.1"/>
+<path d="M80 23 Q80.6 25.4 83 26 Q80.6 26.6 80 29 Q79.4 26.6 77 26 Q79.4 25.4 80 23 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

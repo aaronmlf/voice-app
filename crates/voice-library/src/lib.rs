@@ -19,7 +19,9 @@ use symphonia::core::probe::Hint;
 use voice_core::{DspSettings, FORMAT_VERSION, SAMPLE_RATE};
 
 mod artwork;
+mod catalog;
 pub use artwork::{MAX_PRESET_IMAGE_BYTES, PRESET_IMAGE_SIDE, PresetImage};
+pub use catalog::catalog_thumbnail;
 
 pub const MAX_PLAYING_CLIPS: usize = 16;
 pub const DEFAULT_BOARD_ID: &str = "default";
@@ -136,8 +138,11 @@ impl Library {
             root: root.to_path_buf(),
             db,
         };
-        for preset in builtin_presets() {
-            library.db.execute(
+        let included = catalog::presets()?;
+        let transaction = library.db.unchecked_transaction()?;
+        for preset in builtin_presets().into_iter().chain(included) {
+            preset.validate()?;
+            let inserted = transaction.execute(
                 "INSERT OR IGNORE INTO presets(id,name,settings) VALUES(?1,?2,?3)",
                 params![
                     preset.id,
@@ -145,7 +150,14 @@ impl Library {
                     serde_json::to_string(&preset.settings)?
                 ],
             )?;
+            if inserted != 0 && preset.original && !preset.id.starts_with("builtin.") {
+                transaction.execute(
+                    "INSERT INTO preset_origins(preset_id,original) VALUES(?1,1)",
+                    [&preset.id],
+                )?;
+            }
         }
+        transaction.commit()?;
         Ok(library)
     }
 
@@ -935,6 +947,48 @@ mod tests {
     }
 
     #[test]
+    fn shipped_catalog_is_complete_and_preserves_local_edits() -> Result<()> {
+        let included = catalog::presets()?;
+        assert_eq!(included.len(), 18);
+        assert_eq!(included.iter().filter(|voice| voice.original).count(), 6);
+        let temp = Temp::new();
+        let root = temp.0.join("library");
+        let library = Library::open(&root)?;
+        let fresh = library.presets()?;
+        assert_eq!(fresh.len(), 30);
+        assert!(!root.join("artwork").exists());
+        for voice in &included {
+            assert!(fresh.contains(voice));
+            let png = catalog_thumbnail(&voice.id).context("missing catalog thumbnail")?;
+            assert!(png.len() as u64 <= MAX_PRESET_IMAGE_BYTES);
+            let decoded = image::load_from_memory_with_format(png, image::ImageFormat::Png)?;
+            assert_eq!(decoded.width(), PRESET_IMAGE_SIDE);
+            assert_eq!(decoded.height(), PRESET_IMAGE_SIDE);
+        }
+        assert!(catalog_thumbnail("builtin.clean").is_none());
+        let mut edited = included.into_iter().find(|voice| voice.original).unwrap();
+        edited.name = "My catalog voice".into();
+        edited.settings.gain_db = -2.0;
+        edited.original = false;
+        library.save_preset(&edited)?;
+        library.set_preset_original(&edited.id, false)?;
+        let source = temp.0.join("portrait.png");
+        fs::write(&source, catalog_thumbnail(&edited.id).unwrap())?;
+        let custom_image = library.set_preset_image(&edited.id, &source)?;
+        drop(library);
+
+        let reopened = Library::open(&root)?;
+        let voices = reopened.presets()?;
+        assert_eq!(voices.len(), 30);
+        assert!(voices.contains(&edited));
+        assert_eq!(reopened.preset_image(&edited.id)?, Some(custom_image));
+        reopened.clear_preset_image(&edited.id)?;
+        assert!(reopened.preset_image(&edited.id)?.is_none());
+        assert!(catalog_thumbnail(&edited.id).is_some());
+        Ok(())
+    }
+
+    #[test]
     fn bundled_sqlite_includes_wal_page_size_fix() {
         assert!(rusqlite::version_number() >= 3_054_000);
     }
@@ -1007,7 +1061,7 @@ mod tests {
         let board;
         {
             let library = Library::open(&root)?;
-            assert_eq!(library.presets()?.len(), 12);
+            assert_eq!(library.presets()?.len(), 30);
             library.save_preset(&preset)?;
             board = library.create_board("Game")?;
             library.export_preset(&preset.id, &temp.0.join("voice.json"))?;
@@ -1041,7 +1095,7 @@ mod tests {
                     .iter()
                     .filter(|p| p.is_original())
                     .count(),
-                12
+                18
             );
             library.save_preset(&preset)?;
             let saved = library
@@ -1107,7 +1161,7 @@ mod tests {
         assert!(!other.import_preset(&path)?.is_original());
         assert_eq!(
             other.presets()?.iter().filter(|p| p.is_original()).count(),
-            12
+            18
         );
         Ok(())
     }
@@ -1249,7 +1303,7 @@ mod tests {
         assert!(library.import_preset(&path).is_err());
         preset.settings.echo_feedback = 1.5;
         assert!(library.save_preset(&preset).is_err());
-        assert_eq!(library.presets()?.len(), 12);
+        assert_eq!(library.presets()?.len(), 30);
         Ok(())
     }
 
@@ -1333,7 +1387,7 @@ mod tests {
         assert!(library.load_clip(&removed.id).is_err());
         assert!(library.clips(DEFAULT_BOARD_ID)?.is_empty());
         assert_eq!(library.clips(&board.id)?, vec![other.clone()]);
-        assert_eq!(library.presets()?.len(), 12);
+        assert_eq!(library.presets()?.len(), 30);
         assert_eq!(fs::read(&source)?, original_bytes);
         assert_eq!(fs::read(&removed.path)?, managed_bytes);
         assert_eq!(fs::read(&other.path)?, other_bytes);

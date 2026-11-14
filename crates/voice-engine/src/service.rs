@@ -1812,14 +1812,6 @@ mod tests {
             engine.execute(Command::Status, &stop)?["preset_image_revision"],
             0
         );
-        engine.execute(
-            Command::SavePreset {
-                id: "custom.image".into(),
-                name: "Custom image".into(),
-                settings: DspSettings::default(),
-            },
-            &stop,
-        )?;
         let baseline = serde_json::to_value(&engine.session)?;
         let source = paths.data.join("source.png");
         // One original RGBA pixel, encoded as a complete PNG fixture.
@@ -1836,7 +1828,7 @@ mod tests {
             engine
                 .execute(
                     Command::PresetImage {
-                        id: "custom.image".into()
+                        id: "builtin.clean".into()
                     },
                     &stop
                 )?
@@ -1844,7 +1836,7 @@ mod tests {
         );
         let imported = engine.execute(
             Command::SetPresetImage {
-                id: "custom.image".into(),
+                id: "builtin.clean".into(),
                 path: source.clone(),
             },
             &stop,
@@ -1855,13 +1847,13 @@ mod tests {
             1
         );
         assert!(managed.exists());
-        assert_eq!(imported["preset_id"], "custom.image");
+        assert_eq!(imported["preset_id"], "builtin.clean");
         assert_eq!(baseline, serde_json::to_value(&engine.session)?);
         assert!(
             engine
                 .execute(
                     Command::SetPresetImage {
-                        id: "builtin.clean".into(),
+                        id: "custom.missing".into(),
                         path: source.clone()
                     },
                     &stop
@@ -1874,7 +1866,7 @@ mod tests {
         );
         engine.execute(
             Command::ClearPresetImage {
-                id: "custom.image".into(),
+                id: "builtin.clean".into(),
             },
             &stop,
         )?;
@@ -1886,7 +1878,7 @@ mod tests {
         // Restore an image so the same test also covers persistence across engine restart.
         let imported = engine.execute(
             Command::SetPresetImage {
-                id: "custom.image".into(),
+                id: "builtin.clean".into(),
                 path: source.clone(),
             },
             &stop,
@@ -1906,7 +1898,7 @@ mod tests {
         assert_eq!(
             engine.execute(
                 Command::PresetImage {
-                    id: "custom.image".into()
+                    id: "builtin.clean".into()
                 },
                 &stop
             )?,
@@ -1915,7 +1907,7 @@ mod tests {
         assert_eq!(
             engine.execute(
                 Command::ClearPresetImage {
-                    id: "custom.image".into()
+                    id: "builtin.clean".into()
                 },
                 &stop
             )?["cleared"],
@@ -1929,7 +1921,7 @@ mod tests {
             engine
                 .execute(
                     Command::ClearPresetImage {
-                        id: "builtin.clean".into()
+                        id: "custom.missing".into()
                     },
                     &stop
                 )
@@ -1944,7 +1936,7 @@ mod tests {
             engine
                 .execute(
                     Command::PresetImage {
-                        id: "custom.image".into()
+                        id: "builtin.clean".into()
                     },
                     &stop
                 )?

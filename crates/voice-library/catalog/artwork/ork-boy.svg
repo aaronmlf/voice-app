@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Ork Boy</title>
+<desc id="desc">Criatura verde com orelhas amplas, pequeno moicano e presas curvas, ilustrada em cartoon pastel.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#cdef99"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="81" rx="27" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<path d="M24 80 Q25 66 39 63 H61 Q75 66 76 80 Z" fill="#295b49" stroke="none" stroke-width="2.4"/>
+<path d="M32 38 Q22 30 17 33 Q21 48 32 49 Z" fill="#80b866" stroke="#295b49" stroke-width="2.4"/>
+<path d="M68 38 Q78 30 83 33 Q79 48 68 49 Z" fill="#80b866" stroke="#295b49" stroke-width="2.4"/>
+<path d="M30 41 Q28 23 48 22 Q68 20 70 41 L69 58 Q64 73 50 76 Q36 73 31 59 Z" fill="#80b866" stroke="#295b49" stroke-width="2.4"/>
+<path d="M34 35 Q39 27 47 28 H54" fill="none" stroke="#fff0cb" stroke-width="3"/>
+<path d="M35 41 L43 43 M65 41 L57 43" fill="none" stroke="#295b49" stroke-width="3"/>
+<circle cx="40" cy="47" r="2.1" fill="#fff0cb" stroke="none" stroke-width="2.4"/>
+<circle cx="60" cy="47" r="2.1" fill="#fff0cb" stroke="none" stroke-width="2.4"/>
+<path d="M48 44 Q45 49 45 54 H55" fill="none" stroke="#295b49" stroke-width="2.3"/>
+<path d="M37 57 Q50 52 63 57 Q62 68 50 69 Q38 68 37 57 Z" fill="#295b49" stroke="none" stroke-width="2.4"/>
+<path d="M39 66 Q34 58 36 51 Q43 54 44 63 Z" fill="#fff0cb" stroke="#295b49" stroke-width="2.4"/>
+<path d="M61 66 Q66 58 64 51 Q57 54 56 63 Z" fill="#fff0cb" stroke="#295b49" stroke-width="2.4"/>
+<rect x="47" y="56" width="4" height="5" rx="0.8" fill="#fff0cb" stroke="none" stroke-width="2.4"/>
+<path d="M40 73 L45 78 M60 73 L55 78" fill="none" stroke="#cf8a56" stroke-width="2.5"/>
+<path d="M38 25 Q36 19 40 18 L46 23 Q50 15 53 18 L55 24 L62 20 L64 27" fill="#295b49" stroke="none" stroke-width="2.4"/>
+<path d="M77 21 Q77.6 23.4 80 24 Q77.6 24.6 77 27 Q76.4 24.6 74 24 Q76.4 23.4 77 21 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

@@ -213,11 +213,22 @@ try {
     $completed.Add('Both packaged binaries have x86_64 PE headers; GUI not launched')
     $status = Start-TestEngine
     Assert-NoAudio $status
-    $expected = @('alien','broadcast','chorus','clean','deep','echo','high','megaphone','monster','radio','robot','space') | ForEach-Object { 'builtin.' + $_ }
+    $expected = @(
+        'builtin.alien', 'builtin.broadcast', 'builtin.chorus', 'builtin.clean',
+        'builtin.deep', 'builtin.echo', 'builtin.high', 'builtin.megaphone',
+        'builtin.monster', 'builtin.radio', 'builtin.robot', 'builtin.space',
+        'custom.fantasy.gigante-pedra', 'custom.fantasy.goblin-sucateiro',
+        'custom.fiction.automato-exterminador', 'custom.fiction.espectro',
+        'custom.fiction.ia-laboratorio', 'custom.fiction.locutor-assombrado',
+        'custom.wh40k.chaos-marine', 'custom.wh40k.comissario-vox', 'custom.wh40k.dreadnought',
+        'custom.wh40k.krieg', 'custom.wh40k.marine-vox-leve', 'custom.wh40k.necron',
+        'custom.wh40k.ork-boy', 'custom.wh40k.servo-cranio', 'custom.wh40k.space-marine',
+        'custom.wh40k.tecnosacerdote', 'custom.wh40k.terminator', 'custom.wh40k.warboss'
+    ) | Sort-Object
     $presets = @(Invoke-Json @('voices'))
     $ids = @($presets | ForEach-Object { $_.id } | Sort-Object)
-    Require ($ids.Count -eq 12 -and (($ids -join ',') -eq ($expected -join ','))) 'Package does not expose exactly the 12 original built-in voices.'
-    $completed.Add('Exactly 12 original presets in a fresh isolated library')
+    Require ($ids.Count -eq $expected.Count -and ($ids -join ',') -ceq ($expected -join ',')) 'Package does not expose exactly the 30 shipped presets.'
+    $completed.Add('Exactly 30 shipped presets in a fresh isolated library')
     [void](Invoke-Json @('select', 'radio'))
     [void](Invoke-Json @('gain', '-3'))
     [void](Invoke-Json @('monitor', 'off', '--gain', '0.25'))

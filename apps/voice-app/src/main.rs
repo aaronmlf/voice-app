@@ -13,7 +13,9 @@ use voice_core::{
     GranularMode, RecordingSource, VoiceBlend, VoiceLayer,
 };
 use voice_engine::{Paths, ServiceHandle, client, protocol::Command};
-use voice_library::{Board, Clip, MAX_PRESET_IMAGE_BYTES, PRESET_IMAGE_SIDE, Preset, PresetImage};
+use voice_library::{
+    Board, Clip, MAX_PRESET_IMAGE_BYTES, PRESET_IMAGE_SIDE, Preset, PresetImage, catalog_thumbnail,
+};
 pub mod art;
 use art::Icon;
 use std::collections::{BTreeMap, BTreeSet};
@@ -75,23 +77,31 @@ fn windows_repaint_delay(
 struct CachedPresetImage {
     id: String,
     texture: Option<egui::TextureHandle>,
+    has_override: bool,
 }
 
 struct PresetImageReply {
     id: String,
     serial: u64,
     image: Result<Option<egui::ColorImage>, String>,
+    has_override: bool,
 }
 
-/// Only managed thumbnails are decoded here, on the command worker rather than a UI frame.
-fn read_preset_thumbnail(value: &Value) -> Result<Option<egui::ColorImage>> {
+/// Decode managed and catalog thumbnails on the command worker rather than a UI frame.
+fn read_preset_thumbnail(id: &str, value: &Value) -> Result<Option<egui::ColorImage>> {
     let Some(image) = serde_json::from_value::<Option<PresetImage>>(value.clone())? else {
-        return Ok(None);
+        return catalog_thumbnail(id)
+            .map(decode_preset_thumbnail)
+            .transpose();
     };
     let mut bytes = Vec::new();
     File::open(&image.path)?
         .take(MAX_PRESET_IMAGE_BYTES + 1)
         .read_to_end(&mut bytes)?;
+    decode_preset_thumbnail(&bytes).map(Some)
+}
+
+fn decode_preset_thumbnail(bytes: &[u8]) -> Result<egui::ColorImage> {
     ensure!(
         bytes.len() <= MAX_PRESET_IMAGE_BYTES as usize,
         "miniatura excede 300 KiB"
@@ -107,10 +117,26 @@ fn read_preset_thumbnail(value: &Value) -> Result<Option<egui::ColorImage>> {
         image.dimensions() == (PRESET_IMAGE_SIDE, PRESET_IMAGE_SIDE),
         "miniatura deve ter 256×256 pixels"
     );
-    Ok(Some(egui::ColorImage::from_rgba_unmultiplied(
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
         [PRESET_IMAGE_SIDE as usize, PRESET_IMAGE_SIDE as usize],
         image.as_raw(),
-    )))
+    ))
+}
+
+#[cfg(test)]
+mod preset_thumbnail_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_portraits_decode_and_builtin_voices_can_use_the_vector_default() -> Result<()> {
+        let catalog = read_preset_thumbnail("custom.fiction.espectro", &Value::Null)?
+            .context("missing catalog portrait")?;
+        assert_eq!(catalog.size, [256, 256]);
+        assert!(catalog.pixels.iter().any(|pixel| pixel.a() != 0));
+        assert!(read_preset_thumbnail("builtin.clean", &Value::Null)?.is_none());
+        assert!(read_preset_thumbnail("custom.unknown", &Value::Null)?.is_none());
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -272,10 +298,16 @@ impl App {
                     let Tag::PresetImage(serial) = tag else {
                         return None;
                     };
+                    let has_override = value.as_ref().is_ok_and(|value| !value.is_null());
                     let image = value.as_ref().map_err(Clone::clone).and_then(|value| {
-                        read_preset_thumbnail(value).map_err(|error| format!("{error:#}"))
+                        read_preset_thumbnail(&id, value).map_err(|error| format!("{error:#}"))
                     });
-                    Some(PresetImageReply { id, serial, image })
+                    Some(PresetImageReply {
+                        id,
+                        serial,
+                        image,
+                        has_override,
+                    })
                 });
                 if replies
                     .send(Reply {
@@ -368,7 +400,7 @@ impl App {
         let _ = self.tx.try_send((tag, command));
     }
     fn paint_preset_avatar(&mut self, ui: &egui::Ui, rect: egui::Rect, id: &str, selected: bool) {
-        if !id.starts_with("builtin.") && self.presets.iter().any(|preset| preset.id == id) {
+        if self.presets.iter().any(|preset| preset.id == id) {
             if let Some(index) = self.preset_images.iter().position(|image| image.id == id) {
                 let cached = self.preset_images.remove(index);
                 let texture = cached.texture.as_ref().map(egui::TextureHandle::id);
@@ -403,12 +435,12 @@ impl App {
         self.pending_preset_images.remove(id);
     }
     fn preset_image_menu(&mut self, ui: &mut egui::Ui, id: &str) {
-        let has_image = self
+        let has_override = self
             .preset_images
             .iter()
-            .any(|image| image.id == id && image.texture.is_some());
+            .any(|image| image.id == id && image.has_override);
         if ui
-            .button(if has_image {
+            .button(if has_override {
                 "Trocar imagem…"
             } else {
                 "Escolher imagem…"
@@ -428,7 +460,7 @@ impl App {
             }
         }
         if ui
-            .add_enabled(has_image, egui::Button::new("Remover imagem"))
+            .add_enabled(has_override, egui::Button::new("Restaurar imagem padrão"))
             .clicked()
         {
             self.action(Command::ClearPresetImage { id: id.into() });
@@ -639,6 +671,7 @@ impl App {
                     self.preset_images.push(CachedPresetImage {
                         id: image.id,
                         texture,
+                        has_override: image.has_override,
                     });
                 }
                 continue;
@@ -1131,16 +1164,11 @@ impl App {
                         .size(22.)
                         .strong(),
                     );
-                    ui.label(
-                        RichText::new(voice_description(&selected))
-                            .size(12.)
-                            .color(MUTED),
-                    );
+                    if let Some(description) = voice_description(&selected) {
+                        ui.label(RichText::new(description).size(12.).color(MUTED));
+                    }
                 });
-                if preset
-                    .as_ref()
-                    .is_some_and(|preset| !preset.id.starts_with("builtin."))
-                {
+                if preset.is_some() {
                     ui.add_space(12.);
                     ui.menu_button("Imagem do preset", |ui| {
                         self.preset_image_menu(ui, &selected)
@@ -1391,9 +1419,7 @@ impl App {
                             let response = response
                                 .on_hover_text("Selecionar voz")
                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-                            if !preset.id.starts_with("builtin.") {
-                                response.context_menu(|ui| self.preset_image_menu(ui, &preset.id));
-                            }
+                            response.context_menu(|ui| self.preset_image_menu(ui, &preset.id));
                             if response.clicked() {
                                 self.settings_dirty = false;
                                 self.action(Command::SelectPreset {
@@ -1417,9 +1443,8 @@ impl App {
                                     id: preset.id.clone(),
                                 });
                             }
-                            let custom = !preset.id.starts_with("builtin.");
                             ui.allocate_ui_with_layout(
-                                Vec2::new(if custom { 100. } else { 24. }, 24.),
+                                Vec2::new(100., 24.),
                                 egui::Layout::left_to_right(egui::Align::Center),
                                 |ui| {
                                     let fav = self.favorites.contains(&preset.id);
@@ -1447,11 +1472,9 @@ impl App {
                                     {
                                         self.toggle_favorite(&preset.id);
                                     }
-                                    if custom {
-                                        ui.menu_button("Imagem", |ui| {
-                                            self.preset_image_menu(ui, &preset.id)
-                                        });
-                                    }
+                                    ui.menu_button("Imagem", |ui| {
+                                        self.preset_image_menu(ui, &preset.id)
+                                    });
                                 },
                             );
                         },
@@ -1745,11 +1768,8 @@ impl App {
                 }
             }
         });
-        if let Some(id) = self.status["selected_preset"]
-            .as_str()
-            .filter(|id| !id.starts_with("builtin."))
-            .map(str::to_owned)
-        {
+        let id = self.selected_id().to_owned();
+        if self.presets.iter().any(|preset| preset.id == id) {
             ui.add_space(10.);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.), egui::Sense::hover());
@@ -2703,8 +2723,8 @@ fn voice_name<'a>(id: &str, fallback: &'a str) -> &'a str {
         _ => fallback,
     }
 }
-fn voice_description(id: &str) -> &'static str {
-    match id {
+fn voice_description(id: &str) -> Option<&'static str> {
+    Some(match id {
         "builtin.clean" => "Voz sem efeitos adicionais.",
         "builtin.radio" => "Filtro de rádio e compressão.",
         "builtin.robot" => "Modulação de voz robótica.",
@@ -2717,8 +2737,8 @@ fn voice_description(id: &str) -> &'static str {
         "builtin.chorus" => "Modulação com vozes em paralelo.",
         "builtin.broadcast" => "Limpeza e compressão de voz.",
         "builtin.monster" => "Pitch grave com saturação.",
-        _ => "Preset personalizado.",
-    }
+        _ => return None,
+    })
 }
 fn effect_name(effect: EffectKind) -> &'static str {
     match effect {

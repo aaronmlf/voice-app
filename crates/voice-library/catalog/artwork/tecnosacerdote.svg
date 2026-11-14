@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Tecnosacerdote</title>
+<desc id="desc">Capuz carmim, rosto claro, lente turquesa e tubos curvos em retrato flat cartoon original.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#f9bdd7"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="81" rx="26" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<path d="M24 79 Q28 65 27 46 Q26 25 41 20 Q50 15 59 20 Q74 25 73 46 Q72 65 76 79 Z" fill="#c9697f" stroke="#73364e" stroke-width="2.4"/>
+<path d="M35 36 Q50 20 65 36 L64 59 Q61 69 50 73 Q39 69 36 59 Z" fill="#73364e" stroke="none" stroke-width="2.4"/>
+<path d="M39 38 Q49 31 59 39 L62 53 Q59 64 50 65 Q41 63 38 53 Z" fill="#ffe3d4" stroke="#73364e" stroke-width="2.4"/>
+<path d="M31 43 Q30 30 42 24" fill="none" stroke="#95e8d4" stroke-width="3"/>
+<circle cx="43" cy="46" r="3.2" fill="#73364e" stroke="none" stroke-width="2.4"/>
+<circle cx="58" cy="46" r="9" fill="#73364e" stroke="none" stroke-width="2.4"/>
+<circle cx="58" cy="46" r="5.5" fill="#95e8d4" stroke="none" stroke-width="2.4"/>
+<circle cx="56" cy="44" r="1.4" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+<rect x="42" y="56" width="17" height="10" rx="3" fill="#73364e" stroke="none" stroke-width="2.4"/>
+<path d="M46 59 V63 M51 59 V63 M56 59 V63" fill="none" stroke="#ffe3d4" stroke-width="1.8"/>
+<path d="M43 64 Q32 82 29 66 V54 M58 64 Q69 80 72 64 V51" fill="none" stroke="#73364e" stroke-width="4.6"/>
+<path d="M43 64 Q32 82 29 66 V54 M58 64 Q69 80 72 64 V51" fill="none" stroke="#95e8d4" stroke-width="2.1"/>
+<circle cx="29" cy="53" r="3" fill="#95e8d4" stroke="#73364e" stroke-width="1.8"/>
+<circle cx="72" cy="50" r="3" fill="#95e8d4" stroke="#73364e" stroke-width="1.8"/>
+<path d="M79 28 Q79.6 30.4 82 31 Q79.6 31.6 79 34 Q78.4 31.6 76 31 Q78.4 30.4 79 28 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

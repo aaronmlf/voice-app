@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">IA de laboratório</title>
+<desc id="desc">Inteligência artificial de porcelana com visor ciano e lente central, em retrato cartoon original.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#b8e6f0"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="80" rx="23" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<rect x="25" y="35" width="8" height="25" rx="4" fill="#77b5bf" stroke="#28586a" stroke-width="2.4"/>
+<rect x="67" y="35" width="8" height="25" rx="4" fill="#77b5bf" stroke="#28586a" stroke-width="2.4"/>
+<path d="M39 24 Q50 18 61 24 Q69 28 69 39 V55 Q69 67 57 73 H43 Q31 67 31 55 V39 Q31 28 39 24 Z" fill="#f1f8ee" stroke="#28586a" stroke-width="2.4"/>
+<path d="M37 33 Q43 26 50 27 H56" fill="none" stroke="#fff8e4" stroke-width="3.5"/>
+<rect x="30" y="41" width="40" height="15" rx="7" fill="#28586a" stroke="none" stroke-width="2.4"/>
+<path d="M35 48 H65" fill="none" stroke="#84e6df" stroke-width="3.2"/>
+<circle cx="50" cy="48" r="8.4" fill="#84e6df" stroke="#28586a" stroke-width="1.8"/>
+<circle cx="50" cy="48" r="4.5" fill="#f1f8ee" stroke="none" stroke-width="2.4"/>
+<circle cx="50" cy="48" r="1.8" fill="#28586a" stroke="none" stroke-width="2.4"/>
+<path d="M44 62 H56 M47 66 H53" fill="none" stroke="#77b5bf" stroke-width="2"/>
+<rect x="42" y="73" width="16" height="6" rx="2" fill="#77b5bf" stroke="#28586a" stroke-width="2.4"/>
+<path d="M37 81 H63" fill="none" stroke="#28586a" stroke-width="3"/>
+<path d="M23 43 H19 V53 H23 M77 43 H81 V53 H77" fill="none" stroke="#77b5bf" stroke-width="2.2"/>
+<circle cx="19" cy="58" r="1.8" fill="#84e6df" stroke="none" stroke-width="2.4"/>
+<circle cx="81" cy="58" r="1.8" fill="#84e6df" stroke="none" stroke-width="2.4"/>
+<path d="M78 22.5 Q78.6 25.4 81.5 26 Q78.6 26.6 78 29.5 Q77.4 26.6 74.5 26 Q77.4 25.4 78 22.5 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

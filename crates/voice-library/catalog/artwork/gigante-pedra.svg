@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Gigante de pedra</title>
+<desc id="desc">Gigante de pedra azul acinzentado com ombros amplos, cantos suaves e fissuras turquesa discretas.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#b7d2e5"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="81" rx="28" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<path d="M21 81 Q22 67 35 63 H65 Q78 67 79 81 Z" fill="#91a8af" stroke="#3d576a" stroke-width="2.4"/>
+<path d="M29 39 Q30 27 40 23 L49 20 Q54 19 59 23 L67 28 Q71 32 71 42 L68 58 Q65 70 51 74 Q36 71 32 59 Z" fill="#91a8af" stroke="#3d576a" stroke-width="2.4"/>
+<path d="M35 34 Q38 27 47 26 L50 37 L43 42 H33 Z" fill="#c7d6ce" stroke="none" stroke-width="2.4"/>
+<path d="M34 45 Q39 41 45 45 L43 51 H35 Z" fill="#3d576a" stroke="none" stroke-width="2.4"/>
+<path d="M66 45 Q61 41 55 45 L57 51 H65 Z" fill="#3d576a" stroke="none" stroke-width="2.4"/>
+<path d="M37 47 H42 M63 47 H58" fill="none" stroke="#a3f1e7" stroke-width="2.2"/>
+<path d="M48 45 H52 L56 56 H44 Z" fill="#c7d6ce" stroke="none" stroke-width="2.4"/>
+<path d="M41 63 Q51 66 60 62" fill="none" stroke="#3d576a" stroke-width="2.5"/>
+<path d="M44 25 L41 33 L47 38 L45 43 M65 33 L59 37 L61 42 M35 56 L42 58 L40 64 M68 69 L63 74 L65 80 M28 70 L33 75 L31 80" fill="none" stroke="#3d576a" stroke-width="2.2"/>
+<path d="M43 28 L41 33 L45 37 M64 72 L63 75 L65 79" fill="none" stroke="#a3f1e7" stroke-width="1.5"/>
+<path d="M79 24.7 Q79.6 27.4 82.3 28 Q79.6 28.6 79 31.3 Q78.4 28.6 75.7 28 Q78.4 27.4 79 24.7 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+<circle cx="23" cy="43" r="1.8" fill="#c7d6ce" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

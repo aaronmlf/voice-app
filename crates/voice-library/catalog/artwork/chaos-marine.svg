@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Chaos Marine</title>
+<desc id="desc">Elmo violeta de chifres curvos e visor rosa; formas cartoon e desenho sem símbolos oficiais.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#d4c3fb"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="81" rx="29" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<path d="M24 78 Q22 68 31 64 L39 62 H61 L69 64 Q78 68 76 78 Z" fill="#8d70bd" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M32 63 L39 73 H61 L68 63" fill="#ebe0ff" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M34 39 Q17 35 23 18 Q27 28 38 29 Z" fill="#ebe0ff" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M66 39 Q83 35 77 18 Q73 28 62 29 Z" fill="#ebe0ff" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M29 43 Q28 25 41 23 H59 Q72 25 71 43 L68 60 Q65 70 56 72 H44 Q35 70 32 60 Z" fill="#8d70bd" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M34 34 Q37 27 44 27 H56 Q63 27 66 34" fill="#ebe0ff" stroke="none" stroke-width="2.4"/>
+<rect x="46" y="25" width="8" height="14" rx="2" fill="#4a3779" stroke="none" stroke-width="2.4"/>
+<path d="M34 41 L45 44 L42 50 L34 47 Z" fill="#4a3779" stroke="none" stroke-width="2.4"/>
+<path d="M66 41 L55 44 L58 50 L66 47 Z" fill="#4a3779" stroke="none" stroke-width="2.4"/>
+<path d="M36 44 L42 46 M64 44 L58 46" fill="none" stroke="#ffaac9" stroke-width="2.6"/>
+<path d="M46 46 H54 L60 57 Q60 64 54 67 H46 Q40 64 40 57 Z" fill="#4a3779" stroke="none" stroke-width="2.4"/>
+<path d="M46 53 H54 M45 58 H55 M47 63 H53" fill="none" stroke="#ebe0ff" stroke-width="2.1"/>
+<circle cx="35" cy="56" r="2.3" fill="#ebe0ff" stroke="none" stroke-width="2.4"/>
+<circle cx="65" cy="56" r="2.3" fill="#ebe0ff" stroke="none" stroke-width="2.4"/>
+<path d="M45 25 Q50 18 55 25 L53 32 H47 Z" fill="#ebe0ff" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M30 72 L35 77 M70 72 L65 77" fill="none" stroke="#ffaac9" stroke-width="2.3"/>
+<path d="M22 42 Q22.6 44.4 25 45 Q22.6 45.6 22 48 Q21.4 45.6 19 45 Q21.4 44.4 22 42 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+<circle cx="77" cy="33" r="1.7" fill="#ebe0ff" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

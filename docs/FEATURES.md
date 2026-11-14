@@ -10,8 +10,9 @@ correções de SQLite e rustix verificadas no
 A [Windows alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.4)
 incorpora a correção de SQLite da mesma revisão. A CI Windows exercita a
 biblioteca, os comandos offline e a interface com áudio desativado.
-Os pacotes incluem checksum e os **12 presets embutidos**. A biblioteca e os
-presets, imagens e áudios pessoais ficam locais.
+Os pacotes alpha.4 incluem checksum e os 12 presets embutidos. A fonte atual
+inclui mais 18 vozes com retratos. A biblioteca, as imagens substituídas e
+as gravações ficam locais.
 
 ## Núcleo e recursos compartilhados
 
@@ -22,7 +23,7 @@ presets, imagens e áudios pessoais ficam locais.
 | Laboratório de efeitos | Experimental; CI integrada aprovada | 13 blocos reordenáveis, intensidade por efeito em A/B e mistura de duas vozes. Migração das ordens/intensidades antigas preserva índices e ordem relativa, com os novos efeitos desligados nos presets existentes. |
 | Vocoder tradicional | Experimental; testes offline e grafo privado aprovados | 20 bandas, portadora interna e proteção de consoantes. Smoke Windows do pacote extraído também passou. Audição e uso dos novos efeitos em aplicativos de destino ainda precisam de validação específica. Veja [VOCODER.md](VOCODER.md). |
 | Granular Estilizado e Natural | Experimental; testes offline e grafo privado aprovados | Quatro grãos e buffers fixos; smoke Windows cobre os dois modos. No perfil Natural padrão, buffering de 20,04 ms a 48 kHz. Qualidade percebida e áudio físico continuam pendentes. Veja [GRANULAR.md](GRANULAR.md). |
-| Biblioteca de vozes e imagens próprias | Experimental | SQLite, importação de presets JSON versionados, favoritos e imagens PNG/JPEG/WebP. A classificação local como original não torna o preset embutido nem o torna público. |
+| Biblioteca e imagens das vozes | Experimental | Catálogo de 30 vozes. A troca e a restauração de imagem estão disponíveis em qualquer preset. O SQLite conserva overrides PNG/JPEG/WebP, favoritos e os ajustes locais. |
 | Soundboard | Experimental | Importação WAV/MP3/Ogg Vorbis/FLAC normalizada para mono/48 kHz; painéis, loop, sobreposição, recorte e parada. Remover som exclui o cadastro e interrompe somente aquele som; os arquivos de áudio permanecem. |
 | Monitoração e pré-escuta | Experimentais | Rotas separadas da saída virtual, com volume independente de Ouvir-me (0–200%) e pré-escuta nos fones. Isolamento exercitado no PipeWire privado. |
 | Gravação e replay | Experimentais | Gravação em WAV e replay dos últimos 30 s por fonte; captura do desktop explícita e separada da saída virtual. Apenas uma gravação de arquivo por vez. |

@@ -1,4 +1,4 @@
-# Voice App v0.1.0-alpha.4 — Linux experimental
+# Voice App — Linux experimental
 
 Esta versão Linux x86_64 incorpora as correções da
 [issue #7](https://github.com/aaronmlf/voice-app/issues/7).
@@ -13,9 +13,10 @@ Esta versão Linux x86_64 incorpora as correções da
 - O SQLite embutido foi atualizado para 3.54.1 e rustix para 1.1.6. Os testes
   abriram uma biblioteca sintética no esquema anterior.
 
-O pacote contém os **12 presets embutidos originais**. O núcleo funciona
-offline. O vocoder, os dois modos granulares, o microfone virtual PipeWire,
-o soundboard e a gravação continuam disponíveis.
+O pacote inclui **30 vozes**. Os 12 presets embutidos são acompanhados por
+18 receitas com retratos. Use **Imagem** no cartão de qualquer voz para
+trocar ou restaurar o retrato. O núcleo funciona offline e inclui vocoder,
+dois modos granulares, microfone virtual PipeWire, soundboard e gravação.
 
 ## Instalação
 
