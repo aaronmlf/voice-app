@@ -77,10 +77,16 @@ def check_portal(binary, bus_address, paths, environment, zenity_log):
         code, data = (1, {}) if expected_path is None else (
             0, {"uris": GLib.Variant("as", [expected_path.as_uri()])},
         )
-        connection.emit_signal(
-            sender, handle, "org.freedesktop.portal.Request", "Response",
-            GLib.Variant("(ua{sv})", (code, data)),
-        )
+
+        def respond():
+            connection.emit_signal(
+                sender, handle, "org.freedesktop.portal.Request", "Response",
+                GLib.Variant("(ua{sv})", (code, data)),
+            )
+            return GLib.SOURCE_REMOVE
+
+        # Model a dialog that answers after the client receives the request handle.
+        GLib.timeout_add(100, respond)
 
     registration = connection.register_object(PORTAL_PATH, interface, choose, None, None)
     try:
