@@ -1,22 +1,21 @@
 # Biblioteca e personalização de vozes
 
-Na tela **Vozes**, **Vozes originais** mostra as 12 vozes que acompanham o aplicativo e as vozes
-próprias explicitamente classificadas como originais na biblioteca local. **Minhas vozes** reúne
-os outros presets criados ou importados. A classificação não depende do nome da voz e não publica
-arquivos. Mudar de categoria preserva ID, efeitos, imagem, favoritos e a seleção atual.
-**Todas as vozes** continua mostrando as duas categorias, e a busca funciona em cada filtro.
+Em uma biblioteca nova, **Vozes originais** mostra os 12 presets embutidos e seis
+vozes de ficção e fantasia. **Minhas vozes** reúne as 12 vozes temáticas e as
+vozes criadas ou importadas que você deixou nessa categoria. **Todas as vozes**
+mostra o catálogo inteiro. Para mover uma voz personalizada, use o menu do
+preset. A mudança preserva o ID, os efeitos, a imagem e os favoritos.
 
-## Imagens dos presets próprios
+## Imagens das vozes
 
-No card de uma voz própria, abra **Imagem → Escolher imagem…**. A mesma opção fica no painel
-da voz selecionada e no Laboratório. Depois de definir uma imagem, o menu permite trocá-la ou
-removê-la. Remover a imagem restaura o avatar desenhado pelo aplicativo.
+No cartão de qualquer voz, abra **Imagem → Escolher imagem…**. A opção também
+fica no painel da voz selecionada e no Laboratório. Para voltar ao retrato do
+catálogo ou ao avatar inicial, escolha **Restaurar imagem padrão**.
 
 São aceitos PNG, JPEG e WebP de até 8 MiB e 4096 × 4096 pixels. A biblioteca faz um recorte
 quadrado central e salva uma miniatura de 256 × 256 pixels; o arquivo original pode ser movido
 ou removido depois. A imagem aparece dentro do avatar circular. As imagens continuam disponíveis
-após reiniciar e não alteram o áudio do preset. As 12 vozes incluídas no aplicativo mantêm suas
-ilustrações próprias; vozes personalizadas classificadas como originais continuam aceitando imagens.
+após reiniciar. A troca de imagem preserva os efeitos do preset.
 
 A imagem é um recurso local da biblioteca. O JSON de intercâmbio continua contendo os parâmetros
 de voz e não incorpora a miniatura. Reimportar um preset com o mesmo ID preserva sua imagem local.

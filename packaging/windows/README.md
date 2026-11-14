@@ -1,4 +1,4 @@
-# Voice App windows-v0.1.0-alpha.4 — Windows experimental
+# Voice App windows-v0.1.0-alpha.5 — Windows experimental
 
 This Windows x64 preview includes the bundled SQLite 3.54.1 security update
 from [issue #7](https://github.com/aaronmlf/voice-app/issues/7), addressing
@@ -13,9 +13,10 @@ per-effect intensity and both voices of a blend through the same GUI/CLI/MCP API
 Legacy 11/12-position order/intensity arrays migrate preserving relative order.
 The new effects start disabled in existing voices.
 
-Only the **12 original built-in voice recipes**, unchanged, are distributed.
-No personal presets, artwork, recordings, comparisons, models or library are
-bundled. Licensed default denoising weights remain a documented dependency.
+The package includes **30 voices**. The 12 built-in presets are joined by
+18 recipes with portraits. Use the image menu on any voice to replace or
+restore its portrait. Personal changes and recordings stay in the local
+library. Licensed default denoising weights remain a documented dependency.
 The core works offline without login. Back up the local library/presets before
 updating: new effect fields/positions are not qualified for downgrade.
 
@@ -61,7 +62,7 @@ The [Windows CI for issue #7](https://github.com/aaronmlf/voice-app/actions/runs
 passed the Windows Server 2022 tests, dependency and package checks, offline
 DSP and library tests, CLI/IPC/MCP checks, and a short software-rendered GUI
 smoke with audio disabled. The release workflow repeats the gates on the
-exact source commit and checks the 12 built-in IDs in a fresh library.
+exact source commit and checks the 30 catalog IDs in a fresh library.
 
 Wine passed CLI help, version and offline tone generation, then verified the exact secure refusal
 `voice-cli: private path must have a protected DACL`. The result was

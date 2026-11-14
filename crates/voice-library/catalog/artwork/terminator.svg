@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Terminator</title>
+<desc id="desc">Elmo de armadura pesada em ouro e osso, ombreiras redondas e grelha escura; desenho original.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#ffe194"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="81" rx="29" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<rect x="17" y="57" width="24" height="24" rx="8" fill="#c99a51" stroke="#795624" stroke-width="2.4"/>
+<rect x="59" y="57" width="24" height="24" rx="8" fill="#c99a51" stroke="#795624" stroke-width="2.4"/>
+<rect x="22" y="62" width="12" height="8" rx="3" fill="#fff1cd" stroke="none" stroke-width="2.4"/>
+<rect x="66" y="62" width="12" height="8" rx="3" fill="#fff1cd" stroke="none" stroke-width="2.4"/>
+<rect x="35" y="61" width="30" height="21" rx="5" fill="#c99a51" stroke="#795624" stroke-width="2.4"/>
+<rect x="29" y="23" width="42" height="48" rx="11" fill="#c99a51" stroke="#795624" stroke-width="2.4"/>
+<path d="M34 32 Q50 21 66 32 V38 H34 Z" fill="#fff1cd" stroke="none" stroke-width="2.4"/>
+<rect x="32" y="39" width="36" height="10" rx="4" fill="#795624" stroke="none" stroke-width="2.4"/>
+<path d="M37 44 H44 M56 44 H63" fill="none" stroke="#f28d70" stroke-width="2.8"/>
+<rect x="39" y="51" width="22" height="16" rx="4" fill="#795624" stroke="none" stroke-width="2.4"/>
+<path d="M44 55 V62 M50 55 V63 M56 55 V62" fill="none" stroke="#fff1cd" stroke-width="2.2"/>
+<circle cx="26" cy="75" r="2.1" fill="#f28d70" stroke="none" stroke-width="2.4"/>
+<circle cx="74" cy="75" r="2.1" fill="#f28d70" stroke="none" stroke-width="2.4"/>
+<path d="M22 42 Q22.6 44.4 25 45 Q22.6 45.6 22 48 Q21.4 45.6 19 45 Q21.4 44.4 22 42 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+<circle cx="77" cy="33" r="1.7" fill="#fff1cd" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

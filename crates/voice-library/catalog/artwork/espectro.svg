@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Espectro</title>
+<desc id="desc">Espectro lavanda de manto ondulado e rosto claro, olhos escuros e pequenos brilhos pastel.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#d4c3fb"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="83" rx="22" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<path d="M29 78 Q33 63 30 48 Q29 26 44 21 Q50 18 56 21 Q71 26 70 48 Q67 63 73 78 Q75 82 70 80 L61 75 L55 82 Q53 84 50 80 L45 76 L39 82 Q37 84 34 80 Z" fill="#ab91d2" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M37 40 Q39 28 50 27 Q61 28 63 40 Q67 56 50 65 Q33 56 37 40 Z" fill="#f0e7ff" stroke="#4a3779" stroke-width="2.4"/>
+<path d="M41 40 Q45 37 48 41 L46 48 Q41 48 41 44 Z" fill="#4a3779" stroke="none" stroke-width="2.4"/>
+<path d="M59 40 Q55 37 52 41 L54 48 Q59 48 59 44 Z" fill="#4a3779" stroke="none" stroke-width="2.4"/>
+<ellipse cx="50" cy="55" rx="3" ry="4" fill="#4a3779" stroke="none" stroke-width="2.4"/>
+<path d="M36 64 Q39 68 38 73 M64 64 Q61 68 62 73" fill="none" stroke="#f0e7ff" stroke-width="2.4"/>
+<path d="M22 51 Q16 56 21 61 M78 51 Q84 56 79 61" fill="none" stroke="#ab91d2" stroke-width="2.5"/>
+<path d="M23 25.5 Q23.6 28.4 26.5 29 Q23.6 29.6 23 32.5 Q22.4 29.6 19.5 29 Q22.4 28.4 23 25.5 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+<path d="M79 69.2 Q79.6 71.4 81.8 72 Q79.6 72.6 79 74.8 Q78.4 72.6 76.2 72 Q78.4 71.4 79 69.2 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+<circle cx="76" cy="32" r="2.1" fill="#f0e7ff" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>

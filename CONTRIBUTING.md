@@ -114,8 +114,9 @@ Mantenha o escopo pequeno e evite mudanças de formatação em arquivos alheios 
 agentes de IA, coordene os arquivos editados e as tarefas pesadas. A autoria da ferramenta não
 substitui revisão, testes ou conferência de licenças e dados que serão publicados.
 Verifique se a autoria do commit usa o endereço noreply do GitHub ou outro endereço
-explicitamente público. O repositório e os pacotes contêm somente os **12 presets embutidos**;
-presets próprios, imagens, gravações, modelos e a biblioteca pessoal ficam locais.
+explicitamente público. O catálogo público combina os 12 presets embutidos e as
+18 receitas aprovadas em `crates/voice-library/catalog/`. Presets da biblioteca
+pessoal, imagens substituídas, gravações e modelos ficam locais.
 
 ## Licenças e releases
 

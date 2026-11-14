@@ -40,9 +40,18 @@ class WineServiceExited(RuntimeError):
         super().__init__(f"Wine service exited {returncode}; see logs/service.log")
 
 
-ORIGINALS = sorted("builtin." + name for name in (
-    "clean", "radio", "robot", "echo", "space", "deep", "high", "alien",
-    "chorus", "broadcast", "monster", "megaphone"))
+SHIPPED_PRESETS = sorted((
+    "builtin.alien", "builtin.broadcast", "builtin.chorus", "builtin.clean",
+    "builtin.deep", "builtin.echo", "builtin.high", "builtin.megaphone",
+    "builtin.monster", "builtin.radio", "builtin.robot", "builtin.space",
+    "custom.fantasy.gigante-pedra", "custom.fantasy.goblin-sucateiro",
+    "custom.fiction.automato-exterminador", "custom.fiction.espectro",
+    "custom.fiction.ia-laboratorio", "custom.fiction.locutor-assombrado",
+    "custom.wh40k.chaos-marine", "custom.wh40k.comissario-vox", "custom.wh40k.dreadnought",
+    "custom.wh40k.krieg", "custom.wh40k.marine-vox-leve", "custom.wh40k.necron",
+    "custom.wh40k.ork-boy", "custom.wh40k.servo-cranio", "custom.wh40k.space-marine",
+    "custom.wh40k.tecnosacerdote", "custom.wh40k.terminator", "custom.wh40k.warboss",
+))
 
 
 def require(condition, message):
@@ -296,7 +305,7 @@ def run(args):
         endpoint = output / "cli-runtime/control.pipe"
         assert_no_audio(session.start(data, endpoint))
         presets = session.cli("voices")
-        require(sorted(row["id"] for row in presets) == ORIGINALS, "Expected exactly 12 original presets")
+        require(sorted(row["id"] for row in presets) == SHIPPED_PRESETS, "Expected exactly 30 shipped presets")
         session.cli("select", "radio")
         session.cli("monitor", "off", "--gain", "0.25")
         board = session.cli("create-board", "Wine synthetic library")
@@ -308,7 +317,7 @@ def run(args):
                     "Wine DSP returned silence or unchanged samples")
         clip = session.cli("import", session.winpath(tone), "--board", board["id"], "--name", "Synthetic 220 Hz")
         require(len(session.cli("clips", board["id"])) == 1, "Wine library import failed")
-        report["checks"].append("CLI, exactly 12 original voices, bounded finite radio/pitch DSP and synthetic SQLite import")
+        report["checks"].append("CLI, exactly 30 shipped presets, bounded finite radio/pitch DSP and synthetic SQLite import")
         requests = [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "wine-smoke", "version": "1"}}},
             {"jsonrpc": "2.0", "method": "notifications/initialized"},

@@ -22,12 +22,8 @@ pub struct PresetImage {
 }
 
 impl Library {
-    fn require_image_preset(&self, id: &str, editable: bool) -> Result<()> {
+    fn require_image_preset(&self, id: &str) -> Result<()> {
         validate_id(id)?;
-        ensure!(
-            !editable || !id.starts_with("builtin."),
-            "only custom presets can have a custom image"
-        );
         let exists: bool = self.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM presets WHERE id=?1)",
             [id],
@@ -61,7 +57,7 @@ impl Library {
     }
 
     pub fn preset_image(&self, id: &str) -> Result<Option<PresetImage>> {
-        self.require_image_preset(id, false)?;
+        self.require_image_preset(id)?;
         self.image_file_name(id)?
             .map(|name| {
                 Ok(PresetImage {
@@ -75,7 +71,6 @@ impl Library {
     /// Import a local PNG/JPEG/WebP once, center-crop and persist a small managed PNG.
     /// Any decode/limit/database error keeps the previous image intact.
     pub fn set_preset_image(&self, id: &str, path: &Path) -> Result<PresetImage> {
-        self.require_image_preset(id, true)?;
         let previous = self.preset_image(id)?;
         ensure!(
             fs::metadata(path)?.is_file(),
@@ -165,9 +160,8 @@ impl Library {
         })
     }
 
-    /// Removing an absent image is idempotent; built-in and unknown presets remain protected.
+    /// Clear the local override of a known voice, including a built-in voice.
     pub fn clear_preset_image(&self, id: &str) -> Result<()> {
-        self.require_image_preset(id, true)?;
         let previous = self.preset_image(id)?;
         self.db
             .execute("DELETE FROM preset_images WHERE preset_id=?1", [id])?;
@@ -278,7 +272,7 @@ mod tests {
         Connection::open(root.join("library.sqlite3"))?
             .execute_batch("DROP TABLE preset_images;")?;
         let library = Library::open(&root)?;
-        assert_eq!(library.presets()?.len(), 13);
+        assert_eq!(library.presets()?.len(), 31);
         let jpg = temp.0.join("portrait.jpg");
         RgbImage::from_pixel(24, 48, Rgb([130, 80, 20])).save(&jpg)?;
         let first = library.set_preset_image("custom.marine", &jpg)?;
@@ -322,7 +316,7 @@ mod tests {
             );
             assert_eq!(fs::read(&original.path)?, original_bytes);
         }
-        for id in ["builtin.clean", "custom.missing", "../outside"] {
+        for id in ["custom.missing", "../outside"] {
             assert!(library.set_preset_image(id, &source).is_err());
             assert!(library.clear_preset_image(id).is_err());
         }

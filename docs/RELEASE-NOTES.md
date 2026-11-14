@@ -1,6 +1,6 @@
-# Voice App v0.1.0-alpha.4 — Linux experimental
+# Voice App v0.1.0-alpha.5 — Linux experimental
 
-Esta versão Linux x86_64 incorpora as correções da
+Esta versão amplia o catálogo e mantém as correções da
 [issue #7](https://github.com/aaronmlf/voice-app/issues/7).
 
 - O AccessKit mantém a integração com leitores de tela via AT-SPI e passa a
@@ -13,9 +13,10 @@ Esta versão Linux x86_64 incorpora as correções da
 - O SQLite embutido foi atualizado para 3.54.1 e rustix para 1.1.6. Os testes
   abriram uma biblioteca sintética no esquema anterior.
 
-O pacote contém os **12 presets embutidos originais**. O núcleo funciona
-offline. O vocoder, os dois modos granulares, o microfone virtual PipeWire,
-o soundboard e a gravação continuam disponíveis.
+O pacote inclui **30 vozes**. Os 12 presets embutidos são acompanhados por
+18 receitas com retratos. Use **Imagem** no cartão de qualquer voz para
+trocar ou restaurar o retrato. O núcleo funciona offline e inclui vocoder,
+dois modos granulares, microfone virtual PipeWire, soundboard e gravação.
 
 ## Instalação
 
@@ -35,5 +36,5 @@ no commit que gera o pacote.
 
 A release permanece experimental. A latência física, a sessão de quatro
 horas e a aceitação em hardware com os efeitos recentes seguem pendentes.
-Veja [VALIDATION.md](https://github.com/aaronmlf/voice-app/blob/v0.1.0-alpha.4/docs/VALIDATION.md)
+Veja [VALIDATION.md](https://github.com/aaronmlf/voice-app/blob/v0.1.0-alpha.5/docs/VALIDATION.md)
 para os cenários testados e seus limites.

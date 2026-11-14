@@ -90,8 +90,9 @@ Status inclui `preset_revision` para a GUI atualizar a biblioteca após comandos
 `preset_image` recebe `id` e retorna null ou `{preset_id,path}` de um PNG gerenciado.
 `set_preset_image` recebe `id,path`, aceita PNG/JPEG/WebP até 8 MiB e 4096 × 4096 pixels e
 salva uma cópia central quadrada de 256 × 256. `clear_preset_image` recebe `id` e retorna
-`{cleared:true}`. Somente presets próprios podem definir/remover imagens. Falhas de entrada
-preservam a imagem anterior. O JSON de intercâmbio de voz não contém a imagem local.
+`{cleared:true}`. Qualquer voz cadastrada aceita uma imagem local. Ao remover
+essa imagem, a GUI volta a mostrar o retrato padrão. Falhas de entrada
+preservam a imagem anterior. O JSON de intercâmbio contém a definição sonora.
 Status inclui `preset_image_revision`, contador da sessão incrementado após Set/Clear bem-sucedidos.
 A GUI observa esse valor para atualizar miniaturas alteradas por CLI ou MCP, mantendo o cache limitado.
 

@@ -1,8 +1,9 @@
 # Publicar uma release
 
 O repositório público é [aaronmlf/voice-app](https://github.com/aaronmlf/voice-app).
-O código próprio usa MIT OR Apache-2.0. Apenas os 12 presets originais do aplicativo são
-distribuídos; vozes criadas pelo usuário, gravações, modelos e bibliotecas pessoais ficam locais.
+O código próprio usa MIT OR Apache-2.0. O catálogo aprovado inclui 12 presets
+embutidos e 18 receitas com retratos. Vozes criadas pelo usuário, gravações,
+modelos e bibliotecas pessoais ficam locais.
 
 ## Preparar a origem
 

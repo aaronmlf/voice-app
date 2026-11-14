@@ -80,8 +80,7 @@ that lockfile before ordinary `--locked` checks. `release-windows.yml` is manual
 only, validates a new `windows-vVERSION-alpha.N` tag and exact source commit, and
 publishes only the verified same-run Windows candidate after all Windows gates.
 It does not modify existing Linux releases. Public binaries must always be
-built from the reviewed public source snapshot with its 12 original voices,
-never from the private local development tree.
+built from the reviewed public source and its approved voice catalog.
 
 Windows CI also passes the identical verified ZIP to a separate Ubuntu Wine
 job. `scripts/test-wine.py` refuses to run without an isolated Linux network

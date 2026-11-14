@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+<title id="title">Goblin sucateiro</title>
+<desc id="desc">Goblin de grandes orelhas curvas, óculos de oficina e pequena chave, em ilustração cartoon original.</desc>
+<circle cx="50" cy="50" r="44.8" fill="#cdef99"/>
+<circle cx="36" cy="31" r="22" fill="#ffffff" opacity=".13"/>
+<g stroke-linecap="round" stroke-linejoin="round">
+<ellipse cx="50" cy="82" rx="25" ry="4" fill="#000000" stroke="none" stroke-width="2.4" opacity=".05"/>
+<path d="M26 80 Q28 68 40 64 H60 Q72 68 74 80 Z" fill="#bd955c" stroke="#295b49" stroke-width="2.4"/>
+<path d="M31 38 Q21 29 16 32 Q19 48 31 50 Z" fill="#8dbf71" stroke="#295b49" stroke-width="2.4"/>
+<path d="M69 38 Q79 29 84 32 Q81 48 69 50 Z" fill="#8dbf71" stroke="#295b49" stroke-width="2.4"/>
+<path d="M30 40 Q31 23 50 23 Q69 23 70 40 L66 59 Q61 70 50 74 Q39 70 34 59 Z" fill="#8dbf71" stroke="#295b49" stroke-width="2.4"/>
+<path d="M32 31 Q30 23 37 22 Q36 14 44 20 Q49 12 54 20 Q61 14 62 22 Q71 23 68 32 L60 28 L51 31 L42 28 Z" fill="#295b49" stroke="none" stroke-width="2.4"/>
+<path d="M31 41 H69" fill="none" stroke="#bd955c" stroke-width="5"/>
+<circle cx="39" cy="44" r="9" fill="#bd955c" stroke="#295b49" stroke-width="2.4"/>
+<circle cx="61" cy="44" r="9" fill="#bd955c" stroke="#295b49" stroke-width="2.4"/>
+<circle cx="39" cy="44" r="5.8" fill="#dcf5bf" stroke="none" stroke-width="2.4"/>
+<circle cx="61" cy="44" r="5.8" fill="#dcf5bf" stroke="none" stroke-width="2.4"/>
+<path d="M36 43 L39 40 M58 43 L61 40" fill="none" stroke="#fff8e4" stroke-width="2"/>
+<path d="M49 48 Q46 55 43 58 Q48 63 54 60" fill="#8dbf71" stroke="#295b49" stroke-width="2.4"/>
+<path d="M41 63 Q51 69 61 61 Q59 71 49 71 Q44 70 41 63 Z" fill="#295b49" stroke="none" stroke-width="2.4"/>
+<rect x="45" y="65" width="4" height="6" rx="1" fill="#dcf5bf" stroke="none" stroke-width="2.4"/>
+<rect x="55" y="63" width="4" height="5" rx="1" fill="#dcf5bf" stroke="none" stroke-width="2.4"/>
+<path d="M38 71 L35 79 M61 71 L64 79" fill="none" stroke="#295b49" stroke-width="2.3"/>
+<path d="M69 77 L76 64 Q72 60 75 57 L78 61 L81 58 Q83 63 79 66 L74 79 Z" fill="#dcf5bf" stroke="#295b49" stroke-width="2.1"/>
+<path d="M21 57 Q21.6 59.4 24 60 Q21.6 60.6 21 63 Q20.4 60.6 18 60 Q20.4 59.4 21 57 Z" fill="#fff8e4" stroke="none" stroke-width="2.4"/>
+</g>
+</svg>
