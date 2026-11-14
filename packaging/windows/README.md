@@ -1,4 +1,4 @@
-# Voice App — Windows experimental
+# Voice App windows-v0.1.0-alpha.5 — Windows experimental
 
 This Windows x64 preview includes the bundled SQLite 3.54.1 security update
 from [issue #7](https://github.com/aaronmlf/voice-app/issues/7), addressing

@@ -10,9 +10,8 @@ correções de SQLite e rustix verificadas no
 A [Windows alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.4)
 incorpora a correção de SQLite da mesma revisão. A CI Windows exercita a
 biblioteca, os comandos offline e a interface com áudio desativado.
-Os pacotes alpha.4 incluem checksum e os 12 presets embutidos. A fonte atual
-inclui mais 18 vozes com retratos. A biblioteca, as imagens substituídas e
-as gravações ficam locais.
+As pré-releases alpha.5 incluem os 12 presets embutidos e 18 vozes com
+retratos. A biblioteca, as imagens substituídas e as gravações ficam locais.
 
 ## Núcleo e recursos compartilhados
 

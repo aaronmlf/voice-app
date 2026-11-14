@@ -1,6 +1,6 @@
-# Voice App — Linux experimental
+# Voice App v0.1.0-alpha.5 — Linux experimental
 
-Esta versão Linux x86_64 incorpora as correções da
+Esta versão amplia o catálogo e mantém as correções da
 [issue #7](https://github.com/aaronmlf/voice-app/issues/7).
 
 - O AccessKit mantém a integração com leitores de tela via AT-SPI e passa a
@@ -36,5 +36,5 @@ no commit que gera o pacote.
 
 A release permanece experimental. A latência física, a sessão de quatro
 horas e a aceitação em hardware com os efeitos recentes seguem pendentes.
-Veja [VALIDATION.md](https://github.com/aaronmlf/voice-app/blob/v0.1.0-alpha.4/docs/VALIDATION.md)
+Veja [VALIDATION.md](https://github.com/aaronmlf/voice-app/blob/v0.1.0-alpha.5/docs/VALIDATION.md)
 para os cenários testados e seus limites.

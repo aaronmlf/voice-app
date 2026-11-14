@@ -7,8 +7,8 @@ Este é um projeto independente, sem vínculo com o Voicemod.
 
 | Pré-release experimental | Baixar | Requisitos |
 |---|---|---|
-| [Linux alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.4) | [Pacote .tar.gz](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.4/voice-app-0.1.0-x86_64-unknown-linux-gnu.tar.gz) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.4/SHA256SUMS.txt) | Linux x86_64, PipeWire e bibliotecas gráficas nativas |
-| [Windows alpha.4](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.4) | [Pacote .zip](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.4/voice-app-0.1.0-x86_64-pc-windows-msvc.zip) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.4/SHA256SUMS.txt) | Alvo Windows 10/11 x64; VB-CABLE separado para enviar áudio a outros apps |
+| [Linux alpha.5](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.5) | [Pacote .tar.gz](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.5/voice-app-0.1.0-x86_64-unknown-linux-gnu.tar.gz) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.5/SHA256SUMS.txt) | Linux x86_64, PipeWire e bibliotecas gráficas nativas |
+| [Windows alpha.5](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.5) | [Pacote .zip](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.5/voice-app-0.1.0-x86_64-pc-windows-msvc.zip) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.5/SHA256SUMS.txt) | Alvo Windows 10/11 x64; VB-CABLE separado para enviar áudio a outros apps |
 
 [Todas as releases](https://github.com/aaronmlf/voice-app/releases) ·
 [Funcionalidades e testes](docs/FEATURES.md) · [Contribuir](CONTRIBUTING.md) ·
@@ -189,9 +189,8 @@ O procedimento de publicação está em [RELEASING.md](docs/RELEASING.md).
 A biblioteca fica em `$XDG_DATA_HOME/voice-app` ou `~/.local/share/voice-app`; o socket fica em
 `$XDG_RUNTIME_DIR/voice-app/control.sock`. Configurações e áudios permanecem locais.
 O catálogo da fonte atual inclui **30 vozes**. São 12 presets embutidos e 18
-receitas acompanhadas de retratos. Os pacotes alpha.4 trazem as 12 vozes da
-época. Presets criados ou importados, imagens substituídas e gravações são
-salvos na biblioteca local.
+receitas acompanhadas de retratos. Presets criados ou importados, imagens
+substituídas e gravações são salvos na biblioteca local.
 Não há login, telemetria, download automático de modelos nem envio de microfone à internet.
 Para remover os dados, feche todas as sessões e remova explicitamente o diretório da biblioteca.
 
