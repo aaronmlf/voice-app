@@ -74,9 +74,14 @@ def same_settings(actual, expected):
     return type(actual) is type(expected) and actual == expected
 
 
-def same_preset(actual, expected):
+def same_preset(actual, expected, *, exported=False):
+    if exported:
+        # The registry reports how this library classifies the voice. The
+        # portable file intentionally carries the definition alone.
+        expected = {key: value for key, value in expected.items() if key != "original"}
     return (isinstance(actual, dict) and actual.keys() == expected.keys()
             and actual.get("id") == expected.get("id") and actual.get("name") == expected.get("name")
+            and actual.get("original") is expected.get("original")
             and same_settings(actual.get("settings"), expected.get("settings")))
 
 
@@ -232,7 +237,7 @@ def execute(args):
             exported = output / "custom-preset.json"
             session.command("export-preset", PRESET_ID, str(exported))
             envelope = json.loads(exported.read_text())
-            require(envelope["version"] == 1 and same_preset(envelope["preset"], preset),
+            require(envelope["version"] == 1 and same_preset(envelope["preset"], preset, exported=True),
                     "exported custom voice differs from the registry's saved voice")
             session.command("monitor", "false", "--gain", "0.35")
             board = session.command("create-board", "Validação de gravação")

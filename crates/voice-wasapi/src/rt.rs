@@ -54,23 +54,26 @@ impl InputCapture {
         let mut invalid = 0;
         for block in samples.chunks(MAX_BLOCK * channels) {
             let frames = block.len() / channels;
-            for (out, frame) in self.scratch[..frames]
-                .iter_mut()
-                .zip(block.chunks_exact(channels))
-            {
-                // Divide each term before summing so two finite f32::MAX values cannot
-                // overflow while downmixing. Sanitize before entering stateful DSP.
-                let mut value = 0.;
-                for sample in frame {
-                    if sample.is_finite() {
-                        value += *sample / channels as f32;
-                    } else {
-                        invalid += 1;
+            let mono = &mut self.scratch[..frames];
+            if self.shared.muted.load(Ordering::Relaxed) {
+                // Keep the capture clock running without queueing speech from the mute period.
+                mono.fill(0.);
+            } else {
+                for (out, frame) in mono.iter_mut().zip(block.chunks_exact(channels)) {
+                    // Divide each term before summing so two finite f32::MAX values cannot
+                    // overflow while downmixing. Sanitize before entering stateful DSP.
+                    let mut value = 0.;
+                    for sample in frame {
+                        if sample.is_finite() {
+                            value += *sample / channels as f32;
+                        } else {
+                            invalid += 1;
+                        }
                     }
+                    *out = if value.is_finite() { value } else { 0. };
                 }
-                *out = if value.is_finite() { value } else { 0. };
             }
-            if self.input.push(&self.scratch[..frames]) < frames {
+            if self.input.push(mono) < frames {
                 self.shared
                     .metrics
                     .input_overruns
@@ -235,10 +238,15 @@ impl VoiceOutput {
             .metrics
             .algorithmic_latency_frames
             .store(latency.min(u32::MAX as usize) as u32, Ordering::Relaxed);
+        let muted = self.shared.muted.load(Ordering::Relaxed);
+        if muted {
+            // A capture block may already be queued. Keep it out of delayed effects.
+            self.voice[..frames].fill(0.);
+        }
         if !bypass {
             self.dsp.process(&mut self.voice[..frames], &settings);
         }
-        if self.shared.muted.load(Ordering::Relaxed) {
+        if muted || self.shared.muted.load(Ordering::Relaxed) {
             self.voice[..frames].fill(0.);
         }
         self.scratch[..frames].fill(0.);
@@ -652,6 +660,41 @@ mod tests {
         assert_eq!(input.len(), 1);
         assert_eq!(shared.soundboard.len(), 1);
         assert_eq!(monitor.queue.len(), 1);
+    }
+
+    #[test]
+    fn microphone_mute_keeps_queued_and_captured_voice_out_of_future_output() {
+        use voice_core::{EFFECT_COUNT, EffectKind};
+
+        const FRAMES: usize = 256;
+        let (shared, input, mut output, _) = publishing();
+        let mut capture = InputCapture::new(shared.clone(), input.clone(), output.batches.clone());
+        let mut effect_mix = [0.; EFFECT_COUNT];
+        effect_mix[EffectKind::Echo as usize] = 1.;
+        shared.dsp.store(voice_core::DspSettings {
+            echo_mix: 1.,
+            echo_feedback: 0.,
+            effect_mix,
+            ..Default::default()
+        });
+        shared.bypass.store(false, Ordering::Relaxed);
+        let marker = [0.75f32; FRAMES];
+        let mut virtual_pcm = [0.; FRAMES * 2];
+
+        input.push(&marker);
+        shared.muted.store(true, Ordering::Relaxed);
+        output.render(&mut virtual_pcm);
+        assert_eq!(virtual_pcm, [0.; FRAMES * 2]);
+
+        capture.process(&marker, 1);
+        shared.muted.store(false, Ordering::Relaxed);
+        for _ in 0..40 {
+            output.render(&mut virtual_pcm);
+            assert_eq!(virtual_pcm, [0.; FRAMES * 2]);
+        }
+        capture.process(&marker, 1);
+        output.render(&mut virtual_pcm);
+        assert_eq!(virtual_pcm, [0.75; FRAMES * 2]);
     }
 
     #[test]

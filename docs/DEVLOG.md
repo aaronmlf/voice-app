@@ -723,3 +723,40 @@ zero eventos de OOM. O ensaio verificou a geração dos anúncios pelo log.
 Em Wayland privado, o mesmo binário registrou a árvore após ativação tardia
 e recuperou o foco em dois ciclos de desativação e reativação. O pico do grupo
 foi de 182 MiB, com swap bloqueado e zero eventos de OOM.
+
+## 2026-11-17 — Atalhos, mute e bandeja para Linux alpha.6
+
+O portal GlobalShortcuts do KDE oferece quatro ações. Elas selecionam uma
+voz, tocam um som do Soundboard, param os sons e alternam o mute do microfone.
+A bandeja mantém o motor ativo ao recolher a janela. O pacote inclui um
+instalador para a entrada do menu. O atalho instalado abre o app com limite
+de 3 GiB e swap desativado.
+
+O Soundboard passou a descartar resultados atrasados ao trocar de painel e
+a repetir a consulta quando a fila está cheia. A interface de Vozes exibe a
+mesma faixa de ganho do motor. A captura durante o mute fica fora dos efeitos
+com atraso. A importação recusa pipes nomeados, a exportação de WAV usa
+criação exclusiva e o gravador finaliza no limite RIFF com o replay disponível.
+O patch do winit trata eventos de ponteiro para um dispositivo já removido no
+Wayland. O instalador do menu aceita caminhos com espaços e `%`.
+
+A revisão local passou em 189 testes Rust, 52 Python, 1.141 de protocolo
+AT-SPI, corpus de áudio, sete benchmarks de DSP, Clippy e política de
+dependências. Os ensaios verificaram acessibilidade em X11 e Wayland,
+abertura, salvamento e cancelamento nos diálogos, o launcher via GIO e as
+cinco telas do pacote extraído. O catálogo do pacote inclui os 12 presets
+embutidos e as 18 receitas aprovadas com retratos.
+
+Três sessões isoladas com KWin e o watcher KDE reais, host de bandeja
+simulado e entradas sintéticas verificaram atalhos, mute e restauração da
+janela. O maior pico de memória dos ensaios gráficos foi de 232,85 MiB,
+com limite de 3 GiB, swap desativado e zero OOM. O PipeWire isolado cobriu
+saída virtual, pré-escuta, captura do desktop, gravação, replay, reconexão
+e o fluxo de exportar, gravar, cortar, reiniciar e reutilizar no Soundboard.
+A fonte da libobs recebeu áudio. O teste curto de mistura completou 30,02 s
+sem novos erros.
+
+Em 12 eventos por perfil, o atraso por software no p95 foi de 13 ms no
+básico, 100 ms com pitch, 100 ms com mistura, 19 ms no vocoder, 29 ms no
+granular estilizado e 33,45 ms no granular natural. A meta de 80 ms para pitch
+e a validação física e prolongada seguem abertas.

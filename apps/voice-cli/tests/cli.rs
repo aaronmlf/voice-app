@@ -410,6 +410,33 @@ fn offline_render_is_real_audio_and_existing_output_is_preserved() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn offline_wav_commands_reject_dangling_output_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new();
+    let input = fixture.root.join("input.wav");
+    fixture.json(&["tone", input.to_str().unwrap(), "--seconds", "0.1"]);
+    let output = fixture.root.join("output.wav");
+    let destination = fixture.root.join("absent.wav");
+    symlink(&destination, &output).unwrap();
+
+    let output_path = output.to_str().unwrap();
+    for args in [
+        vec!["tone", output_path, "--seconds", "0.1"],
+        vec!["process", input.to_str().unwrap(), output_path],
+    ] {
+        let result = fixture.run(&args);
+        assert!(
+            !result.status.success(),
+            "{args:?} accepted a dangling symlink"
+        );
+        assert_eq!(fs::read_link(&output).unwrap(), destination);
+        assert!(!destination.exists());
+    }
+}
+
 #[test]
 fn offline_render_uses_the_saved_effect_order_instead_of_only_preset_parameters() {
     let fixture = Fixture::new();

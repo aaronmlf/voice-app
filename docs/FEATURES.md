@@ -39,6 +39,8 @@ retratos. A biblioteca, as imagens substituídas e as gravações ficam locais.
 | Captura do desktop | Experimental | Sink explícito, áudio estéreo, WAV/replay independentes e isolamento da fonte virtual verificados no grafo privado. |
 | Pacote Linux `.tar.gz` | Experimental | Build no Ubuntu 24.04 x86_64, checksum e conteúdo conferidos. Smokes de GUI em Xvfb e CLI no PipeWire privado; hardware, outras distribuições e fluxos longos são etapas separadas. |
 | Entrada no menu Linux/KDE | Verificada em uma sessão | Entrada e ícone instalados; abertura do binário pronto e segundo clique sem duplicação observados. Pinagem manual pelo KDE. |
+| Atalhos globais do KDE/Wayland | Experimentais | Troca de voz, disparo, parada e mute funcionando com outra janela em foco. O teste verificou a atribuição pelo KDE e a persistência ao reabrir. O Soundboard continuou audível durante o mute. |
+| Bandeja do KDE | Experimental | Três ensaios isolados verificaram recolher, restaurar e sair. Foram usados KWin e watcher KDE reais, host de bandeja simulado e teclas sintéticas. Pico gráfico de 232,85 MiB sob limite de 3 GiB e sem swap. |
 | Sessões prolongadas e latência | Qualificação parcial | Um perfil básico anterior passou 60 min em grafo privado. A tentativa de mistura por quatro horas falhou por novo `monitor_overruns`. As pré-releases atuais ainda precisam de validação prolongada e de latência física. Veja [VALIDATION.md](VALIDATION.md). |
 
 ## Windows
@@ -51,8 +53,8 @@ retratos. A biblioteca, as imagens substituídas e as gravações ficam locais.
 | Wine | Offline verificado; GUI/IPC não qualificados | Comandos offline passaram; a recusa segura quando o ambiente não oferece DACL protegida também foi verificada. Não equivale a compatibilidade Wine. |
 | Driver próprio Windows | Cancelado | [PR #5](https://github.com/aaronmlf/voice-app/pull/5) fechado sem merge. O protótipo legado fica em `windows-native` e fora dos pacotes. A rota VB-CABLE não depende desse projeto. |
 
-Atalhos globais, bandeja, conversão neural local, macOS, AppImage/Flatpak do Voice
-App, comunidade e controle móvel continuam planejados.
+Conversão neural local, macOS, AppImage/Flatpak do Voice App, comunidade e controle
+móvel continuam planejados.
 
 Para os resultados completos e seu contexto, consulte [VALIDATION.md](VALIDATION.md)
 e o [histórico público de desenvolvimento](DEVLOG.md). O

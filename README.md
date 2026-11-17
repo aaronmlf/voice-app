@@ -7,7 +7,7 @@ Este é um projeto independente, sem vínculo com o Voicemod.
 
 | Pré-release experimental | Baixar | Requisitos |
 |---|---|---|
-| [Linux alpha.5](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.5) | [Pacote .tar.gz](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.5/voice-app-0.1.0-x86_64-unknown-linux-gnu.tar.gz) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.5/SHA256SUMS.txt) | Linux x86_64, PipeWire e bibliotecas gráficas nativas |
+| [Linux alpha.6](https://github.com/aaronmlf/voice-app/releases/tag/v0.1.0-alpha.6) | [Pacote .tar.gz](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.6/voice-app-0.1.0-x86_64-unknown-linux-gnu.tar.gz) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/v0.1.0-alpha.6/SHA256SUMS.txt) | Linux x86_64, PipeWire e bibliotecas gráficas nativas |
 | [Windows alpha.5](https://github.com/aaronmlf/voice-app/releases/tag/windows-v0.1.0-alpha.5) | [Pacote .zip](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.5/voice-app-0.1.0-x86_64-pc-windows-msvc.zip) · [SHA-256](https://github.com/aaronmlf/voice-app/releases/download/windows-v0.1.0-alpha.5/SHA256SUMS.txt) | Alvo Windows 10/11 x64; VB-CABLE separado para enviar áudio a outros apps |
 
 [Todas as releases](https://github.com/aaronmlf/voice-app/releases) ·
@@ -32,7 +32,7 @@ quando o portal não está disponível.
 
 ```bash
 # Ubuntu: dependências de compilação
-sudo apt install build-essential clang libclang-dev pkg-config libpipewire-0.3-dev libxkbcommon-dev libwayland-dev libx11-dev libegl1-mesa-dev
+sudo apt install build-essential clang libclang-dev pkg-config libdbus-1-dev libpipewire-0.3-dev libxkbcommon-dev libwayland-dev libx11-dev libegl1-mesa-dev
 
 bash scripts/cargo-low-memory.sh run --release -p voice-app
 ```
@@ -51,6 +51,29 @@ sessão, sem medição de latência, análise do WAV ou qualificação de vocode
 
 Fechar a interface encerra o motor quando ela o iniciou; uma sessão `voice-cli serve` externa
 continua até `shutdown` ou Ctrl+C.
+
+### Atalhos globais no KDE/Wayland
+
+Abra o Voice App pelo menu do KDE e vá a **Configurações → Atalhos globais**.
+Escolha uma voz e um som do Soundboard, depois clique em **Ativar atalhos**.
+No KDE, atribua uma combinação para cada ação que deseja usar. Para revisar
+as combinações, procure **Voice App** em **Configurações do Sistema → Atalhos**.
+
+Com o Voice App minimizado, os atalhos selecionam a voz escolhida, tocam o
+som escolhido uma vez na saída de chamada, param todos os sons ou alternam
+o mute do microfone. O Soundboard continua disponível enquanto o microfone
+está silenciado. Deixe o áudio conectado para usar o Soundboard. O Voice App
+guarda as escolhas na biblioteca local, e o KDE guarda as combinações.
+**Desativar atalhos** encerra a sessão de atalhos.
+
+Em **Configurações**, use **Recolher na bandeja** para fechar a janela
+mantendo o áudio e os atalhos ativos. Clique no ícone do Voice App para
+reabrir a janela ou use **Sair** no menu do ícone para encerrar o aplicativo.
+
+Os atalhos dependem do XDG Desktop Portal com a interface GlobalShortcuts
+e de uma entrada `voice-app.desktop` instalada. O script
+`scripts/install-desktop-shortcut.sh` instala essa entrada no menu.
+
 
 ## Windows experimental
 
@@ -141,8 +164,7 @@ Veja [a matriz de funcionalidades](docs/FEATURES.md) para distinguir capacidades
 experimentais e planejadas. No Laboratório, use as setas para processar um efeito antes/depois;
 “Ordem padrão” restaura a sequência sem mudar os parâmetros. O teto de segurança fica ao final.
 Veja [como personalizar vozes](docs/VOICE-LAB.md) para imagens, mistura e intensidade dos efeitos.
-IA de conversão de voz, atalhos globais por portal, bandeja do sistema, macOS,
-comunidade e celular seguem planejados.
+IA de conversão de voz, macOS, comunidade e celular seguem planejados.
 
 ## Desenvolvimento e validação
 

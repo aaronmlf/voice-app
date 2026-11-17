@@ -1,40 +1,57 @@
-# Voice App v0.1.0-alpha.5 — Linux experimental
+# Voice App v0.1.0-alpha.6 — Linux experimental
 
-Esta versão amplia o catálogo e mantém as correções da
-[issue #7](https://github.com/aaronmlf/voice-app/issues/7).
-
-- O AccessKit mantém a integração com leitores de tela via AT-SPI e passa a
-  usar zbus 6.2.1. Os sinais de cache da árvore de acessibilidade seguem as
-  assinaturas AT-SPI. O seletor de arquivos rfd 0.17.2 usa o portal do desktop
-  com alternativa via Zenity.
-- A política de dependências agora proíbe zbus anterior à versão 6 e os três
-  crates descontinuados. As exceções temporárias foram removidas e as
-  verificações de avisos, licenças e origens continuam ativas.
-- O SQLite embutido foi atualizado para 3.54.1 e rustix para 1.1.6. Os testes
-  abriram uma biblioteca sintética no esquema anterior.
-
-O pacote inclui **30 vozes**. Os 12 presets embutidos são acompanhados por
-18 receitas com retratos. Use **Imagem** no cartão de qualquer voz para
-trocar ou restaurar o retrato. O núcleo funciona offline e inclui vocoder,
-dois modos granulares, microfone virtual PipeWire, soundboard e gravação.
+O Voice App agora oferece atalhos globais e integração com a bandeja no KDE
+Plasma em Wayland. Os atalhos selecionam uma voz, tocam um som do Soundboard,
+param todos os sons e alternam o mute do microfone. Em **Configurações**, a opção
+**Recolher na bandeja** mantém o áudio e os atalhos ativos. Clique no ícone para
+reabrir a janela ou escolha **Sair** no menu da bandeja.
 
 ## Instalação
 
-Baixe o pacote Linux e o arquivo `SHA256SUMS.txt` no mesmo diretório. Confira
-o download com `sha256sum -c SHA256SUMS.txt`, extraia o `.tar.gz` e execute
-`./voice-app` no diretório extraído. Consulte `RUNNING.txt` para as dependências.
-Guarde uma cópia da biblioteca e dos presets locais antes de atualizar.
+1. Baixe o arquivo `.tar.gz` Linux x86_64 e o `SHA256SUMS.txt` no mesmo
+   diretório. Verifique o download com `sha256sum -c SHA256SUMS.txt`.
+2. Extraia o pacote e consulte `RUNNING.txt` para as dependências. Para adicionar
+   o Voice App ao menu do KDE, execute `bash scripts/install-desktop-shortcut.sh`
+   no diretório extraído e abra o app pelo menu. Esse atalho usa um processo
+   com limite de 3 GiB e swap desativado.
+3. Em **Configurações → Atalhos globais**, escolha uma voz e um som, clique
+   em **Ativar atalhos** e defina as combinações no KDE. É possível rever as
+   teclas em **Configurações do Sistema → Atalhos**. O recurso usa o portal
+   GlobalShortcuts do KDE.
 
-## Evidências e limites
+O catálogo inclui 30 vozes, com 12 presets embutidos e 18 receitas aprovadas
+com retratos. O núcleo offline oferece microfone virtual PipeWire, vocoder,
+dois modos granulares, Soundboard, gravação e replay.
 
-Os checks do [PR #10](https://github.com/aaronmlf/voice-app/pull/10) cobriram a
-política de dependências, os sinais AT-SPI, a acessibilidade em X11, o seletor
-de arquivos e o grafo PipeWire privado. Os testes locais verificaram anúncios
-do Orca em X11, reativação da árvore em Wayland e abertura, salvamento e
-cancelamento pelo seletor KDE em Wayland. A publicação repete os gates Linux
-no commit que gera o pacote.
+## Correções da revisão
 
-A release permanece experimental. A latência física, a sessão de quatro
-horas e a aceitação em hardware com os efeitos recentes seguem pendentes.
-Veja [VALIDATION.md](https://github.com/aaronmlf/voice-app/blob/v0.1.0-alpha.5/docs/VALIDATION.md)
-para os cenários testados e seus limites.
+- O Soundboard descarta respostas do painel anterior e volta a pedir a lista
+  se a fila de comandos estiver cheia. O controle de ganho em **Vozes** mostra
+  a faixa aplicada pelo motor.
+- A fala capturada durante o mute fica fora dos efeitos com atraso. O
+  Soundboard continua disponível enquanto o microfone está silenciado.
+- A importação recusa pipes nomeados. A escrita de WAV exige um destino novo
+  e recusa links simbólicos no nome de saída. A gravação finaliza no limite
+  do formato RIFF e preserva o replay.
+- A restauração da janela pela bandeja passou a tratar eventos de ponteiro
+  Wayland que chegam depois da remoção do dispositivo. O launcher funciona
+  também em caminhos com espaços e `%`.
+- O AccessKit usa zbus 6.2.1. Os diálogos de arquivos usam rfd 0.17.2, com
+  portal do desktop e alternativa via Zenity.
+
+## Validação
+
+A revisão local passou em 189 testes Rust, 52 testes Python, 1.141 testes
+AT-SPI, Clippy, política de dependências e sete benchmarks de DSP. A
+acessibilidade foi exercitada em X11 e Wayland. O pacote extraído abriu as
+cinco telas, e o GIO abriu o launcher em um caminho com espaços e `%`.
+
+Atalhos, mute e bandeja passaram em três sessões KDE isoladas, com KWin real,
+teclas e áudio sintéticos e host de bandeja simulado. O maior pico de memória
+dos ensaios gráficos foi de 232,85 MiB, com limite de 3 GiB e swap desativado.
+O PipeWire isolado validou a saída virtual, a pré-escuta, a captura do desktop,
+a gravação e o replay. A fonte de captura da libobs recebeu áudio.
+
+A release permanece experimental. Pitch e mistura mediram 100 ms no p95 no
+grafo de software, acima da meta de 80 ms. A latência física e a aceitação
+com hardware e sessões prolongadas seguem abertas.

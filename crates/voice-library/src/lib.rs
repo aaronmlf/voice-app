@@ -262,7 +262,8 @@ impl Library {
     /// Import validates the complete envelope before saving. Same IDs update existing presets.
     pub fn import_preset(&self, path: &Path) -> Result<Preset> {
         let mut bytes = Vec::new();
-        File::open(path)?.take(65_537).read_to_end(&mut bytes)?;
+        let (file, _) = open_regular_file(path)?;
+        file.take(65_537).read_to_end(&mut bytes)?;
         ensure!(bytes.len() <= 65_536, "preset JSON exceeds 64 KiB");
         let file: PresetFile = serde_json::from_slice(&bytes).context("invalid preset JSON")?;
         ensure!(
@@ -402,10 +403,7 @@ impl Library {
         let id = new_id("clip");
         let file_name = format!("{id}.wav");
         let path = self.root.join("clips").join(&file_name);
-        if let Err(error) = write_wav(&path, samples) {
-            let _ = fs::remove_file(&path);
-            return Err(error);
-        }
+        write_wav(&path, samples)?;
         let result = self.db.execute(
             "INSERT INTO clips(id,board_id,name,file_name,frames) VALUES(?1,?2,?3,?4,?5)",
             params![id, board_id, name.trim(), file_name, stored_frames],
@@ -640,14 +638,25 @@ pub fn builtin_presets() -> Vec<Preset> {
     .collect()
 }
 
+fn open_regular_file(path: &Path) -> Result<(File, fs::Metadata)> {
+    // Opening a named pipe for reading can wait indefinitely for a writer.
+    ensure!(
+        fs::metadata(path)?.is_file(),
+        "source must be a regular file"
+    );
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    ensure!(metadata.is_file(), "source must be a regular file");
+    Ok((file, metadata))
+}
+
 /// Decode WAV/MP3/Ogg Vorbis/FLAC, downmix to mono, then resample to 48 kHz.
 /// Limits bound both source bytes and decoded duration; corruption returns an error.
 pub fn decode_audio(path: &Path, limits: &ImportLimits) -> Result<Vec<f32>> {
     limits.validate()?;
-    let file = File::open(path).context("open audio file")?;
-    let metadata = file.metadata()?;
+    let (file, metadata) = open_regular_file(path).context("open audio file")?;
     ensure!(
-        metadata.is_file() && metadata.len() <= limits.max_bytes,
+        metadata.len() <= limits.max_bytes,
         "audio file exceeds {} bytes",
         limits.max_bytes
     );
@@ -762,7 +771,7 @@ fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
     output
 }
 
-/// Write normalized mono float WAV at 48 kHz. Parent directory must already exist.
+/// Create a normalized mono float WAV at 48 kHz. The parent directory must exist.
 pub fn write_wav(path: &Path, samples: &[f32]) -> Result<()> {
     ensure!(!samples.is_empty(), "cannot write empty audio");
     let spec = hound::WavSpec {
@@ -771,11 +780,18 @@ pub fn write_wav(path: &Path, samples: &[f32]) -> Result<()> {
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
-    let mut writer = hound::WavWriter::create(path, spec).context("create WAV file")?;
-    for &sample in samples {
-        writer.write_sample(finite(sample))?;
+    let file = File::create_new(path).context("create new WAV file")?;
+    let result = (|| -> Result<()> {
+        let mut writer = hound::WavWriter::new(std::io::BufWriter::new(file), spec)?;
+        for &sample in samples {
+            writer.write_sample(finite(sample))?;
+        }
+        writer.finalize().context("finalize WAV file")
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(path);
     }
-    writer.finalize().context("finalize WAV file")
+    result
 }
 
 fn finite(v: f32) -> f32 {
@@ -1080,7 +1096,7 @@ mod tests {
         let root = temp.0.join("library");
         let preset = Preset {
             id: "custom.generic".into(),
-            name: "Original custom voice".into(),
+            name: "Original Space Marine".into(),
             settings: DspSettings {
                 gain_db: -3.0,
                 ..Default::default()
@@ -1304,6 +1320,68 @@ mod tests {
         preset.settings.echo_feedback = 1.5;
         assert!(library.save_preset(&preset).is_err());
         assert_eq!(library.presets()?.len(), 30);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn imports_reject_named_pipes_and_accept_symlinked_regular_files() -> Result<()> {
+        use std::os::unix::fs::symlink;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let temp = Temp::new();
+        let root = temp.0.join("library");
+        let pipe = temp.0.join("source");
+        ensure!(
+            std::process::Command::new("mkfifo")
+                .arg(&pipe)
+                .status()?
+                .success(),
+            "could not create test FIFO"
+        );
+        let (send, receive) = mpsc::channel();
+        let audit = std::thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                let library = Library::open(&root)?;
+                assert!(
+                    format!("{:#}", library.import_preset(&pipe).unwrap_err())
+                        .contains("source must be a regular file")
+                );
+                assert!(
+                    format!(
+                        "{:#}",
+                        library
+                            .import_clip(&pipe, DEFAULT_BOARD_ID, "Pipe")
+                            .unwrap_err()
+                    )
+                    .contains("source must be a regular file")
+                );
+                Ok(())
+            })();
+            send.send(result).unwrap();
+        });
+        receive
+            .recv_timeout(Duration::from_secs(3))
+            .context("import waited for a named pipe")??;
+        audit.join().unwrap();
+
+        let library = Library::open(&temp.0.join("library"))?;
+        let wav = temp.0.join("audio.wav");
+        let wav_link = temp.0.join("audio-link.wav");
+        write_wav(&wav, &[0.25; 32])?;
+        symlink(wav, &wav_link)?;
+        assert_eq!(
+            library
+                .import_clip(&wav_link, DEFAULT_BOARD_ID, "WAV")?
+                .frames,
+            32
+        );
+        let preset = temp.0.join("preset.json");
+        let preset_link = temp.0.join("preset-link.json");
+        library.export_preset("builtin.clean", &preset)?;
+        symlink(preset, &preset_link)?;
+        assert_eq!(library.import_preset(&preset_link)?.id, "builtin.clean");
         Ok(())
     }
 

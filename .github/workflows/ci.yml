@@ -43,7 +43,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
           sudo apt-get install -y pipewire pipewire-bin at-spi2-core gir1.2-atspi-2.0 python3-gi dbus-daemon xvfb xauth libgl1-mesa-dri libdbus-1-3
       - name: Set up Rust
         run: |

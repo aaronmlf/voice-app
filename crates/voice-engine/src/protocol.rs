@@ -30,6 +30,8 @@ pub enum Command {
         monitor_gain: Option<f32>,
         soundboard_gain: Option<f32>,
     },
+    /// Invert the current microphone mute state in the command dispatcher.
+    ToggleMute,
     Presets,
     SetPresetOriginal {
         id: String,

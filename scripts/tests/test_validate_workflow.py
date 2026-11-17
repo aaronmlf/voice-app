@@ -37,6 +37,10 @@ class WorkflowEvidenceTests(unittest.TestCase):
         expected = {"id": "custom.voice", "name": "Voice", "settings": settings}
         self.assertTrue(workflow.same_preset({**expected, "settings": exported}, expected))
         self.assertFalse(workflow.same_preset({**expected, "id": "custom.other"}, expected))
+        stored = {**expected, "original": True}
+        self.assertTrue(workflow.same_preset(expected, stored, exported=True))
+        self.assertFalse(workflow.same_preset(stored, stored, exported=True))
+        self.assertFalse(workflow.same_preset({**stored, "original": False}, stored))
 
     def test_trim_compares_exact_end_exclusive_range(self):
         recorded = tone(workflow.RATE)

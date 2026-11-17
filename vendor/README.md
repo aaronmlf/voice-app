@@ -25,3 +25,12 @@ They use zbus and zbus_xml 6. The XML fixtures come from `atspi-common` above.
 
 Remove the patches when released AccessKit and AT-SPI versions resolve with
 zbus 6 and pass the application's dependency and accessibility checks.
+
+## Wayland pointer handling
+
+The [winit 0.30.13 source](https://github.com/rust-windowing/winit/tree/e9809ef54b18499bb4f2cac945719ecc2a61061b)
+retains its [Apache-2.0 license](winit/LICENSE). The original crate has SHA-256
+`a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d`.
+The Wayland patch skips queued events and cursor updates for a released
+pointer. Seat cleanup still clears the cursor mapping and releases a live
+pointer. This handles a panic observed after restoring the app from the tray.
