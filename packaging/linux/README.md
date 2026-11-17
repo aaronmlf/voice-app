@@ -4,7 +4,7 @@
 `$HOME/.local`: `bin/voice-app`, `share/applications/voice-app.desktop` e
 `share/icons/hicolor/scalable/apps/voice-app.svg`. `--prefix PATH` permite inspecionar a instalação
 em um diretório isolado. O launcher aponta para o binário já pronto em `target/release/voice-app`
-do checkout atual; builds futuros nesse caminho passam a ser usados automaticamente.
+no checkout ou `./voice-app` dentro do pacote extraído. Mantenha o pacote em um local fixo.
 
 A identidade `voice-app` corresponde ao app_id Wayland atribuído por eframe ao
 `run_native("voice-app")`. No X11, o winit usa o nome do binário como WM_CLASS. Não exige
@@ -33,3 +33,26 @@ Evidência local em `target/desktop-launcher-qa/runtime-report.json`. A fixaçã
 continua sendo uma ação manual do usuário.
 
 O SVG é um desenho vetorial original licenciado MIT OR Apache-2.0, como o código do projeto.
+
+## Dependências dos diálogos de arquivos
+
+O rfd 0.17 usa libdbus e um backend de XDG Desktop Portal compatível com seleção
+de arquivos (GTK, GNOME ou KDE). Zenity é o fallback quando o portal não está
+disponível e também é usado para caixas de mensagem. O backend wlroots sozinho
+não implementa a interface de seleção de arquivos. A distribuição deve fornecer
+esses componentes; o aplicativo não os instala nem muda a configuração do desktop.
+
+Abrir, salvar e cancelar devem ser validados em Wayland e X11 no ambiente de
+distribuição. Uma compilação aprovada não substitui esses testes gráficos.
+
+## Atalhos globais no KDE/Wayland
+
+O binário Linux depende de `libdbus-1.so.3` (`libdbus-1-3` no Ubuntu).
+Instale a entrada do menu com o script de atalho acima. Use
+`xdg-desktop-portal` e `xdg-desktop-portal-kde` com a interface
+GlobalShortcuts. Em Configurações → Atalhos globais, escolha a voz e o som
+e ative os atalhos. As teclas são atribuídas no KDE.
+O atalho de microfone alterna o mute da voz e permite usar o Soundboard.
+Em Configurações, Recolher na bandeja mantém o áudio e os atalhos ativos.
+No ícone do Voice App, use Abrir para restaurar a janela ou Sair para
+encerrar o aplicativo.

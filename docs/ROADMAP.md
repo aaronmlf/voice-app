@@ -33,7 +33,7 @@ com o cabo e aplicativos de destino no Windows.
 1. Ampliar a validação Linux com Discord, OBS e gravadores; medir a latência ponta a ponta com microfone e fones físicos.
 2. Validar DSP/pitch/formante/denoise e orçamento de latência; ampliar corpus de fala licenciada em pt-BR.
 3. Executar sessões de 60 min e quatro horas; validar Manjaro/Ubuntu LTS, Wayland, atualização e remoção.
-4. Validar cadeia reordenável e captura do desktop em sessões reais; completar portal de atalhos, bandeja e empacotamento AppImage.
+4. Validar cadeia reordenável, captura do desktop, atalhos e bandeja do KDE em sessões de uso e completar o empacotamento AppImage.
 5. Validar a rota VB-CABLE no Windows com voz física, soundboard, pré-escuta e reconexão em aplicativos de destino.
 6. Depois da validação do núcleo, abrir a etapa de conversão neural local; ONNX não substitui encoder/F0/vocoder e streaming.
 

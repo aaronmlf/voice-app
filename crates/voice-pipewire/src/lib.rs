@@ -649,6 +649,28 @@ struct Capture {
     queue: Arc<SampleQueue>,
     scratch: Box<[f32]>,
 }
+impl Capture {
+    fn ingest(&mut self, bytes: &[u8]) {
+        for block in bytes.chunks(MAX_BLOCK * 4) {
+            let n = block.len() / 4;
+            let samples = &mut self.scratch[..n];
+            if self.shared.muted.load(Ordering::Relaxed) {
+                // Keep the capture clock running without queueing speech from the mute period.
+                samples.fill(0.);
+            } else {
+                for (out, bytes) in samples.iter_mut().zip(block.as_chunks::<4>().0) {
+                    *out = f32::from_le_bytes(*bytes);
+                }
+            }
+            if self.queue.push(samples) < n {
+                self.shared
+                    .metrics
+                    .input_overruns
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
 fn capture_process(stream: &pw::stream::Stream, state: &mut Capture) {
     let Some(mut buffer) = stream.dequeue_buffer() else {
         return;
@@ -662,22 +684,8 @@ fn capture_process(stream: &pw::stream::Stream, state: &mut Capture) {
         return;
     };
     let end = offset.saturating_add(size).min(bytes.len());
-    if offset > end {
-        return;
-    }
-    for block in bytes[offset..end].chunks(MAX_BLOCK * 4) {
-        let n = block.len() / 4;
-        for (out, bytes) in state.scratch[..n].iter_mut().zip(block.as_chunks::<4>().0) {
-            *out = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        }
-        let written = state.queue.push(&state.scratch[..n]);
-        if written < n {
-            state
-                .shared
-                .metrics
-                .input_overruns
-                .fetch_add(1, Ordering::Relaxed);
-        }
+    if let Some(chunk) = bytes.get(offset..end) {
+        state.ingest(chunk);
     }
 }
 
@@ -746,10 +754,15 @@ impl SourceProcessor {
             .metrics
             .algorithmic_latency_frames
             .store(latency.min(u32::MAX as usize) as u32, Ordering::Relaxed);
+        let muted = self.shared.muted.load(Ordering::Relaxed);
+        if muted {
+            // A capture block may already be queued. Keep it out of delayed effects.
+            self.output[..n].fill(0.);
+        }
         if !bypass {
             self.dsp.process(&mut self.output[..n], &settings);
         }
-        if self.shared.muted.load(Ordering::Relaxed) {
+        if muted || self.shared.muted.load(Ordering::Relaxed) {
             self.output[..n].fill(0.);
         }
         self.scratch[..n].fill(0.);
@@ -1265,6 +1278,55 @@ mod tests {
         let mut p = SourceProcessor::new(48_000, shared, input, Arc::new(SampleQueue::new(16)));
         p.process(8);
         assert_eq!(&p.output[..8], &[0.3; 8]);
+    }
+    #[test]
+    fn microphone_mute_keeps_queued_and_captured_voice_out_of_future_output() {
+        use voice_core::{EFFECT_COUNT, EffectKind};
+
+        const FRAMES: usize = 256;
+        let shared = Arc::new(AudioShared::default());
+        let input = Arc::new(SampleQueue::new(QUEUE_SIZE));
+        let mut capture = Capture {
+            shared: shared.clone(),
+            queue: input.clone(),
+            scratch: vec![0.; MAX_BLOCK].into_boxed_slice(),
+        };
+        let mut output = SourceProcessor::new(
+            48_000,
+            shared.clone(),
+            input.clone(),
+            Arc::new(SampleQueue::new(QUEUE_SIZE)),
+        );
+        let mut effect_mix = [0.; EFFECT_COUNT];
+        effect_mix[EffectKind::Echo as usize] = 1.;
+        shared.dsp.store(voice_core::DspSettings {
+            echo_mix: 1.,
+            echo_feedback: 0.,
+            effect_mix,
+            ..Default::default()
+        });
+        let marker = [0.75f32; FRAMES];
+        let pcm: Vec<_> = marker
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+
+        // An input callback can queue data just before a mute reaches the mixer.
+        input.push(&marker);
+        shared.muted.store(true, Ordering::Relaxed);
+        output.process(FRAMES);
+        assert!(output.output[..FRAMES].iter().all(|&sample| sample == 0.));
+
+        // A capture produced during mute must remain silent if consumed after unmute.
+        capture.ingest(&pcm);
+        shared.muted.store(false, Ordering::Relaxed);
+        for _ in 0..40 {
+            output.process(FRAMES);
+            assert!(output.output[..FRAMES].iter().all(|&sample| sample == 0.));
+        }
+        capture.ingest(&pcm);
+        output.process(FRAMES);
+        assert_eq!(output.output[..FRAMES], marker);
     }
     #[test]
     fn invalid_audio_is_silenced_and_sum_is_limited() {

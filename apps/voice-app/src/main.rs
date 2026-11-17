@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::mpsc;
+#[cfg(target_os = "linux")]
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use voice_core::{
     AudioConfig, DeviceInfo, DeviceKind, DspSettings, EFFECT_COUNT, EffectKind, EffectOrder,
@@ -17,6 +19,10 @@ use voice_library::{
     Board, Clip, MAX_PRESET_IMAGE_BYTES, PRESET_IMAGE_SIDE, Preset, PresetImage, catalog_thumbnail,
 };
 pub mod art;
+#[cfg(target_os = "linux")]
+mod desktop;
+#[cfg(target_os = "linux")]
+mod shortcuts;
 use art::Icon;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,6 +34,7 @@ const ACCENT: Color32 = Color32::from_rgb(0, 222, 231);
 const TEXT: Color32 = Color32::from_rgb(237, 242, 242);
 const MUTED: Color32 = Color32::from_rgb(139, 151, 153);
 const PRESET_IMAGE_CACHE_SIZE: usize = 64;
+
 const MAX_PENDING_PRESET_IMAGES: usize = 4;
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -72,6 +79,17 @@ fn windows_repaint_delay(
         // A pending/full IPC queue can leave a deadline overdue. Retry at the
         // existing fast cadence instead of creating a zero-delay repaint loop.
         .max(FAST_REPAINT_INTERVAL)
+}
+
+#[cfg(target_os = "linux")]
+type RepaintTarget = Arc<Mutex<Option<egui::Context>>>;
+
+#[cfg(target_os = "linux")]
+fn request_repaint(target: &RepaintTarget) {
+    let ctx = target.lock().unwrap().clone();
+    if let Some(ctx) = ctx {
+        repaint_after_background_reply(&ctx);
+    }
 }
 
 struct CachedPresetImage {
@@ -165,6 +183,8 @@ enum Tag {
     Presets,
     Boards,
     Clips,
+    #[cfg(target_os = "linux")]
+    ShortcutClips,
     Action,
     AudioStart,
     MonitorGain,
@@ -181,8 +201,119 @@ struct Reply {
     changed_preset_image: Option<String>,
 }
 
+struct ClipList {
+    board_id: String,
+    clips: Vec<Clip>,
+    requested_board: Option<String>,
+    needs_refresh: bool,
+}
+
+impl ClipList {
+    fn new(board_id: String) -> Self {
+        Self {
+            board_id,
+            clips: Vec::new(),
+            requested_board: None,
+            needs_refresh: true,
+        }
+    }
+
+    fn select_board(&mut self, board_id: String) {
+        if self.board_id != board_id {
+            self.board_id = board_id;
+            self.clips.clear();
+        }
+        self.needs_refresh = true;
+    }
+
+    fn request(&mut self, tx: &mpsc::SyncSender<(Tag, Command)>, tag: Tag) {
+        if self.needs_refresh && self.requested_board.is_none() {
+            let board_id = self.board_id.clone();
+            let command = Command::Clips {
+                board_id: board_id.clone(),
+            };
+            if tx.try_send((tag, command)).is_ok() {
+                self.requested_board = Some(board_id);
+                self.needs_refresh = false;
+            }
+        }
+    }
+
+    fn finish(&mut self, clips: Option<Vec<Clip>>) -> bool {
+        if self.requested_board.take().as_ref() != Some(&self.board_id) {
+            return false;
+        }
+        if let Some(clips) = clips {
+            self.clips = clips;
+        }
+        true
+    }
+
+    fn loading(&self) -> bool {
+        self.needs_refresh || self.requested_board.is_some()
+    }
+}
+
+#[cfg(test)]
+mod clip_list_tests {
+    use super::*;
+
+    fn clip(board_id: &str) -> Clip {
+        Clip {
+            id: format!("clip.{board_id}"),
+            board_id: board_id.into(),
+            name: board_id.into(),
+            path: PathBuf::new(),
+            frames: 48_000,
+            duration_seconds: 1.,
+        }
+    }
+
+    #[test]
+    fn switching_boards_discards_old_replies_and_retries_a_full_queue() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let mut list = ClipList::new("first".into());
+        list.request(&tx, Tag::Clips);
+        assert!(
+            matches!(rx.try_recv(), Ok((Tag::Clips, Command::Clips { board_id })) if board_id == "first")
+        );
+        assert!(list.finish(Some(vec![clip("first")])));
+
+        list.select_board("first".into());
+        list.request(&tx, Tag::Clips);
+        assert!(
+            matches!(rx.try_recv(), Ok((Tag::Clips, Command::Clips { board_id })) if board_id == "first")
+        );
+        list.select_board("second".into());
+        assert!(list.clips.is_empty());
+        assert!(list.loading());
+        assert!(!list.finish(Some(vec![clip("first")])));
+        assert!(list.clips.is_empty());
+
+        assert!(tx.try_send((Tag::Status, Command::Status)).is_ok());
+        list.request(&tx, Tag::Clips);
+        assert!(list.loading());
+        assert!(matches!(rx.try_recv(), Ok((Tag::Status, Command::Status))));
+        list.request(&tx, Tag::Clips);
+        assert!(
+            matches!(rx.try_recv(), Ok((Tag::Clips, Command::Clips { board_id })) if board_id == "second")
+        );
+        assert!(list.finish(Some(vec![clip("second")])));
+        assert_eq!(list.clips, vec![clip("second")]);
+        assert!(!list.loading());
+    }
+}
+
 struct App {
     _service: Option<ServiceHandle>,
+    #[cfg(target_os = "linux")]
+    repaint: RepaintTarget,
+    #[cfg(target_os = "linux")]
+    tray: Option<desktop::Tray>,
+    #[cfg(target_os = "linux")]
+    tray_window_size: Option<egui::Vec2>,
+    #[cfg(target_os = "linux")]
+    hide_requested: bool,
     paths: Paths,
     page: Page,
     tx: mpsc::SyncSender<(Tag, Command)>,
@@ -194,7 +325,11 @@ struct App {
     status: Value,
     presets: Vec<Preset>,
     boards: Vec<Board>,
-    clips: Vec<Clip>,
+    soundboard_clips: ClipList,
+    #[cfg(target_os = "linux")]
+    shortcuts: shortcuts::Shortcuts,
+    #[cfg(target_os = "linux")]
+    shortcut_clips: ClipList,
     devices: Vec<DeviceInfo>,
     audio_config: AudioConfig,
     audio_config_dirty: bool,
@@ -211,7 +346,6 @@ struct App {
     settings_dirty: bool,
     settings_pending: bool,
     last_edit: Instant,
-    board: String,
     new_board: String,
     search: String,
     preset_name: String,
@@ -236,6 +370,29 @@ struct App {
     screenshot: Option<PathBuf>,
     screenshot_requested: bool,
 }
+fn configure_window(ctx: &egui::Context) {
+    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
+    style.visuals = egui::Visuals::dark();
+    style.visuals.panel_fill = BG;
+    style.visuals.window_fill = CARD;
+    style.visuals.override_text_color = Some(TEXT);
+    style.visuals.selection.bg_fill = Color32::from_rgb(0, 83, 87);
+    style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+    style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(37, 44, 46);
+    style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(37, 44, 46);
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, LINE);
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(45, 56, 59);
+    style.spacing.item_spacing = Vec2::new(10., 10.);
+    style.spacing.button_padding = Vec2::new(12., 8.);
+    style
+        .text_styles
+        .insert(egui::TextStyle::Body, egui::FontId::proportional(15.));
+    style
+        .text_styles
+        .insert(egui::TextStyle::Heading, egui::FontId::proportional(28.));
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.set_style_of(egui::Theme::Dark, style);
+}
 impl App {
     fn new(
         cc: &eframe::CreationContext<'_>,
@@ -246,30 +403,15 @@ impl App {
         page: Page,
         recorder_source: RecordingSource,
     ) -> Self {
-        let mut style = (*cc.egui_ctx.style_of(egui::Theme::Dark)).clone();
-        style.visuals = egui::Visuals::dark();
-        style.visuals.panel_fill = BG;
-        style.visuals.window_fill = CARD;
-        style.visuals.override_text_color = Some(TEXT);
-        style.visuals.selection.bg_fill = Color32::from_rgb(0, 83, 87);
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
-        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(37, 44, 46);
-        style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(37, 44, 46);
-        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, LINE);
-        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(45, 56, 59);
-        style.spacing.item_spacing = Vec2::new(10., 10.);
-        style.spacing.button_padding = Vec2::new(12., 8.);
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(15.));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Heading, egui::FontId::proportional(28.));
-        cc.egui_ctx.set_theme(egui::Theme::Dark);
-        cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
+        configure_window(&cc.egui_ctx);
         let (tx, requests) = mpsc::sync_channel::<(Tag, Command)>(32);
         let (replies, rx) = mpsc::sync_channel(8);
         let socket = paths.socket.clone();
+        #[cfg(target_os = "linux")]
+        let repaint = Arc::new(Mutex::new(Some(cc.egui_ctx.clone())));
+        #[cfg(target_os = "linux")]
+        let worker_repaint = repaint.clone();
+        #[cfg(not(target_os = "linux"))]
         let ctx = cc.egui_ctx.clone();
         std::thread::spawn(move || {
             while let Ok((tag, command)) = requests.recv() {
@@ -321,11 +463,28 @@ impl App {
                 {
                     break;
                 }
+                #[cfg(target_os = "linux")]
+                request_repaint(&worker_repaint);
+                #[cfg(not(target_os = "linux"))]
                 repaint_after_background_reply(&ctx);
             }
         });
+        #[cfg(target_os = "linux")]
+        let shortcuts = shortcuts::Shortcuts::new(&paths, repaint.clone());
         let mut app = Self {
             _service: service,
+            #[cfg(target_os = "linux")]
+            shortcut_clips: ClipList::new(shortcuts.config().board_id),
+            #[cfg(target_os = "linux")]
+            shortcuts,
+            #[cfg(target_os = "linux")]
+            repaint,
+            #[cfg(target_os = "linux")]
+            tray: None,
+            #[cfg(target_os = "linux")]
+            tray_window_size: None,
+            #[cfg(target_os = "linux")]
+            hide_requested: false,
             paths,
             page,
             tx,
@@ -337,7 +496,7 @@ impl App {
             status: Value::Null,
             presets: Vec::new(),
             boards: Vec::new(),
-            clips: Vec::new(),
+            soundboard_clips: ClipList::new("default".into()),
             devices: Vec::new(),
             audio_config: AudioConfig::default(),
             audio_config_dirty: false,
@@ -354,7 +513,6 @@ impl App {
             settings_dirty: false,
             settings_pending: false,
             last_edit: Instant::now(),
-            board: "default".into(),
             new_board: String::new(),
             search: String::new(),
             preset_name: String::new(),
@@ -387,12 +545,7 @@ impl App {
         app.request_status();
         app.send(Tag::Presets, Command::Presets);
         app.send(Tag::Boards, Command::Boards);
-        app.send(
-            Tag::Clips,
-            Command::Clips {
-                board_id: "default".into(),
-            },
-        );
+        app.request_clips();
         app.request_devices();
         app
     }
@@ -521,15 +674,20 @@ impl App {
             self.remove_clip_pending = Some(id);
         }
     }
-    fn refresh_library(&self) {
+    fn refresh_library(&mut self) {
         self.send(Tag::Presets, Command::Presets);
         self.send(Tag::Boards, Command::Boards);
-        self.send(
-            Tag::Clips,
-            Command::Clips {
-                board_id: self.board.clone(),
-            },
-        );
+        self.soundboard_clips.needs_refresh = true;
+        #[cfg(target_os = "linux")]
+        {
+            self.shortcut_clips.needs_refresh = true;
+        }
+        self.request_clips();
+    }
+    fn request_clips(&mut self) {
+        self.soundboard_clips.request(&self.tx, Tag::Clips);
+        #[cfg(target_os = "linux")]
+        self.shortcut_clips.request(&self.tx, Tag::ShortcutClips);
     }
     fn request_status(&mut self) {
         if !self.poll_pending && self.tx.try_send((Tag::Status, Command::Status)).is_ok() {
@@ -683,6 +841,14 @@ impl App {
             }
             match reply.value {
                 Err(message) => {
+                    if matches!(reply.tag, Tag::Clips) && !self.soundboard_clips.finish(None) {
+                        continue;
+                    }
+                    #[cfg(target_os = "linux")]
+                    if matches!(reply.tag, Tag::ShortcutClips) && !self.shortcut_clips.finish(None)
+                    {
+                        continue;
+                    }
                     if matches!(reply.tag, Tag::Status) {
                         self.poll_pending = false;
                     }
@@ -800,10 +966,14 @@ impl App {
                             self.boards = v;
                         }
                     }
+                    #[cfg(target_os = "linux")]
+                    Tag::ShortcutClips => {
+                        self.shortcut_clips
+                            .finish(serde_json::from_value(value).ok());
+                    }
                     Tag::Clips => {
-                        if let Ok(v) = serde_json::from_value(value) {
-                            self.clips = v;
-                        }
+                        self.soundboard_clips
+                            .finish(serde_json::from_value(value).ok());
                     }
                     Tag::PresetImage(_) => {}
                     Tag::MonitorGain => {
@@ -826,7 +996,9 @@ impl App {
                             && value["id"].as_str() == requested.as_deref()
                             && let Some(id) = requested
                         {
-                            self.clips.retain(|clip| clip.id != id);
+                            self.soundboard_clips.clips.retain(|clip| clip.id != id);
+                            #[cfg(target_os = "linux")]
+                            self.shortcut_clips.clips.retain(|clip| clip.id != id);
                             if self.trim_id.as_deref() == Some(id.as_str()) {
                                 self.trim_id = None;
                                 self.trim_name.clear();
@@ -972,7 +1144,7 @@ impl App {
                         }
                     } else {
                         for board in self.boards.clone() {
-                            let active = self.board == board.id;
+                            let active = self.soundboard_clips.board_id == board.id;
                             if ui
                                 .add_sized(
                                     [156., 37.],
@@ -994,13 +1166,8 @@ impl App {
                                 )
                                 .clicked()
                             {
-                                self.board = board.id;
-                                self.send(
-                                    Tag::Clips,
-                                    Command::Clips {
-                                        board_id: self.board.clone(),
-                                    },
-                                );
+                                self.soundboard_clips.select_board(board.id);
+                                self.request_clips();
                             }
                         }
                         ui.add_space(16.);
@@ -1075,7 +1242,7 @@ impl App {
                     ui.separator();
                     let mut transform = !self.status["bypass"].as_bool().unwrap_or(false);
                     let mut monitor = self.status["monitor"].as_bool().unwrap_or(false);
-                    let mut muted = self.status["muted"].as_bool().unwrap_or(false);
+                    let muted = self.status["muted"].as_bool().unwrap_or(false);
                     if switch(ui, &mut transform, "Modificar voz") {
                         self.action(control(Some(!transform), None, None, None, None));
                     }
@@ -1095,8 +1262,7 @@ impl App {
                     )
                     .clicked()
                     {
-                        muted = !muted;
-                        self.action(control(None, Some(muted), None, None, None));
+                        self.action(Command::ToggleMute);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if icon_button(ui, Icon::Stop, false, "Parar todos os sons").clicked() {
@@ -1180,7 +1346,7 @@ impl App {
                 ui.label(RichText::new("Ganho da voz").size(12.).color(MUTED));
                 let mut gain = self.settings.gain_db;
                 if ui
-                    .add(egui::Slider::new(&mut gain, -24.0..=18.0).suffix(" dB"))
+                    .add(egui::Slider::new(&mut gain, -60.0..=24.0).suffix(" dB"))
                     .changed()
                 {
                     self.settings.gain_db = gain;
@@ -1490,7 +1656,7 @@ impl App {
                 RichText::new(
                     self.boards
                         .iter()
-                        .find(|b| b.id == self.board)
+                        .find(|b| b.id == self.soundboard_clips.board_id)
                         .map(|b| {
                             if b.id == "default" {
                                 "Meu soundboard"
@@ -1504,9 +1670,15 @@ impl App {
                 .strong(),
             );
             ui.label(
-                RichText::new(format!("{} sons", self.clips.len()))
-                    .size(12.)
-                    .color(MUTED),
+                RichText::new(
+                    if self.soundboard_clips.loading() && self.soundboard_clips.clips.is_empty() {
+                        "Carregando sons…".to_owned()
+                    } else {
+                        format!("{} sons", self.soundboard_clips.clips.len())
+                    },
+                )
+                .size(12.)
+                .color(MUTED),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("+  Adicionar som").clicked()
@@ -1525,6 +1697,7 @@ impl App {
         });
         ui.add_space(22.);
         let clips: Vec<_> = self
+            .soundboard_clips
             .clips
             .iter()
             .filter(|c| c.name.to_lowercase().contains(&self.search.to_lowercase()))
@@ -1592,7 +1765,7 @@ impl App {
             });
             ui.add_space(12.);
         }
-        if self.clips.is_empty() {
+        if self.soundboard_clips.clips.is_empty() && !self.soundboard_clips.loading() {
             let (rect, response) =
                 ui.allocate_exact_size(Vec2::new(144., 116.), egui::Sense::click());
             ui.painter().rect_filled(rect, 10., CARD);
@@ -1717,7 +1890,7 @@ impl App {
             .into_owned();
         self.action(Command::ImportClip {
             path,
-            board_id: self.board.clone(),
+            board_id: self.soundboard_clips.board_id.clone(),
             name,
         });
     }
@@ -2243,7 +2416,180 @@ impl App {
             }
         });
     }
+    #[cfg(target_os = "linux")]
+    fn shortcut_settings(&mut self, ui: &mut egui::Ui) {
+        use shortcuts::State;
+
+        card().show(ui, |ui| {
+            ui.label(RichText::new("Atalhos globais").size(16.).strong());
+            ui.label(
+                RichText::new("Escolha a voz e o som. Defina as teclas no KDE.")
+                    .size(12.)
+                    .color(MUTED),
+            );
+            ui.add_space(10.);
+
+            let previous = self.shortcuts.config();
+            let mut config = previous.clone();
+            let voice = self
+                .presets
+                .iter()
+                .find(|p| Some(&p.id) == config.voice_id.as_ref());
+            let voice_label = voice.map_or_else(
+                || {
+                    if config.voice_id.is_some() {
+                        "Voz indisponível"
+                    } else {
+                        "Escolher voz"
+                    }
+                },
+                |p| voice_name(&p.id, &p.name),
+            );
+            egui::ComboBox::from_id_salt("global-shortcut-voice")
+                .width(200.)
+                .selected_text(voice_label)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut config.voice_id, None, "Escolher voz");
+                    for preset in &self.presets {
+                        ui.selectable_value(
+                            &mut config.voice_id,
+                            Some(preset.id.clone()),
+                            voice_name(&preset.id, &preset.name),
+                        );
+                    }
+                });
+
+            let board_label = self
+                .boards
+                .iter()
+                .find(|b| b.id == config.board_id)
+                .map_or("Escolher painel", |b| b.name.as_str());
+            ui.horizontal_wrapped(|ui| {
+                egui::ComboBox::from_id_salt("global-shortcut-board")
+                    .width(136.)
+                    .selected_text(board_label)
+                    .show_ui(ui, |ui| {
+                        for board in &self.boards {
+                            ui.selectable_value(
+                                &mut config.board_id,
+                                board.id.clone(),
+                                &board.name,
+                            );
+                        }
+                    });
+                if config.board_id != previous.board_id {
+                    config.clip_id = None;
+                }
+                let clips = self
+                    .shortcut_clips
+                    .clips
+                    .iter()
+                    .filter(|c| c.board_id == config.board_id);
+                let clip = clips
+                    .clone()
+                    .find(|c| Some(&c.id) == config.clip_id.as_ref());
+                let clip_label = clip.map_or_else(
+                    || {
+                        if self.shortcut_clips.loading()
+                            && config.board_id == self.shortcut_clips.board_id
+                        {
+                            "Carregando sons…"
+                        } else if config.clip_id.is_some() {
+                            "Som indisponível"
+                        } else if clips.clone().next().is_none() {
+                            "Painel sem sons"
+                        } else {
+                            "Escolher som"
+                        }
+                    },
+                    |c| c.name.as_str(),
+                );
+                egui::ComboBox::from_id_salt("global-shortcut-sound")
+                    .width(166.)
+                    .selected_text(clip_label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut config.clip_id, None, "Escolher som");
+                        for clip in clips {
+                            ui.selectable_value(
+                                &mut config.clip_id,
+                                Some(clip.id.clone()),
+                                &clip.name,
+                            );
+                        }
+                    });
+            });
+            if config != previous {
+                let board_changed = config.board_id != previous.board_id;
+                let board_id = config.board_id.clone();
+                match self.shortcuts.save(config) {
+                    Ok(()) if board_changed => {
+                        self.shortcut_clips.select_board(board_id);
+                        self.request_clips();
+                    }
+                    Ok(()) => {}
+                    Err(error) => self.notice = Some((format!("{error:#}"), true)),
+                }
+            }
+
+            ui.add_space(10.);
+            let (state, action_error) = self.shortcuts.status();
+            let mut result = Ok(());
+            match state {
+                State::Disabled => {
+                    if ui.button("Ativar atalhos").clicked() {
+                        result = self.shortcuts.enable();
+                    }
+                }
+                State::Connecting => {
+                    ui.label("Aguardando o portal de atalhos…");
+                }
+                State::Active(triggers) => {
+                    egui::Grid::new("global-shortcut-keys").show(ui, |ui| {
+                        for (label, trigger) in shortcuts::LABELS.into_iter().zip(triggers) {
+                            ui.label(label);
+                            ui.label(trigger.as_deref().unwrap_or("Sem combinação"));
+                            ui.end_row();
+                        }
+                    });
+                    ui.label(
+                        RichText::new(
+                            "Para alterar as teclas, abra Configurações do Sistema → Atalhos.",
+                        )
+                        .size(12.)
+                        .color(MUTED),
+                    );
+                }
+                State::Failed(message) => {
+                    ui.colored_label(Color32::LIGHT_RED, message);
+                    if ui.button("Tentar novamente").clicked() {
+                        result = self.shortcuts.enable();
+                    }
+                }
+            }
+            if self.shortcuts.config().enabled && ui.button("Desativar atalhos").clicked() {
+                result = self.shortcuts.disable();
+            }
+            if let Err(error) = result {
+                self.notice = Some((format!("{error:#}"), true));
+            }
+            if let Some(error) = action_error {
+                ui.colored_label(Color32::LIGHT_RED, error);
+            }
+        });
+    }
+
     fn settings_page(&mut self, ui: &mut egui::Ui) {
+        #[cfg(target_os = "linux")]
+        if let Some(tray) = &self.tray {
+            if ui
+                .add_enabled(tray.available(), egui::Button::new("Recolher na bandeja"))
+                .on_disabled_hover_text("Bandeja do KDE indisponível")
+                .clicked()
+            {
+                self.hide_in_tray(ui.ctx());
+            }
+            ui.add_space(12.);
+        }
         ui.label(RichText::new("Dispositivos de áudio").size(18.).strong());
         ui.add_space(18.);
         card().show(ui, |ui| {
@@ -2334,6 +2680,11 @@ impl App {
             }
         });
         ui.add_space(18.);
+        #[cfg(target_os = "linux")]
+        {
+            self.shortcut_settings(ui);
+            ui.add_space(18.);
+        }
         ui.label(RichText::new("Microfone virtual").size(16.).strong());
         #[cfg(windows)]
         self.windows_virtual_microphone_settings(ui);
@@ -2383,6 +2734,7 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.update_replies(ui.ctx());
+        self.request_clips();
         if self.last_poll.elapsed() > STATUS_POLL_INTERVAL && !self.poll_pending {
             self.request_status();
         }
@@ -3405,24 +3757,32 @@ fn run() -> Result<()> {
         Some(voice_engine::spawn_service(paths.clone())?)
     };
     let options = native_options(qa_size, qa_software);
+    let initialize = move |cc: &eframe::CreationContext<'_>| -> Result<App> {
+        #[cfg(windows)]
+        if qa_software || qa_report.is_some() {
+            report_qa_renderer(cc, qa_software, qa_report.as_deref())?;
+        }
+        Ok(App::new(
+            cc,
+            paths,
+            service,
+            smoke,
+            screenshot,
+            page,
+            recorder_source,
+        ))
+    };
+    #[cfg(target_os = "linux")]
+    if smoke.is_none() {
+        return desktop::run(options, initialize);
+    }
     eframe::run_native(
         "voice-app",
         options,
         Box::new(move |cc| {
-            #[cfg(windows)]
-            if qa_software || qa_report.is_some() {
-                report_qa_renderer(cc, qa_software, qa_report.as_deref())
-                    .map_err(anyhow::Error::into_boxed_dyn_error)?;
-            }
-            Ok(Box::new(App::new(
-                cc,
-                paths,
-                service,
-                smoke,
-                screenshot,
-                page,
-                recorder_source,
-            )))
+            Ok(Box::new(
+                initialize(cc).map_err(anyhow::Error::into_boxed_dyn_error)?,
+            ))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))

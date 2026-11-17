@@ -156,6 +156,11 @@ struct Worker {
     error: Arc<std::sync::Mutex<Option<String>>>,
 }
 type RecordingWriter = hound::WavWriter<std::io::BufWriter<File>>;
+const RECORDING_PCM_BITS: u16 = 16;
+// Hound writes a 44-byte PCM header for up to two channels at 16 bits.
+// The 32-bit RIFF size excludes the first eight bytes of that header.
+const MAX_WAV_DATA_BYTES: u64 = u32::MAX as u64 - 36;
+
 fn new_recording(path: &Path, channels: u16) -> Result<RecordingWriter> {
     let file = private_create_new(path).with_context(|| {
         format!(
@@ -168,7 +173,7 @@ fn new_recording(path: &Path, channels: u16) -> Result<RecordingWriter> {
         hound::WavSpec {
             channels,
             sample_rate: SAMPLE_RATE,
-            bits_per_sample: 16,
+            bits_per_sample: RECORDING_PCM_BITS,
             sample_format: hound::SampleFormat::Int,
         },
     )?)
@@ -223,8 +228,13 @@ impl CaptureState {
             *current = Some(format!("{error:#}"));
         }
     }
+    fn wav_frame_limit(&self) -> u64 {
+        MAX_WAV_DATA_BYTES / (u64::from(RECORDING_PCM_BITS / 8) * u64::from(self.source.channels()))
+    }
     fn drain(&mut self, queue: &SampleQueue) {
         let mut recorded = [0.0_f32; 4096];
+        let channels = usize::from(self.source.channels());
+        let frame_limit = self.wav_frame_limit();
         // Bound each drain to the samples present at entry. A slow disk must not
         // prevent the worker from servicing Stop/Finish while capture continues.
         let mut remaining = queue.len();
@@ -239,8 +249,16 @@ impl CaptureState {
             self.replay_samples
                 .store(self.replay.len(), Ordering::Relaxed);
             if let Some(writer) = self.writer.as_mut() {
-                match write_samples(writer, &recorded[..count]) {
-                    Ok(()) => self.frame_count += count as u64 / self.source.channels() as u64,
+                let frames = (count / channels).min((frame_limit - self.frame_count) as usize);
+                match write_samples(writer, &recorded[..frames * channels]) {
+                    Ok(()) => {
+                        self.frame_count += frames as u64;
+                        if self.frame_count == frame_limit && self.finish(true).is_ok() {
+                            self.remember_error(&anyhow!(
+                                "WAV size limit reached. The recording was finalized."
+                            ));
+                        }
+                    }
                     Err(error) => {
                         self.remember_error(&error);
                         if let Some(writer) = self.writer.take() {
@@ -878,6 +896,25 @@ impl Engine {
         self.session = candidate;
         Ok(())
     }
+    fn apply_controls(&mut self, candidate: Session, monitor: Option<bool>) -> Result<()> {
+        self.commit_session(candidate)?;
+        self.shared
+            .bypass
+            .store(self.session.bypass, Ordering::Relaxed);
+        self.shared
+            .muted
+            .store(self.session.muted, Ordering::Relaxed);
+        self.shared
+            .monitor_gain
+            .store(self.session.monitor_gain.to_bits(), Ordering::Relaxed);
+        self.shared
+            .soundboard_gain
+            .store(self.session.soundboard_gain.to_bits(), Ordering::Relaxed);
+        if let Some(v) = monitor {
+            self.shared.monitor_enabled.store(v, Ordering::Relaxed);
+        }
+        Ok(())
+    }
     fn stop_audio(&mut self, clear_replay: bool) -> Result<()> {
         // Drop joins the producer before the worker drains/finalizes its tail.
         self.audio.take();
@@ -1148,23 +1185,14 @@ impl Engine {
                 if let Some(v) = soundboard_gain {
                     candidate.soundboard_gain = v;
                 }
-                self.commit_session(candidate)?;
-                self.shared
-                    .bypass
-                    .store(self.session.bypass, Ordering::Relaxed);
-                self.shared
-                    .muted
-                    .store(self.session.muted, Ordering::Relaxed);
-                self.shared
-                    .monitor_gain
-                    .store(self.session.monitor_gain.to_bits(), Ordering::Relaxed);
-                self.shared
-                    .soundboard_gain
-                    .store(self.session.soundboard_gain.to_bits(), Ordering::Relaxed);
-                if let Some(v) = monitor {
-                    self.shared.monitor_enabled.store(v, Ordering::Relaxed);
-                }
+                self.apply_controls(candidate, monitor)?;
                 Ok(json!({"updated":true}))
+            }
+            Command::ToggleMute => {
+                let mut candidate = self.session.clone();
+                candidate.muted = !candidate.muted;
+                self.apply_controls(candidate, None)?;
+                Ok(json!({"muted":self.session.muted}))
             }
             Command::Presets => Ok(serde_json::to_value(self.library.presets()?)?),
             Command::SetPresetOriginal { id, original } => {
@@ -1634,6 +1662,10 @@ mod tests {
             ..Default::default()
         };
         crate::client::send(&paths.socket, Command::Configure { settings })?;
+        assert_eq!(
+            crate::client::send(&paths.socket, Command::ToggleMute)?,
+            json!({"muted":true})
+        );
         server.stop()?;
         assert!(crate::client::send(&paths.socket, Command::Status).is_err());
         #[cfg(unix)]
@@ -1641,6 +1673,11 @@ mod tests {
         let mut server = spawn_service(paths.clone())?;
         let status = crate::client::send(&paths.socket, Command::Status)?;
         assert_eq!(status["settings"]["gain_db"], 6.0);
+        assert_eq!(status["muted"], true);
+        assert_eq!(
+            crate::client::send(&paths.socket, Command::ToggleMute)?,
+            json!({"muted":false})
+        );
         assert!(
             crate::client::send(
                 &paths.socket,
@@ -2616,6 +2653,7 @@ mod tests {
                 monitor_gain: Some(1.5),
                 soundboard_gain: Some(0.3),
             },
+            Command::ToggleMute,
         ] {
             assert!(engine.execute(command, &stop).is_err());
             assert_eq!(serde_json::to_value(&engine.session)?, baseline);
@@ -2804,6 +2842,51 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn recording_size_limit_finalizes_whole_frames_and_keeps_replay() -> Result<()> {
+        let paths = test_paths();
+        private_directory(&paths.data)?;
+        for (source, expected_limit) in [
+            (RecordingSource::ProcessedVoice, 2_147_483_629),
+            (RecordingSource::Desktop, 1_073_741_814),
+        ] {
+            let channels = usize::from(source.channels());
+            let recording = Arc::new(AtomicBool::new(false));
+            let recording_source = Arc::new(AtomicUsize::new(0));
+            let error = Arc::new(std::sync::Mutex::new(None));
+            let mut capture = CaptureState::new(
+                source,
+                recording.clone(),
+                recording_source.clone(),
+                Arc::new(AtomicUsize::new(0)),
+                error.clone(),
+            );
+            assert_eq!(capture.wav_frame_limit(), expected_limit);
+            let path = paths.data.join(format!("bounded-{channels}.wav"));
+            capture.record(&path)?;
+            // Advance the counter without creating a multi-gigabyte test file.
+            capture.frame_count = expected_limit - 1;
+            let queue = SampleQueue::new(8);
+            queue.push(&[0.25; 2][..channels]);
+            queue.push(&[0.50; 2][..channels]);
+            capture.drain(&queue);
+            assert!(!recording.load(Ordering::Acquire));
+            assert_eq!(recording_source.load(Ordering::Acquire), 0);
+            assert!(capture.writer.is_none());
+            assert_eq!(capture.frame_count, expected_limit);
+            assert_eq!(wav_samples(&path)?, vec![8191; channels]);
+            assert_eq!(capture.replay.len(), 2 * channels);
+            let diagnostic = error.lock().unwrap();
+            assert!(
+                diagnostic
+                    .as_ref()
+                    .is_some_and(|text| text.contains("WAV size limit"))
+            );
+        }
+        fs::remove_dir_all(paths.data.parent().unwrap())?;
         Ok(())
     }
 

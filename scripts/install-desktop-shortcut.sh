@@ -19,17 +19,23 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$install_prefix" = /* ]] || { printf '%s\n' '--prefix must be absolute' >&2; exit 2; }
 voice_binary="$project_root/target/release/voice-app"
-[[ -x "$voice_binary" ]] || { printf 'Prepared binary not found: %s\n' "$voice_binary" >&2; exit 1; }
+if [[ ! -f "$voice_binary" || ! -x "$voice_binary" ]]; then
+    voice_binary="$project_root/voice-app"
+fi
+[[ -f "$voice_binary" && -x "$voice_binary" ]] || {
+    printf 'Prepared binary not found in %s or its target/release directory\n' "$project_root" >&2
+    exit 1
+}
 command -v python3 >/dev/null || { printf '%s\n' 'python3 is required to render safe launcher paths' >&2; exit 1; }
 
-python3 - "$project_root" "$install_prefix" <<'PY'
+python3 - "$project_root" "$install_prefix" "$voice_binary" <<'PY'
 from pathlib import Path
 import shlex
 import sys
 
 root = Path(sys.argv[1]).resolve()
 prefix = Path(sys.argv[2]).absolute()
-binary = root / 'target/release/voice-app'
+binary = Path(sys.argv[3])
 launcher = prefix / 'bin/voice-app'
 application = prefix / 'share/applications/voice-app.desktop'
 icon = prefix / 'share/icons/hicolor/scalable/apps/voice-app.svg'
@@ -49,7 +55,7 @@ def value(text):
 
 def exec_value(text):
     # Exec is parsed once as a desktop value and again as a quoted command argument.
-    return str(text).replace('\\', '\\\\\\\\').replace('"', '\\\\"').replace('`', '\\\\`').replace('$', '\\\\$')
+    return str(text).replace('%', '%%').replace('\\', '\\\\\\\\').replace('"', '\\\\"').replace('\x60', '\\\\\x60').replace('$', '\\\\$')
 
 desktop = (root / 'packaging/linux/voice-app.desktop.in').read_text()
 desktop = desktop.replace('@LAUNCHER_DESKTOP@', exec_value(launcher))

@@ -260,6 +260,8 @@ fn boundary_policy() -> BTreeMap<&'static str, &'static [&'static str]> {
                 "voice-engine",
                 "voice-library",
                 "anyhow",
+                "dbus",
+                "serde",
                 "serde_json",
                 "eframe",
                 "wgpu",
@@ -434,10 +436,10 @@ fn resolved_packages(meta: &Value) -> Result<Vec<&Value>> {
     Ok(packages)
 }
 fn license_report(meta: &Value, notices: Option<&Path>) -> Result<PathBuf> {
-    let vendor =
-        Path::new(meta["workspace_root"].as_str().context("workspace root")?).join("vendor");
     let mut rows = Vec::new();
     let mut rejected = Vec::new();
+    let vendor =
+        Path::new(meta["workspace_root"].as_str().context("workspace root")?).join("vendor");
     for package in resolved_packages(meta)? {
         let name = package["name"].as_str().context("package name")?;
         let version = package["version"].as_str().context("package version")?;
@@ -688,29 +690,29 @@ fn package(root: &Path) -> Result<()> {
         fs::copy(root.join(name), staging.join(name))
             .with_context(|| format!("package requires {name}"))?;
     }
+    // Use the same explicit documentation allowlist on both platforms.
+    // The development diary can include private presets and local history.
+    let documents = staging.join("docs");
+    fs::create_dir_all(documents.join("images"))?;
+    for name in [
+        "ARCHITECTURE.md",
+        "CONTROL.md",
+        "FEATURES.md",
+        "GRANULAR.md",
+        "RELEASE-NOTES.md",
+        "RELEASING.md",
+        "ROADMAP.md",
+        "VALIDATION.md",
+        "VOCODER.md",
+        "VOICE-LAB.md",
+        "WINDOWS.md",
+        "images/desktop-capture.png",
+        "images/lab.png",
+        "images/voices.png",
+    ] {
+        fs::copy(root.join("docs").join(name), documents.join(name))?;
+    }
     if cfg!(windows) {
-        // Explicit package allowlist: the complete local DEVLOG can contain
-        // private presets. Windows releases include no local history or assets.
-        let documents = staging.join("docs");
-        fs::create_dir_all(documents.join("images"))?;
-        for name in [
-            "ARCHITECTURE.md",
-            "CONTROL.md",
-            "FEATURES.md",
-            "RELEASE-NOTES.md",
-            "RELEASING.md",
-            "ROADMAP.md",
-            "VALIDATION.md",
-            "VOICE-LAB.md",
-            "VOCODER.md",
-            "GRANULAR.md",
-            "WINDOWS.md",
-            "images/desktop-capture.png",
-            "images/lab.png",
-            "images/voices.png",
-        ] {
-            fs::copy(root.join("docs").join(name), documents.join(name))?;
-        }
         fs::copy(
             root.join("packaging/windows/README.md"),
             staging.join("RUNNING.txt"),
@@ -725,10 +727,10 @@ fn package(root: &Path) -> Result<()> {
             staging.join("scripts/test-windows-gui.ps1"),
         )?;
     } else {
-        copy_directory(&root.join("docs"), &staging.join("docs"))?;
         let validation = staging.join("scripts");
         fs::create_dir_all(validation.join("fixtures"))?;
         for script in [
+            "install-desktop-shortcut.sh",
             "validation_common.py",
             "test-engine.py",
             "validate-latency.py",
@@ -743,6 +745,15 @@ fn package(root: &Path) -> Result<()> {
             root.join("scripts/fixtures/pipewire-validation.conf"),
             validation.join("fixtures/pipewire-validation.conf"),
         )?;
+        let desktop = staging.join("packaging/linux");
+        fs::create_dir_all(&desktop)?;
+        for name in [
+            "voice-app-launcher.in",
+            "voice-app.desktop.in",
+            "voice-app.svg",
+        ] {
+            fs::copy(root.join("packaging/linux").join(name), desktop.join(name))?;
+        }
     }
     let report = license_report(&meta, Some(&staging.join("THIRD_PARTY_LICENSES")))?;
     fs::copy(report, staging.join("THIRD_PARTY_LICENSES.json"))?;
@@ -759,7 +770,7 @@ fn package(root: &Path) -> Result<()> {
     if !cfg!(windows) {
         fs::write(
             staging.join("RUNNING.txt"),
-            "Linux native binaries. This archive is not a self-contained AppImage. Install PipeWire, libpipewire-0.3 and the display/windowing runtime required by your distribution. File dialogs use the desktop portal and libdbus (libdbus-1-3 on Ubuntu, dbus on Arch/Manjaro), with Zenity as a fallback. Run ./voice-app or ./voice-cli --help. Verify the outer archive with sha256sum -c SHA256SUMS.txt. No drivers, services, default microphone changes, or system installs are performed by unpacking this archive.\n",
+            "Linux native binaries. Install PipeWire, libpipewire-0.3, libdbus-1.so.3 and the display/windowing runtime required by your distribution. Run ./voice-app or ./voice-cli --help. For the KDE menu and global shortcuts, keep the extracted directory in a permanent location and run bash scripts/install-desktop-shortcut.sh. Verify the outer archive with sha256sum -c SHA256SUMS.txt.\n",
         )?;
     }
     let output_directory = root.join("dist");
